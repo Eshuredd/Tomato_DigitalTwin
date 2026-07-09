@@ -1,0 +1,58 @@
+[
+  {
+    "name": "rangareddy_2026_07_01",
+    "latitude_deg": 17.188047,
+    "longitude_deg": 78.75,
+    "elevation_m": 560.0,
+    "day_of_year": 182,
+    "tmin_c": 23.5,
+    "tmax_c": 29.7,
+    "humidity_pct": 73.16666666666667,
+    "wind_speed_mps": 4.943056295380742,
+    "shortwave_radiation_sum_mj_m2": 12.15,
+    "openmeteo_et0_mm_day": 4.05,
+    "allowed_delta_pct": 15.0
+  },
+  {
+    "name": "rangareddy_2026_07_02",
+    "latitude_deg": 17.188047,
+    "longitude_deg": 78.75,
+    "elevation_m": 560.0,
+    "day_of_year": 183,
+    "tmin_c": 23.2,
+    "tmax_c": 29.3,
+    "humidity_pct": 75.41666666666667,
+    "wind_speed_mps": 4.923145560740854,
+    "shortwave_radiation_sum_mj_m2": 9.11,
+    "openmeteo_et0_mm_day": 3.37,
+    "allowed_delta_pct": 15.0
+  },
+  {
+    "name": "rangareddy_2026_07_03",
+    "latitude_deg": 17.188047,
+    "longitude_deg": 78.75,
+    "elevation_m": 560.0,
+    "day_of_year": 184,
+    "tmin_c": 23.2,
+    "tmax_c": 28.8,
+    "humidity_pct": 80.04166666666667,
+    "wind_speed_mps": 5.638200639547246,
+    "shortwave_radiation_sum_mj_m2": 7.94,
+    "openmeteo_et0_mm_day": 2.94,
+    "allowed_delta_pct": 15.0
+  },
+  {
+    "name": "rangareddy_2026_07_04",
+    "latitude_deg": 17.188047,
+    "longitude_deg": 78.75,
+    "elevation_m": 560.0,
+    "day_of_year": 185,
+    "tmin_c": 22.9,
+    "tmax_c": 25.6,
+    "humidity_pct": 86.875,
+    "wind_speed_mps": 6.030355543541551,
+    "shortwave_radiation_sum_mj_m2": 6.79,
+    "openmeteo_et0_mm_day": 2.06,
+    "allowed_delta_pct": 15.0
+  }
+]

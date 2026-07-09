@@ -1,0 +1,7 @@
+# Required for /predict-disease to run — not optional.
+# Install only after confirming the AMD container's ROCm version.
+# torch and torchvision must be pinned as a compatible pair.
+
+torch
+torchvision
+numpy
