@@ -14,13 +14,10 @@ from app.schemas import (
 )
 from app.state_store import (
     InMemoryTwinStateStore,
+    IncompleteStateError,
     MissingCachedOutputError,
     StateNotFoundError,
-    UpdateTwinStateResponse,
     TwinSessionRecord,
-    IncompleteStateError,
-    RecommendationResponse as _RecommendationResponse,
-    SimulateActionsResponse as _SimulateActionsResponse,
     state_store,
 )
 
@@ -55,7 +52,7 @@ def build_error_response(
 
 
 async def twin_api_exception_handler(
-    request: Request,
+    _request: Request,
     exc: TwinAPIException,
 ) -> JSONResponse:
     error_response = build_error_response(
@@ -96,6 +93,7 @@ def raise_from_store_error(exc: Exception) -> NoReturn:
             message=str(exc),
             details={},
         )
+
     if isinstance(exc, IncompleteStateError):
         raise_api_error(
             status_code=409,
@@ -103,6 +101,7 @@ def raise_from_store_error(exc: Exception) -> NoReturn:
             message=str(exc),
             details={"missing": exc.missing},
         )
+
     if isinstance(exc, MissingCachedOutputError):
         raise_api_error(
             status_code=409,
@@ -110,6 +109,7 @@ def raise_from_store_error(exc: Exception) -> NoReturn:
             message=str(exc),
             details={},
         )
+
     if isinstance(exc, ValueError):
         raise_api_error(
             status_code=422,
@@ -117,6 +117,7 @@ def raise_from_store_error(exc: Exception) -> NoReturn:
             message=str(exc),
             details={},
         )
+
     raise exc
 
 
