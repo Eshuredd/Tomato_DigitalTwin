@@ -21,6 +21,10 @@ DEFAULT_STAGE_CONFIG_SOURCE = (
 
 def validate_stage_days(stage_days: dict[GrowthStage, int]) -> None:
     """Validate that stage_days contains exactly the four tomato growth stages."""
+    for key in stage_days:
+        if not isinstance(key, GrowthStage):
+            raise ValueError("stage_days keys must be GrowthStage enum members.")
+
     expected_stages = set(DEFAULT_TOMATO_STAGE_DAYS.keys())
     provided_stages = set(stage_days.keys())
 
@@ -38,7 +42,7 @@ def validate_stage_days(stage_days: dict[GrowthStage, int]) -> None:
         if value <= 0:
             raise ValueError(f"Duration for {stage} must be positive.")
 
-
+            
 def days_since_planting(planting_date: date, current_date: date) -> int:
     """Return the number of days since planting, with planting_date as day 0."""
     days = (current_date - planting_date).days

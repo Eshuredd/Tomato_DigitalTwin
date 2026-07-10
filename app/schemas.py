@@ -138,6 +138,8 @@ class WaterModelConfigInfo(BaseModel):
     reference_feed: str
     soil_parameter_basis: str
     root_depth_basis: str
+    kc_config_source: str
+    kc_by_stage: dict[str, Annotated[float, Field(gt=0.0)]]
 
 
 class NarratorPolicyInfo(BaseModel):
