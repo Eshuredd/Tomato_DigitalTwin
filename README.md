@@ -68,6 +68,7 @@ POST /sessions/{state_id}/narrate
 - Canonical classes: `app/disease/classes.py`
 - Confidence and uncertainty policy: `app/disease/uncertainty.py`
 - Artifact directory: `model_artifacts/croptwin_disease/`
+- Artifact override: `CROPTWIN_DISEASE_ARTIFACT_DIR`, used by both inference and `/system-info`
 - Supported `model_version`: `"1.0"`
 - Dataset: PlantVillage tomato subset, 10 classes
 - Input: base64 or `data:image/...;base64,...`

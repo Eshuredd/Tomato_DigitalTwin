@@ -8,6 +8,7 @@ import math
 import os
 import re
 import threading
+from collections.abc import Mapping
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -98,11 +99,6 @@ class DiseaseArtifactMetadata:
     temperature: float
     confidence_threshold: float
     validation_ece_after: float | None
-    test_ece_after: float | None
-    test_accuracy: float | None
-    macro_precision: float | None
-    macro_recall: float | None
-    macro_f1: float | None
     normalization_mean: tuple[float, float, float] | None = None
     normalization_std: tuple[float, float, float] | None = None
 
@@ -255,29 +251,6 @@ def _validate_runtime_artifacts(artifact_dir: str | Path | None = None) -> Disea
             validation_after["expected_calibration_error"],
         )
 
-    test_ece_after = None
-    test_accuracy = None
-    macro_precision = None
-    macro_recall = None
-    macro_f1 = None
-    test_metrics_path = root / TEST_METRICS_FILENAME
-    if test_metrics_path.is_file():
-        test_metrics = _read_json(test_metrics_path)
-        classification = test_metrics.get("classification")
-        calibration = test_metrics.get("calibration")
-        if isinstance(classification, dict):
-            test_accuracy = _finite_float("classification.accuracy", classification.get("accuracy"))
-            macro_precision = _finite_float("classification.macro_precision", classification.get("macro_precision"))
-            macro_recall = _finite_float("classification.macro_recall", classification.get("macro_recall"))
-            macro_f1 = _finite_float("classification.macro_f1", classification.get("macro_f1"))
-        if isinstance(calibration, dict):
-            after = calibration.get("after")
-            if isinstance(after, dict) and "expected_calibration_error" in after:
-                test_ece_after = _finite_float(
-                    "calibration.after.expected_calibration_error",
-                    after["expected_calibration_error"],
-                )
-
     return DiseaseArtifactMetadata(
         artifact_dir=root,
         model_path=model_path,
@@ -285,11 +258,6 @@ def _validate_runtime_artifacts(artifact_dir: str | Path | None = None) -> Disea
         temperature=temperature,
         confidence_threshold=confidence_threshold,
         validation_ece_after=validation_ece_after,
-        test_ece_after=test_ece_after,
-        test_accuracy=test_accuracy,
-        macro_precision=macro_precision,
-        macro_recall=macro_recall,
-        macro_f1=macro_f1,
     )
 
 
@@ -394,9 +362,6 @@ class TorchTomatoDiseasePredictor:
             except Exception as exc:
                 raise DiseaseArtifactValidationError("Disease model artifact could not be loaded safely.") from exc
 
-            if not isinstance(artifact, dict):
-                raise DiseaseArtifactValidationError("Disease model artifact must be a dictionary.")
-
             self._validate_pt_artifact(artifact, metadata)
 
             try:
@@ -435,51 +400,129 @@ class TorchTomatoDiseasePredictor:
 
     def _validate_pt_artifact(
         self,
-        artifact: dict[str, Any],
+        artifact: object,
         metadata: DiseaseArtifactMetadata,
     ) -> None:
-        required_keys = {
-            "model_name",
-            "num_classes",
-            "class_names",
-            "model_state_dict",
-            "temperature",
-            "input_size",
-            "normalization",
-        }
-        if not required_keys.issubset(artifact):
-            raise DiseaseArtifactValidationError("Disease model artifact is missing required keys.")
+        try:
+            if not isinstance(artifact, Mapping):
+                raise DiseaseArtifactValidationError(
+                    "Disease model artifact must be a dictionary."
+                )
 
-        if artifact["model_name"] != "mobilenet_v3_small":
-            raise DiseaseArtifactValidationError("Unexpected disease model architecture.")
-        if artifact["num_classes"] != len(TOMATO_DISEASE_CLASS_NAMES):
-            raise DiseaseArtifactValidationError("Unexpected disease class count.")
-        if tuple(artifact["class_names"]) != TOMATO_DISEASE_CLASS_NAMES:
-            raise DiseaseArtifactValidationError("Artifact class order does not match API policy.")
-        if list(artifact["input_size"]) != [224, 224]:
-            raise DiseaseArtifactValidationError("Unexpected disease model input size.")
+            required_keys = {
+                "model_name",
+                "num_classes",
+                "class_names",
+                "model_state_dict",
+                "temperature",
+                "input_size",
+                "normalization",
+            }
+            if not required_keys.issubset(artifact.keys()):
+                raise DiseaseArtifactValidationError(
+                    "Disease model artifact is missing required keys."
+                )
 
-        normalization = artifact["normalization"]
-        if not isinstance(normalization, dict):
-            raise DiseaseArtifactValidationError("Artifact normalization metadata is invalid.")
-        mean = normalization.get("mean")
-        std = normalization.get("std")
-        if not isinstance(mean, list) or not isinstance(std, list) or len(mean) != 3 or len(std) != 3:
-            raise DiseaseArtifactValidationError("Artifact normalization mean/std must contain three values.")
+            model_name = artifact["model_name"]
+            if not isinstance(model_name, str):
+                raise DiseaseArtifactValidationError(
+                    "Disease model artifact model_name is invalid."
+                )
+            if model_name != "mobilenet_v3_small":
+                raise DiseaseArtifactValidationError(
+                    "Unexpected disease model architecture."
+                )
 
-        for value in mean:
-            _finite_float("normalization.mean", value)
-        for value in std:
-            _finite_float("normalization.std", value, positive=True)
+            num_classes = artifact["num_classes"]
+            if isinstance(num_classes, bool) or not isinstance(num_classes, int):
+                raise DiseaseArtifactValidationError(
+                    "Disease model artifact num_classes is invalid."
+                )
+            if num_classes != len(TOMATO_DISEASE_CLASS_NAMES):
+                raise DiseaseArtifactValidationError(
+                    "Unexpected disease class count."
+                )
 
-        artifact_temperature = _finite_float("artifact.temperature", artifact["temperature"], positive=True)
-        if not math.isclose(
-            artifact_temperature,
-            metadata.temperature,
-            rel_tol=0.0,
-            abs_tol=1e-12,
-        ):
-            raise DiseaseArtifactValidationError("Artifact temperature does not match temperature.json.")
+            class_names = artifact["class_names"]
+            if not isinstance(class_names, (list, tuple)):
+                raise DiseaseArtifactValidationError(
+                    "Disease model artifact class_names is invalid."
+                )
+            if len(class_names) != len(TOMATO_DISEASE_CLASS_NAMES):
+                raise DiseaseArtifactValidationError(
+                    "Disease model artifact class_names length is invalid."
+                )
+            if any(not isinstance(label, str) for label in class_names):
+                raise DiseaseArtifactValidationError(
+                    "Disease model artifact class_names entries are invalid."
+                )
+            if tuple(class_names) != TOMATO_DISEASE_CLASS_NAMES:
+                raise DiseaseArtifactValidationError(
+                    "Artifact class order does not match API policy."
+                )
+
+            model_state_dict = artifact["model_state_dict"]
+            if not isinstance(model_state_dict, Mapping):
+                raise DiseaseArtifactValidationError(
+                    "Disease model artifact state dictionary is invalid."
+                )
+
+            input_size = artifact["input_size"]
+            if not isinstance(input_size, (list, tuple)) or len(input_size) != 2:
+                raise DiseaseArtifactValidationError(
+                    "Disease model artifact input_size is invalid."
+                )
+            if any(isinstance(value, bool) or not isinstance(value, int) for value in input_size):
+                raise DiseaseArtifactValidationError(
+                    "Disease model artifact input_size values are invalid."
+                )
+            if list(input_size) != [224, 224]:
+                raise DiseaseArtifactValidationError(
+                    "Unexpected disease model input size."
+                )
+
+            normalization = artifact["normalization"]
+            if not isinstance(normalization, Mapping):
+                raise DiseaseArtifactValidationError(
+                    "Artifact normalization metadata is invalid."
+                )
+            mean = normalization.get("mean")
+            std = normalization.get("std")
+            if (
+                not isinstance(mean, (list, tuple))
+                or not isinstance(std, (list, tuple))
+                or len(mean) != 3
+                or len(std) != 3
+            ):
+                raise DiseaseArtifactValidationError(
+                    "Artifact normalization mean/std must contain three values."
+                )
+
+            for value in mean:
+                _finite_float("normalization.mean", value)
+            for value in std:
+                _finite_float("normalization.std", value, positive=True)
+
+            artifact_temperature = _finite_float(
+                "artifact.temperature",
+                artifact["temperature"],
+                positive=True,
+            )
+            if not math.isclose(
+                artifact_temperature,
+                metadata.temperature,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            ):
+                raise DiseaseArtifactValidationError(
+                    "Artifact temperature does not match temperature.json."
+                )
+        except DiseaseArtifactValidationError:
+            raise
+        except Exception as exc:
+            raise DiseaseArtifactValidationError(
+                "Disease model artifact metadata is invalid."
+            ) from exc
 
     def predict(self, image_base64: str) -> DiseaseInferenceResult:
         image = _decode_image_base64(image_base64)

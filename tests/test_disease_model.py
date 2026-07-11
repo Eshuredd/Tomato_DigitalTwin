@@ -75,6 +75,21 @@ def _fake_artifact_dir(tmp_path: Path) -> Path:
     return artifact_dir
 
 
+def _valid_pt_metadata() -> dict[str, object]:
+    return {
+        "model_name": "mobilenet_v3_small",
+        "num_classes": len(TOMATO_DISEASE_CLASS_NAMES),
+        "class_names": list(TOMATO_DISEASE_CLASS_NAMES),
+        "model_state_dict": {},
+        "temperature": 1.0508726748943829,
+        "input_size": [224, 224],
+        "normalization": {
+            "mean": [0.485, 0.456, 0.406],
+            "std": [0.229, 0.224, 0.225],
+        },
+    }
+
+
 def test_valid_tiny_jpeg_base64_is_accepted() -> None:
     image = _decode_image_base64(_tiny_jpeg_base64())
     assert image.mode == "RGB"
@@ -178,19 +193,100 @@ def test_threshold_mismatch_is_rejected(tmp_path: Path) -> None:
         _validate_runtime_artifacts(artifact_dir)
 
 
+def test_runtime_artifact_validation_succeeds_without_test_metrics(
+    tmp_path: Path,
+) -> None:
+    artifact_dir = _fake_artifact_dir(tmp_path)
+
+    metadata = _validate_runtime_artifacts(artifact_dir)
+
+    assert metadata.model_path == artifact_dir / disease_model.MODEL_FILENAME
+    assert metadata.validation_ece_after == pytest.approx(0.008117275312542915)
+
+
+def test_malformed_test_metrics_does_not_block_runtime_validation(
+    tmp_path: Path,
+) -> None:
+    artifact_dir = _fake_artifact_dir(tmp_path)
+    (artifact_dir / disease_model.TEST_METRICS_FILENAME).write_text(
+        "{not json",
+        encoding="utf-8",
+    )
+
+    metadata = _validate_runtime_artifacts(artifact_dir)
+
+    assert metadata.confidence_threshold == pytest.approx(0.70)
+
+
+@pytest.mark.parametrize(
+    "artifact",
+    [
+        None,
+        [],
+        "not a dictionary",
+    ],
+)
+def test_malformed_pt_artifact_object_raises_artifact_validation_error(
+    tmp_path: Path,
+    artifact: object,
+) -> None:
+    metadata = _validate_runtime_artifacts(_fake_artifact_dir(tmp_path))
+    predictor = TorchTomatoDiseasePredictor(artifact_dir=tmp_path)
+
+    with pytest.raises(DiseaseArtifactValidationError):
+        predictor._validate_pt_artifact(artifact, metadata)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda artifact: artifact.update({"class_names": None}),
+        lambda artifact: artifact.update(
+            {"class_names": [*TOMATO_DISEASE_CLASS_NAMES[:-1], 7]}
+        ),
+        lambda artifact: artifact.update({"input_size": None}),
+        lambda artifact: artifact.update({"input_size": [224, True]}),
+        lambda artifact: artifact.update({"normalization": None}),
+        lambda artifact: artifact["normalization"].update({"mean": [0.485, 0.456]}),
+        lambda artifact: artifact["normalization"].update({"std": [0.229, 0.0, 0.225]}),
+        lambda artifact: artifact.update({"temperature": float("nan")}),
+        lambda artifact: artifact.update({"num_classes": True}),
+        lambda artifact: artifact.pop("model_state_dict"),
+    ],
+)
+def test_malformed_pt_metadata_raises_artifact_validation_error(
+    tmp_path: Path,
+    mutation,
+) -> None:
+    metadata = _validate_runtime_artifacts(_fake_artifact_dir(tmp_path))
+    predictor = TorchTomatoDiseasePredictor(artifact_dir=tmp_path)
+    artifact = _valid_pt_metadata()
+    mutation(artifact)
+
+    with pytest.raises(DiseaseArtifactValidationError):
+        predictor._validate_pt_artifact(artifact, metadata)
+
+
 def test_optional_real_artifact_cpu_smoke() -> None:
     pytest.importorskip("torch")
     pytest.importorskip("torchvision")
 
     if not disease_model.DEFAULT_DISEASE_ARTIFACT_DIR.is_dir():
-        pytest.skip("real disease artifact directory is absent")
+        pytest.fail("Committed disease artifact directory is absent.")
+
+    if not (
+        disease_model.DEFAULT_DISEASE_ARTIFACT_DIR / disease_model.MODEL_FILENAME
+    ).is_file():
+        pytest.fail("Committed disease model file is absent.")
 
     predictor = TorchTomatoDiseasePredictor(device="cpu")
 
     try:
         result = predictor.predict(_tiny_jpeg_base64())
-    except (DiseaseModelUnavailableError, DiseaseArtifactValidationError) as exc:
-        pytest.skip(f"real disease artifact unavailable: {exc}")
+    except DiseaseArtifactValidationError as exc:
+        pytest.fail(f"Committed disease artifact is invalid: {exc}")
+    except DiseaseModelUnavailableError as exc:
+        pytest.skip(f"Vision runtime unavailable: {exc}")
     except DiseaseInferenceError as exc:
         pytest.fail(f"real disease artifact inference failed: {exc}")
 

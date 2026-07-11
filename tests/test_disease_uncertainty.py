@@ -34,7 +34,18 @@ def test_uncertainty_score_is_one_minus_confidence() -> None:
 
 def test_acceptance_begins_at_exactly_threshold() -> None:
     assert not is_prediction_accepted(0.699999)
+    assert uncertainty_band_from_confidence(0.70) is UncertaintyBand.MEDIUM
     assert is_prediction_accepted(0.70)
+
+
+def test_exact_low_uncertainty_boundary() -> None:
+    assert uncertainty_band_from_confidence(0.90) is UncertaintyBand.LOW
+    assert uncertainty_score_from_confidence(0.90) == pytest.approx(0.10)
+
+
+def test_exact_medium_uncertainty_score_boundary() -> None:
+    assert uncertainty_band_from_confidence(0.70) is UncertaintyBand.MEDIUM
+    assert uncertainty_score_from_confidence(0.70) == pytest.approx(0.30)
 
 
 @pytest.mark.parametrize(

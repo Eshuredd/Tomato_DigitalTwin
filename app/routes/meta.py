@@ -12,9 +12,9 @@ from fastapi import APIRouter
 
 from app.disease.classes import DISEASE_CLASSES
 from app.disease.model import (
-    DEFAULT_DISEASE_ARTIFACT_DIR,
     DEFAULT_DISEASE_MODEL_NAME,
     DEFAULT_DISEASE_MODEL_VERSION,
+    get_default_artifact_dir,
 )
 from app.disease.uncertainty import (
     ACCEPTANCE_CONFIDENCE_THRESHOLD,
@@ -83,7 +83,7 @@ def _disease_classes_snapshot() -> list[dict[str, str]]:
 
 
 def _artifact_json(filename: str) -> dict[str, object]:
-    path = DEFAULT_DISEASE_ARTIFACT_DIR / filename
+    path = get_default_artifact_dir() / filename
     try:
         with path.open("r", encoding="utf-8") as handle:
             data = json.load(handle)
@@ -134,15 +134,33 @@ def _disease_metadata_snapshot() -> dict[str, object]:
         "uncertainty_method": DISEASE_UNCERTAINTY_METHOD,
         "uncertainty_method_basis": UNCERTAINTY_POLICY_BASIS,
         "confidence_thresholds": {
-            "high_uncertainty_below": ACCEPTANCE_CONFIDENCE_THRESHOLD,
-            "medium_uncertainty_gte": ACCEPTANCE_CONFIDENCE_THRESHOLD,
-            "medium_uncertainty_below": LOW_UNCERTAINTY_CONFIDENCE_THRESHOLD,
-            "low_uncertainty_gte": LOW_UNCERTAINTY_CONFIDENCE_THRESHOLD,
+            "acceptance_confidence_gte": ACCEPTANCE_CONFIDENCE_THRESHOLD,
+            "low_uncertainty_confidence_gte": (
+                LOW_UNCERTAINTY_CONFIDENCE_THRESHOLD
+            ),
+            "medium_uncertainty_confidence_gte": (
+                ACCEPTANCE_CONFIDENCE_THRESHOLD
+            ),
+            "medium_uncertainty_confidence_lt": (
+                LOW_UNCERTAINTY_CONFIDENCE_THRESHOLD
+            ),
+            "high_uncertainty_confidence_lt": (
+                ACCEPTANCE_CONFIDENCE_THRESHOLD
+            ),
         },
         "uncertainty_thresholds": {
-            "low_lt": 1.0 - LOW_UNCERTAINTY_CONFIDENCE_THRESHOLD,
-            "medium_lt": 1.0 - ACCEPTANCE_CONFIDENCE_THRESHOLD,
-            "high_gte": 1.0 - ACCEPTANCE_CONFIDENCE_THRESHOLD,
+            "low_uncertainty_score_lte": (
+                1.0 - LOW_UNCERTAINTY_CONFIDENCE_THRESHOLD
+            ),
+            "medium_uncertainty_score_gt": (
+                1.0 - LOW_UNCERTAINTY_CONFIDENCE_THRESHOLD
+            ),
+            "medium_uncertainty_score_lte": (
+                1.0 - ACCEPTANCE_CONFIDENCE_THRESHOLD
+            ),
+            "high_uncertainty_score_gt": (
+                1.0 - ACCEPTANCE_CONFIDENCE_THRESHOLD
+            ),
         },
         "classes": _disease_classes_snapshot(),
         "temperature": _artifact_float(temperature, "temperature"),
