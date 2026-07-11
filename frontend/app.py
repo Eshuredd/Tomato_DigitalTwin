@@ -574,15 +574,7 @@ def _render_sidebar(client: CropTwinAPIClient) -> None:
                 _reset_ui()
 
         with st.expander("Settings", expanded=False):
-            new_base_url = st.text_input(
-                "API base URL",
-                value=st.session_state.api_base_url,
-                help="FastAPI base URL used by the Streamlit HTTP client.",
-            )
-            if new_base_url != st.session_state.api_base_url:
-                st.session_state.api_base_url = new_base_url.strip() or DEFAULT_API_BASE_URL
-                st.session_state.connection_status = "not_checked"
-                st.rerun()
+            st.caption("API base URL is configured internally and is not shown here.")
 
             if st.button("Check connection", use_container_width=True):
                 result = _call_api("Connection check", lambda: client.health(), store_as="health_response")
@@ -681,11 +673,11 @@ def _render_session_tab(client: CropTwinAPIClient) -> None:
 
 
 def _render_disease_tab(client: CropTwinAPIClient) -> None:
-    with _card("Disease evidence", "Upload a tomato leaf image. The classifier supplies supporting evidence only."):
-        if not _has_state_id():
-            st.info("Create or load a session first.")
-            return
+    if not _has_state_id():
+        st.info("Create or load a session first before moving to Disease evidence.")
+        return
 
+    with _card("Disease evidence", "Upload a tomato leaf image. The classifier supplies supporting evidence only."):
         uploaded = st.file_uploader("Tomato leaf image", type=["jpg", "jpeg", "png"])
         if uploaded:
             image_bytes = uploaded.getvalue()
@@ -743,11 +735,11 @@ def _render_disease_tab(client: CropTwinAPIClient) -> None:
 
 
 def _render_water_tab(client: CropTwinAPIClient) -> None:
-    with _card("Weather inputs", "Compute crop water state from submitted weather values and optional irrigation."):
-        if not _has_state_id():
-            st.info("Create or load a session first.")
-            return
+    if not st.session_state.disease_response:
+        st.info("Complete Disease evidence before moving to Water & Twin.")
+        return
 
+    with _card("Weather inputs", "Compute crop water state from submitted weather values and optional irrigation."):
         with st.form("water_form"):
             current_date = st.date_input("Current date", value=date.today())
             col_a, col_b, col_c = st.columns(3)
@@ -848,11 +840,11 @@ def _render_twin_state_card(client: CropTwinAPIClient) -> None:
 
 
 def _render_decision_tab(client: CropTwinAPIClient) -> None:
-    with _card("Simulations", "Compare candidate irrigation actions before requesting the backend recommendation."):
-        if not _has_state_id():
-            st.info("Create or load a session first.")
-            return
+    if not st.session_state.twin_response:
+        st.info("Complete Water & Twin before moving to Simulate & Recommend.")
+        return
 
+    with _card("Simulations", "Compare candidate irrigation actions before requesting the backend recommendation."):
         actions = st.multiselect("Candidate actions", ACTION_OPTIONS, default=ACTION_OPTIONS)
         if st.button(
             "Run simulations",
@@ -925,11 +917,11 @@ def _render_simulation_results(
 
 
 def _render_records_tab(client: CropTwinAPIClient) -> None:
-    with _card("Narration", "Explain the current backend recommendation in farmer-readable language."):
-        if not _has_state_id():
-            st.info("Create or load a session first.")
-            return
+    if not st.session_state.recommendation_response:
+        st.info("Complete Simulate & Recommend before moving to Narration & Records.")
+        return
 
+    with _card("Narration", "Explain the current backend recommendation in farmer-readable language."):
         if st.button("Explain recommendation", disabled=not st.session_state.recommendation_response, type="primary"):
             result = _call_api(
                 "Narration generation",
