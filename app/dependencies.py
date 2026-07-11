@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Any, Callable, NoReturn, TypeVar
 
 from fastapi import Depends, Request
 from fastapi.responses import JSONResponse
 
+from app.disease.model import DiseasePredictor, TorchTomatoDiseasePredictor
 from app.schemas import (
     ErrorDetail,
     ErrorResponse,
@@ -83,6 +85,11 @@ def raise_api_error(
 
 def get_state_store() -> InMemoryTwinStateStore:
     return state_store
+
+
+@lru_cache(maxsize=1)
+def get_disease_predictor() -> DiseasePredictor:
+    return TorchTomatoDiseasePredictor()
 
 
 def raise_from_store_error(exc: Exception) -> NoReturn:

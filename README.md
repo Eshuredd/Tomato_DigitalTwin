@@ -1,56 +1,32 @@
 # CropTwin: Tomato Irrigation and Disease Digital Twin
 
-CropTwin is a FastAPI-based tomato digital twin that combines crop stage, weather inputs, soil water balance, disease evidence, irrigation-action simulations, deterministic recommendations, and safe farmer-readable narration.
+CropTwin is a FastAPI-based tomato digital twin that combines crop stage, weather inputs, soil water balance, tomato-leaf disease evidence, irrigation-action simulations, deterministic recommendations, and safe farmer-readable narration.
 
-It is a hackathon MVP for decision support: the system exposes the reasoning behind irrigation guidance, but it is not a production agronomy system and does not replace field inspection or professional advice.
+It is a hackathon MVP for decision support. The system exposes reasoning behind irrigation guidance, but it is not a production agronomy system and does not replace field inspection or professional advice.
 
 ## Hackathon Context
 
-CropTwin was built for the AMD Developer Hackathon Act II on lablab.ai. This repository currently contains the backend MVP: a deterministic API workflow, explicit agronomic assumptions, and automated tests for the main route sequence.
+CropTwin was built for the AMD Developer Hackathon Act II on lablab.ai. This repository contains the backend MVP: explicit agronomic assumptions, a session-scoped API workflow, a trained tomato-leaf classifier adapter, and automated tests for the main route sequence.
 
-## Problem Statement
-
-Farmers and agronomy teams need irrigation guidance that accounts for crop growth stage, weather, soil-water conditions, and disease risk. Many AI-oriented tools return recommendations without making the physical reasoning easy to inspect. CropTwin demonstrates a tomato digital twin where water-balance calculations, simulations, recommendation rules, and narration boundaries are explicit and testable.
-
-## Solution Overview
-
-CropTwin maintains a session-based digital representation of a tomato crop. A session stores the crop, planting date, location, elevation, soil texture, cached disease evidence, cached growth and water outputs, a canonical current twin state, simulation results, and the latest recommendation.
-
-The workflow is deliberately staged:
+## Workflow
 
 1. Create a session with crop, planting date, location, and soil texture.
-2. Attach disease evidence through the current deterministic mock disease route.
+2. Attach disease evidence from the MobileNetV3-Small tomato-leaf classifier.
 3. Compute growth stage and water state from weather, crop coefficient, ETo, ETc, soil assumptions, rainfall, and optional irrigation event.
 4. Assemble the canonical current twin state from cached disease, growth, and water outputs.
 5. Simulate fixed candidate irrigation actions.
 6. Build a deterministic irrigation recommendation.
 7. Generate deterministic narration that explains the existing recommendation.
 
-## Key Features
+Ordering matters. The canonical twin state requires cached disease, growth, and water outputs. Simulation requires the current twin state. Recommendation requires cached simulation results. Narration requires a cached recommendation.
 
-- Tomato digital-twin session creation.
-- Elevation lookup during session creation through the Open-Meteo elevation API.
-- Deterministic tomato growth-stage resolution.
-- FAO-style ETo calculation with Penman-Monteith and Hargreaves-Samani fallback.
-- Crop coefficient lookup by tomato growth stage.
-- Root-zone water-balance calculation with TAW, RAW, depletion, moisture state, and stress band.
-- Optional irrigation-event freshness guard to avoid double-counting older events.
-- Deterministic mock disease evidence for exercising the full workflow.
-- Canonical current-state assembly from cached disease, growth, and water outputs.
-- Deterministic simulation of fixed irrigation actions.
-- Deterministic recommendation policy with fungal-risk caution handling.
-- Deterministic farmer-readable narration by default, without an LLM client.
-- Session state and history retrieval.
-- Structured API error envelopes.
-- End-to-end API workflow tests.
-
-## System Architecture
+## Architecture
 
 ```mermaid
 flowchart TD
     A[Create CropTwin session] --> B[Session store]
     A --> C[Open-Meteo elevation lookup]
-    D[Disease evidence request] --> E[Deterministic mock disease route]
+    D[Base64 tomato-leaf image] --> E[Lazy MobileNetV3-Small disease classifier]
     F[Weather and irrigation inputs] --> G[Growth stage resolver]
     F --> H[ETo and ETc calculation]
     G --> I[Water balance]
@@ -64,114 +40,88 @@ flowchart TD
     J --> N[Session state and history]
 ```
 
-## Decision and Data Flow
+The deterministic agronomy engine owns irrigation decisions. The classifier supplies disease evidence only. It does not compute water balance, run simulations, choose irrigation, or provide pesticide, fungicide, insecticide, fertilizer, dosage, or treatment advice.
 
-Use the session-scoped API paths in this order:
+## API Endpoints
 
 ```text
 GET  /health
 GET  /system-info
 
 POST /sessions
+GET  /sessions/{state_id}
+GET  /sessions/{state_id}/history
+
 POST /sessions/{state_id}/predict-disease
 POST /sessions/{state_id}/compute-water-state
 POST /sessions/{state_id}/update-twin-state
 POST /sessions/{state_id}/simulate-actions
 POST /sessions/{state_id}/recommend
 POST /sessions/{state_id}/narrate
-
-GET  /sessions/{state_id}
-GET  /sessions/{state_id}/history
 ```
 
-Ordering matters. The canonical twin state requires cached disease, growth, and water outputs. Simulation requires the canonical current state. Recommendation requires cached simulation results. Narration requires a cached recommendation.
+## Disease Classifier
 
-## Deterministic, AI, and Mocked Components
+`POST /sessions/{state_id}/predict-disease` uses a trained MobileNetV3-Small tomato-leaf classifier through a lazy dependency-injected adapter.
 
-| Component | Current implementation | Role |
-|---|---|---|
-| Growth-stage resolution | Deterministic tomato stage resolver | Converts planting date and current date into growth stage and progress |
-| ETo and ETc | Deterministic FAO-style calculations | Computes reference and crop evapotranspiration from supplied weather |
-| Water balance | Deterministic bucket-style root-zone model | Computes TAW, RAW, depletion, moisture state, and stress band |
-| Simulation | Deterministic fixed-action simulator | Projects candidate irrigation actions over a 24-hour horizon |
-| Recommendation | Deterministic rule engine | Chooses the irrigation action and constraints from current state plus simulation |
-| Disease predictor | Deterministic mock route | Supplies disease evidence, confidence, and uncertainty for the MVP workflow |
-| Narration | Deterministic by default; optional client interface exists in narrator module | Explains the accepted recommendation without changing it |
+- Model adapter: `app/disease/model.py`
+- Canonical classes: `app/disease/classes.py`
+- Confidence and uncertainty policy: `app/disease/uncertainty.py`
+- Artifact directory: `model_artifacts/croptwin_disease/`
+- Supported `model_version`: `"1.0"`
+- Dataset: PlantVillage tomato subset, 10 classes
+- Input: base64 or `data:image/...;base64,...`
+- Preprocessing: resize shorter side to 256, center crop to 224 x 224, tensor conversion, artifact normalization
+- Architecture: MobileNetV3-Small with ImageNet-pretrained initialization during training, classifier-head training followed by final-block fine-tuning
+- Calibration: temperature scaling fitted on the validation split
+- AMD validation context: training and inference validation recorded with ROCm PyTorch on AMD GPU runtime metadata in `test_metrics.json`
 
-The recommendation engine owns action selection. Disease evidence can add caution, constraints, or inspection advice, but it does not independently override the water-balance and simulation workflow. The narrator explains an existing recommendation and must not recompute or change it.
+The adapter does not import torch or torchvision at FastAPI import time. Optional vision dependencies are listed separately in `requirements-vision.txt`; normal backend tests use dependency overrides and do not require torch, torchvision, a GPU, or model loading.
 
-## AMD/ROCm Integration
+## Class Labels
 
-AMD/ROCm model training and inference are planned for the real tomato-leaf classifier and are not part of the currently verified backend checkpoint.
+The artifact class order is:
 
-The verified backend currently runs CPU-compatible deterministic logic plus a deterministic mock disease predictor. The repository includes `requirements-vision.txt` with `torch`, `torchvision`, and `numpy` placeholders and a note to pin compatible wheels after confirming the AMD container ROCm version. There is no verified ROCm runtime, AMD GPU model artifact, measured GPU metric, Docker deployment, or public deployment in this checkpoint.
+1. `Tomato___Bacterial_spot`
+2. `Tomato___Early_blight`
+3. `Tomato___Late_blight`
+4. `Tomato___Leaf_Mold`
+5. `Tomato___Septoria_leaf_spot`
+6. `Tomato___Spider_mites Two-spotted_spider_mite`
+7. `Tomato___Target_Spot`
+8. `Tomato___Tomato_Yellow_Leaf_Curl_Virus`
+9. `Tomato___Tomato_mosaic_virus`
+10. `Tomato___healthy`
 
-## Technology Stack
+Spider mites are mapped to `DiseaseCategory.NONE` because the accepted API schema has fungal, bacterial, viral, and none categories, but no pest category.
 
-- Python
-- FastAPI
-- Pydantic v2
-- Uvicorn
-- HTTPX
-- Pytest
-- In-memory state store
+## Verified Artifact Metrics
 
-Optional or planned vision dependencies are separated in `requirements-vision.txt`. Training utilities currently list `pandas` and `scikit-learn` in `requirements-train.txt`.
+These values were read from the files in `model_artifacts/croptwin_disease/`:
 
-## Repository Structure
+| Metric | Value |
+|---|---:|
+| Temperature | `1.0508726748943829` |
+| Confidence acceptance threshold | `0.7` |
+| Validation ECE after calibration | `0.008117275312542915` |
+| Test ECE after calibration | `0.008560522925108671` |
+| Test accuracy | `0.953961012028204` |
+| Test macro precision | `0.9514433459718663` |
+| Test macro recall | `0.9468968994181605` |
+| Test macro F1 | `0.9478684631559062` |
 
-```text
-app/
-  main.py                  FastAPI application wiring
-  schemas.py               Pydantic request and response schemas
-  dependencies.py          Shared store dependency and error handling
-  state_store.py           In-memory session and output cache
-  routes/                  API route modules
-  external/                Elevation API client; weather client placeholder
-  growth_stage/            Tomato growth-stage resolver
-  water/                   ETo, crop coefficient, and water-balance modules
-  disease/                 Placeholder disease package; current API mock lives in routes/disease.py
-  simulation/              Candidate irrigation-action simulator
-  recommendation/          Deterministic recommendation engine
-  narration/               Deterministic narration and optional client protocol
+The test ECE was already very small before calibration and changed slightly after validation-fitted temperature scaling. CropTwin does not claim that laboratory-background PlantVillage accuracy equals real-farm performance.
 
-tests/
-  test_api_workflow.py     End-to-end API workflow and error-path tests
-  test_eto.py              ETo unit tests
-  test_eto_openmeteo.py    Frozen Open-Meteo reference cases
-  test_growth_stage.py     Growth-stage tests
-  test_recommendation.py   Recommendation tests
-  test_water_balance.py    Water-balance tests
+## Uncertainty Policy
 
-data/                      Present but currently empty
-models/                    Present but currently empty
-registration/              Present with placeholder config.py
-```
+The classifier keeps the top-1 label even when confidence is low. Low-confidence predictions remain tentative disease evidence and should trigger manual-inspection behavior downstream.
 
-## API Endpoints
+- `confidence < 0.70`: high uncertainty
+- `0.70 <= confidence < 0.90`: medium uncertainty
+- `confidence >= 0.90`: low uncertainty
+- `uncertainty_score = 1 - confidence`
 
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/health` | Process-level health response |
-| GET | `/system-info` | Deterministic MVP assumptions and metadata |
-| POST | `/sessions` | Create a tomato digital-twin session |
-| GET | `/sessions/{state_id}` | Retrieve canonical current session state |
-| GET | `/sessions/{state_id}/history` | Retrieve current-state history |
-| POST | `/sessions/{state_id}/predict-disease` | Produce deterministic mock disease evidence |
-| POST | `/sessions/{state_id}/compute-water-state` | Compute and cache growth and water outputs |
-| POST | `/sessions/{state_id}/update-twin-state` | Assemble canonical current twin state |
-| POST | `/sessions/{state_id}/simulate-actions` | Simulate candidate irrigation actions |
-| POST | `/sessions/{state_id}/recommend` | Create deterministic irrigation recommendation |
-| POST | `/sessions/{state_id}/narrate` | Generate deterministic farmer-readable narration |
-
-## Prerequisites
-
-- Python with virtual environment support. The verified local environment used Python 3.12.7.
-- PowerShell commands below assume Windows.
-- Internet access is required for session creation when elevation is not supplied, because the API calls Open-Meteo elevation.
-- No environment variables are required by the current backend.
-- No Dockerfile is present in this checkpoint.
-- No model artifact is required for the current deterministic mock disease route.
+The `0.70` acceptance threshold was selected from validation analysis. At this threshold, validation coverage was `0.9362`, accepted validation accuracy was `0.9724`, and validation error capture was `0.5231`.
 
 ## Local Installation
 
@@ -185,19 +135,15 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-Optional vision dependencies are not required for the verified backend workflow:
+Install optional vision dependencies only for real classifier inference:
 
 ```powershell
 python -m pip install -r requirements-vision.txt
 ```
 
-Install them only after selecting a PyTorch and torchvision build compatible with the target AMD ROCm environment.
+Select a PyTorch and torchvision build compatible with the target AMD ROCm environment. This repository intentionally keeps the vision dependencies separate from the core API requirements.
 
-## Environment Configuration
-
-`.env.example` is currently empty, and the inspected application code does not read environment variables. Elevation lookup uses the public Open-Meteo elevation endpoint directly.
-
-## Running the API
+## Running The API
 
 ```powershell
 uvicorn app.main:app --reload
@@ -209,162 +155,66 @@ Useful local URLs:
 - OpenAPI JSON: `http://127.0.0.1:8000/openapi.json`
 - Health endpoint: `http://127.0.0.1:8000/health`
 
-Do not run `python app/main.py`; the application is intended to be launched by an ASGI server.
+## Example Predict Disease Request
+
+```json
+{
+  "state_id": "state_xxx",
+  "image_base64": "/9j/4AAQSkZJRgABAQAAAQABAAD...",
+  "model_version": "1.0"
+}
+```
+
+The request also accepts a data URI prefix:
+
+```json
+{
+  "state_id": "state_xxx",
+  "image_base64": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD...",
+  "model_version": "1.0"
+}
+```
+
+When a request body contains `state_id`, it must match the path `state_id`.
+
+## Repository Structure
+
+```text
+app/
+  main.py                  FastAPI application wiring
+  schemas.py               Pydantic request and response schemas
+  dependencies.py          Shared dependencies, predictor singleton, and error handling
+  state_store.py           In-memory session and output cache
+  routes/                  API route modules
+  external/                Elevation API client; weather client placeholder
+  growth_stage/            Tomato growth-stage resolver
+  water/                   ETo, crop coefficient, and water-balance modules
+  disease/                 Class mapping, uncertainty policy, and lazy model adapter
+  simulation/              Candidate irrigation-action simulator
+  recommendation/          Deterministic recommendation engine
+  narration/               Deterministic narration and optional client protocol
+
+model_artifacts/
+  croptwin_disease/        Trusted deployment bundle for the tomato classifier
+
+tests/
+  test_api_workflow.py     End-to-end API workflow and error-path tests
+  test_disease_classes.py  Disease class mapping tests
+  test_disease_model.py    Image decoding and artifact validation tests
+  test_disease_uncertainty.py
+  test_routes/             Focused route tests
+```
 
 ## Running Tests
 
 ```powershell
 python -m pytest -v
-python -m pytest -q tests/test_api_workflow.py
+python -m pytest -v tests/test_routes/test_disease.py
 ```
 
-Verified in this repository checkpoint using `.venv\Scripts\python.exe`:
+The normal test suite uses FastAPI dependency overrides for the disease predictor. It does not require torch, torchvision, a GPU, ROCm, or loading the real `.pt` artifact. An optional smoke test skips when the vision runtime or real artifact execution is unavailable.
 
-- `python -m pytest -v`: `33 passed in 0.57s`
-- `python -m pytest -q tests/test_api_workflow.py`: `8 passed in 0.51s`
-
-The tests cover the full API workflow, prerequisite failures, state-ID mismatch errors, unknown sessions, irrigation double-count protection, deterministic narration, ETo calculations, and frozen Open-Meteo reference cases.
-
-## Full Demo Workflow
-
-The easiest demo path is Swagger UI:
-
-1. Start the API with `uvicorn app.main:app --reload`.
-2. Open `http://127.0.0.1:8000/docs`.
-3. Call `POST /sessions`.
-4. Copy the returned `state_id`.
-5. Call `POST /sessions/{state_id}/predict-disease`.
-6. Call `POST /sessions/{state_id}/compute-water-state`.
-7. Call `POST /sessions/{state_id}/update-twin-state`.
-8. Call `POST /sessions/{state_id}/simulate-actions`.
-9. Call `POST /sessions/{state_id}/recommend`.
-10. Call `POST /sessions/{state_id}/narrate`.
-11. Call `GET /sessions/{state_id}`.
-12. Call `GET /sessions/{state_id}/history`.
-
-When a request body contains `state_id`, it must match the `state_id` in the path.
-
-## Example Request Payloads
-
-### Create Session
-
-```json
-{
-  "crop_type": "tomato",
-  "planting_date": "2026-06-01",
-  "location": {
-    "name": "Hyderabad Test Farm",
-    "latitude": 17.385,
-    "longitude": 78.4867
-  },
-  "soil_texture": "sandy_loam"
-}
-```
-
-If `location.elevation_m` is omitted, the session route fetches elevation from Open-Meteo. To avoid that external call in a local demo, provide a value:
-
-```json
-{
-  "crop_type": "tomato",
-  "planting_date": "2026-06-01",
-  "location": {
-    "name": "Hyderabad Test Farm",
-    "latitude": 17.385,
-    "longitude": 78.4867,
-    "elevation_m": 542.0
-  },
-  "soil_texture": "sandy_loam"
-}
-```
-
-### Predict Disease
-
-The current disease route is a deterministic mock. `image_base64` is treated as an input signal string by the mock; it is not decoded as a real image in this backend checkpoint.
-
-```json
-{
-  "state_id": "state_xxx",
-  "image_base64": "deterministic_tomato_leaf_signal_deterministic_tomato_leaf_signal_deterministic_tomato_leaf_signal_deterministic_tomato_leaf_signal",
-  "model_version": "1.0"
-}
-```
-
-### Compute Water State
-
-```json
-{
-  "state_id": "state_xxx",
-  "current_date": "2026-07-10",
-  "weather": {
-    "tmin_c": 22.0,
-    "tmax_c": 31.0,
-    "humidity_pct": 62.0,
-    "wind_speed_mps": 2.1,
-    "shortwave_radiation_sum_mj_m2": 18.5,
-    "rainfall_mm": 0.5,
-    "eto_reference_feed": 4.9
-  },
-  "last_irrigation_event": {
-    "timestamp": "2026-07-09T08:00:00Z",
-    "amount_mm": 8.0
-  }
-}
-```
-
-`last_irrigation_event` may be `null` or omitted. The route applies the event only when it is newer than the previous canonical current-state update.
-
-### Update Twin State
-
-```json
-{
-  "state_id": "state_xxx"
-}
-```
-
-### Simulate Actions
-
-```json
-{
-  "state_id": "state_xxx",
-  "actions": [
-    "IRRIGATE_NOW",
-    "IRRIGATE_IN_6H",
-    "IRRIGATE_TOMORROW_AM",
-    "NO_IRRIGATION_24H"
-  ]
-}
-```
-
-### Recommendation and Narration
-
-These routes are bodyless:
-
-```text
-POST /sessions/{state_id}/recommend
-POST /sessions/{state_id}/narrate
-```
-
-## Disease Model Details
-
-Implemented at this checkpoint:
-
-- `POST /sessions/{state_id}/predict-disease` uses deterministic mock logic in `app/routes/disease.py`.
-- The mock model name is `mvp_deterministic_tomato_disease_mock`.
-- The supported mock model version is `1.0`.
-- The mock exists to exercise the end-to-end digital-twin workflow.
-- No disease accuracy, field performance, or image-classification metric is claimed.
-
-Not yet implemented:
-
-- Real image decoding and preprocessing.
-- Real tomato-leaf disease classifier inference.
-- Model artifact loading.
-- AMD/ROCm inference path.
-- Disease-model evaluation metrics.
-
-The package `app/disease/` is present but its inspected files are currently placeholders.
-
-## Agronomic Assumptions and Constants
+## Agronomic Assumptions
 
 These values are MVP defaults, not field-calibrated agronomic recommendations.
 
@@ -377,16 +227,11 @@ These values are MVP defaults, not field-calibrated agronomic recommendations.
 | Kc by stage | initial 0.60, development 0.80, mid-season 1.15, late-season 0.80 |
 | Soil parameter basis | `mvp_assumed_volumetric_field_capacity_wilting_point_by_soil_texture` |
 | Root-depth basis | `mvp_assumed_tomato_root_depth_by_growth_stage` |
-| Root depth by stage | initial 0.25 m, development 0.40 m, mid-season 0.70 m, late-season 0.70 m |
 | Allowable depletion fraction | 0.50 |
-| Fungal confidence threshold | 0.80 |
-| Fungal threshold basis | `mvp_assumed_confidence_threshold_for_fungal_wetness_constraint` |
+| Fungal recommendation confidence threshold | 0.80 |
 | Narration length safety limit | 1200 characters |
-| Narration length basis | `mvp_safety_limit_for_llm_narration_length` |
 
-Soil water defaults are also explicit in `app/water/water_balance.py` for sand, sandy loam, loam, silty loam, clay loam, and clay.
-
-## Safety and Design Boundaries
+## Safety And Limitations
 
 - The deterministic water model owns crop-water calculations.
 - The deterministic recommendation engine owns the irrigation action.
@@ -394,39 +239,10 @@ Soil water defaults are also explicit in `app/water/water_balance.py` for sand, 
 - Disease evidence does not directly choose the irrigation action.
 - Narration cannot recompute water balance, rerun simulation, or change the recommendation.
 - High-uncertainty disease evidence should be inspected before relying on disease-specific constraints.
-- CropTwin does not provide pesticide, fungicide, insecticide, fertilizer, chemical dosage, or disease-treatment advice.
-- CropTwin is a prototype decision-support system and does not replace field inspection or professional agronomic guidance.
-
-## Current Limitations
-
+- PlantVillage imagery has lab-background limitations and is not equivalent to field validation.
+- CropTwin does not provide treatment, chemical, dosage, or pesticide advice.
 - In-memory state is lost when the process restarts.
 - Tomato is the only supported crop.
 - Weather values are supplied in API requests; live weather ingestion is not implemented.
-- Elevation lookup depends on an external Open-Meteo API unless elevation is supplied in the session request.
-- Disease prediction is currently a deterministic mock.
-- No authentication or farm/user isolation.
-- No persistent database.
-- No production monitoring or observability.
-- No frontend.
-- No Dockerfile or public deployment is present.
-- No verified AMD/ROCm model training or inference path is present.
-
-## Future Improvements
-
-- Persistent database-backed sessions.
-- Authentication and farm-level isolation.
-- Live weather ingestion.
-- Field-calibrated crop, soil, and irrigation parameters.
-- Real tomato-leaf classifier with explicit artifact metadata.
-- AMD/ROCm inference and benchmarked model execution.
-- Broader crop support.
-- Stronger confidence calibration and disease uncertainty validation.
-- Docker deployment.
-- Observability, metrics, and operational monitoring.
-- Optional constrained LLM narration behind the existing safety checks.
-- User-facing web or mobile interface.
-
-## Project Status
-
-The deterministic CropTwin backend MVP is implemented and tested. The current checkpoint verifies the API workflow, deterministic agronomic calculations, simulation, recommendation, narration, and structured error paths. Real tomato-leaf classification, AMD/ROCm model integration, containerization, frontend development, persistent storage, and deployment remain future work.
-
+- Elevation lookup depends on Open-Meteo unless elevation is supplied in the session request.
+- No authentication, persistent database, production monitoring, or field validation is implemented.

@@ -7,15 +7,20 @@ from datetime import date, datetime, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-from app.dependencies import get_state_store
+from app.dependencies import get_disease_predictor, get_state_store
+from app.disease.classes import TOMATO_DISEASE_CLASS_NAMES
+from app.disease.model import (
+    DEFAULT_DISEASE_MODEL_VERSION,
+    DiseaseInferenceResult,
+)
 from app.main import app
 from app.routes import meta, sessions
-from app.routes.disease import DEFAULT_DISEASE_MODEL_VERSION
 from app.schemas import (
     ActionEnum,
     ComputeWaterStateRequest,
     CreateSessionRequest,
     CropType,
+    DiseaseCategory,
     DiseasePredictionResponse,
     ErrorResponse,
     HealthResponse,
@@ -31,6 +36,7 @@ from app.schemas import (
     SimulateActionsResponse,
     SoilTexture,
     StateIdRequest,
+    UncertaintyBand,
     UpdateTwinStateResponse,
     WaterStateResponse,
     WeatherInput,
@@ -42,6 +48,32 @@ PLANTING_DATE = date(2026, 6, 1)
 CURRENT_DATE = date(2026, 7, 10)
 MOCK_ELEVATION_M = 542.0
 DISEASE_SIGNAL = "deterministic_tomato_leaf_signal_" * 12
+
+
+class FakeDiseasePredictor:
+    model_name = "fake_tomato_disease_predictor"
+    model_version = DEFAULT_DISEASE_MODEL_VERSION
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def predict(self, image_base64: str) -> DiseaseInferenceResult:
+        self.calls += 1
+        predicted_label = "Tomato___Late_blight"
+        class_probs = {
+            label: 0.01
+            for label in TOMATO_DISEASE_CLASS_NAMES
+        }
+        class_probs[predicted_label] = 0.91
+
+        return DiseaseInferenceResult(
+            predicted_label=predicted_label,
+            disease_category=DiseaseCategory.FUNGAL,
+            class_probs=class_probs,
+            confidence_calibrated=0.91,
+            uncertainty_score=0.09,
+            uncertainty_band=UncertaintyBand.LOW,
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -70,12 +102,18 @@ def elevation_call_count(
 @pytest.fixture
 def client_and_store() -> Iterator[tuple[TestClient, InMemoryTwinStateStore]]:
     store = InMemoryTwinStateStore()
+    predictor = FakeDiseasePredictor()
 
     def override_get_state_store() -> InMemoryTwinStateStore:
         return store
 
+    def override_get_disease_predictor() -> FakeDiseasePredictor:
+        return predictor
+
     previous_override = app.dependency_overrides.get(get_state_store)
+    previous_predictor_override = app.dependency_overrides.get(get_disease_predictor)
     app.dependency_overrides[get_state_store] = override_get_state_store
+    app.dependency_overrides[get_disease_predictor] = override_get_disease_predictor
 
     try:
         with TestClient(app) as client:
@@ -85,6 +123,12 @@ def client_and_store() -> Iterator[tuple[TestClient, InMemoryTwinStateStore]]:
             app.dependency_overrides.pop(get_state_store, None)
         else:
             app.dependency_overrides[get_state_store] = previous_override
+        if previous_predictor_override is None:
+            app.dependency_overrides.pop(get_disease_predictor, None)
+        else:
+            app.dependency_overrides[get_disease_predictor] = (
+                previous_predictor_override
+            )
 
 
 def _weather_input() -> WeatherInput:
