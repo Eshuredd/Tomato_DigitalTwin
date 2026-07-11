@@ -327,11 +327,16 @@ def inject_custom_css() -> None:
         }
 
         div[data-testid="stMetric"] {
-            background: #FFFFFF;
+            background: var(--ct-surface-2);
+            color: var(--ct-text) !important;
             border: 1px solid var(--ct-border);
             border-radius: 14px;
             padding: 12px 14px;
-            box-shadow: 0 5px 14px rgba(31, 42, 36, 0.04);
+            box-shadow: 0 5px 14px rgba(31, 42, 36, 0.08);
+        }
+
+        div[data-testid="stMetric"] * {
+            color: var(--ct-text) !important;
         }
 
         .stTabs [data-baseweb="tab-list"] {
@@ -913,10 +918,10 @@ def _render_simulation_results(
                     if recommended:
                         st.markdown(_badge("Recommended", "Backend selected", "success"), unsafe_allow_html=True)
                     st.markdown(f"#### {escape_html(format_action_label(action))}")
-                    st.write(f"Projected depletion: {row['projected_root_zone_depletion']:.2f} mm")
-                    st.write(f"RAW crossing: {'Yes' if row['projected_raw_crossing'] else 'No'}")
-                    st.write(f"Projected stress: {row['projected_stress_band']}")
-                    st.write(f"Water use: {row['projected_water_use']:.2f} mm")
+                    st.write(f"Root-zone depletion: {row['projected_root_zone_depletion']:.2f} mm")
+                    st.write(f"Readily available water crossed: {'Yes' if row['projected_raw_crossing'] else 'No'}")
+                    st.write(f"Predicted stress level: {row['projected_stress_band']}")
+                    st.write(f"Predicted water use: {row['projected_water_use']:.2f} mm")
                     st.caption(row["disease_wetness_risk_note"])
 
 
