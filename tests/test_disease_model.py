@@ -18,6 +18,7 @@ from app.disease.model import (
     InvalidDiseaseImageError,
     TorchTomatoDiseasePredictor,
     _decode_image_base64,
+    _load_state_dict_strict,
     _validate_runtime_artifacts,
 )
 
@@ -88,6 +89,55 @@ def _valid_pt_metadata() -> dict[str, object]:
             "std": [0.229, 0.224, 0.225],
         },
     }
+
+
+class RecordingLoadStateDictModel:
+    def __init__(self) -> None:
+        self.loaded_state_dict: object | None = None
+        self.strict: bool | None = None
+
+    def load_state_dict(self, state_dict: object, *, strict: bool) -> None:
+        self.loaded_state_dict = state_dict
+        self.strict = strict
+
+
+class FailingLoadStateDictModel:
+    def __init__(self, exc: Exception) -> None:
+        self.exc = exc
+
+    def load_state_dict(self, state_dict: object, *, strict: bool) -> None:
+        raise self.exc
+
+
+def test_strict_state_dict_loading_is_requested() -> None:
+    model = RecordingLoadStateDictModel()
+    state_dict = {"layer.weight": object()}
+
+    _load_state_dict_strict(model, state_dict)
+
+    assert model.loaded_state_dict is state_dict
+    assert model.strict is True
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        RuntimeError("Missing key classifier.3.weight with shape [10, 576]"),
+        ValueError("Missing key classifier.3.weight with shape [10, 576]"),
+    ],
+)
+def test_state_dict_load_failures_become_artifact_validation_error(
+    exc: Exception,
+) -> None:
+    model = FailingLoadStateDictModel(exc)
+
+    with pytest.raises(DiseaseArtifactValidationError) as error:
+        _load_state_dict_strict(model, {"classifier.3.weight": object()})
+
+    assert str(error.value) == "Disease model state dictionary is incompatible."
+    assert error.value.__cause__ is exc
+    assert "classifier.3.weight" not in str(error.value)
+    assert "shape" not in str(error.value)
 
 
 def test_valid_tiny_jpeg_base64_is_accepted() -> None:

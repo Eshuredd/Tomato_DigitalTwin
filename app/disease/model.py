@@ -298,6 +298,21 @@ def _decode_image_base64(image_base64: str) -> Image.Image:
         raise InvalidDiseaseImageError("Image payload is not a supported readable image.") from exc
 
 
+def _load_state_dict_strict(
+    model: Any,
+    state_dict: Mapping[str, Any],
+) -> None:
+    try:
+        model.load_state_dict(
+            state_dict,
+            strict=True,
+        )
+    except Exception as exc:
+        raise DiseaseArtifactValidationError(
+            "Disease model state dictionary is incompatible."
+        ) from exc
+
+
 class TorchTomatoDiseasePredictor:
     model_name = DEFAULT_DISEASE_MODEL_NAME
     model_version = DEFAULT_DISEASE_MODEL_VERSION
@@ -366,31 +381,53 @@ class TorchTomatoDiseasePredictor:
 
             try:
                 model = models.mobilenet_v3_small(weights=None)
-                input_features = model.classifier[-1].in_features
-                model.classifier[-1] = torch.nn.Linear(input_features, len(TOMATO_DISEASE_CLASS_NAMES))
-                model.load_state_dict(artifact["model_state_dict"], strict=True)
-                model.to(device)
-                model.eval()
-
-                normalization = artifact["normalization"]
-                mean = tuple(float(value) for value in normalization["mean"])
-                std = tuple(float(value) for value in normalization["std"])
-                transform = transforms.Compose(
-                    [
-                        transforms.Resize(
-                            256,
-                            interpolation=InterpolationMode.BILINEAR,
-                            antialias=True,
-                        ),
-                        transforms.CenterCrop((224, 224)),
-                        transforms.ToTensor(),
-                        transforms.Normalize(mean=mean, std=std),
-                    ]
-                )
-            except DiseaseArtifactValidationError:
-                raise
             except Exception as exc:
-                raise DiseaseModelUnavailableError("Disease model artifact is incompatible with the runtime.") from exc
+                raise DiseaseModelUnavailableError(
+                    "Disease model architecture is unavailable in the vision runtime."
+                ) from exc
+
+            try:
+                input_features = model.classifier[-1].in_features
+                model.classifier[-1] = torch.nn.Linear(
+                    input_features,
+                    len(TOMATO_DISEASE_CLASS_NAMES),
+                )
+            except Exception as exc:
+                raise DiseaseModelUnavailableError(
+                    "Disease model classifier could not be configured."
+                ) from exc
+
+            _load_state_dict_strict(model, artifact["model_state_dict"])
+
+            try:
+                model.to(device)
+            except Exception as exc:
+                raise DiseaseModelUnavailableError(
+                    "Disease model could not be moved to the requested device."
+                ) from exc
+
+            try:
+                model.eval()
+            except Exception as exc:
+                raise DiseaseModelUnavailableError(
+                    "Disease model runtime could not be initialized."
+                ) from exc
+
+            normalization = artifact["normalization"]
+            mean = tuple(float(value) for value in normalization["mean"])
+            std = tuple(float(value) for value in normalization["std"])
+            transform = transforms.Compose(
+                [
+                    transforms.Resize(
+                        256,
+                        interpolation=InterpolationMode.BILINEAR,
+                        antialias=True,
+                    ),
+                    transforms.CenterCrop((224, 224)),
+                    transforms.ToTensor(),
+                    transforms.Normalize(mean=mean, std=std),
+                ]
+            )
 
             self._model = model
             self._device = device
