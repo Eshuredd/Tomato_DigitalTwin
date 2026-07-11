@@ -33,7 +33,16 @@ from frontend.ui_helpers import (  # noqa: E402
 )
 
 
+WORKFLOW_TABS = [
+    "Session",
+    "Disease",
+    "Water & Twin",
+    "Simulate & Recommend",
+    "Narration & Records",
+]
+
 SESSION_KEYS = {
+    "workflow_tab": WORKFLOW_TABS[0],
     "api_base_url": DEFAULT_API_BASE_URL,
     "active_state_id": "",
     "session_response": None,
@@ -47,7 +56,6 @@ SESSION_KEYS = {
     "session_state_response": None,
     "health_response": None,
     "system_info_response": None,
-    "connection_status": "not_checked",
 }
 
 
@@ -67,24 +75,29 @@ def main() -> None:
     try:
         _render_sidebar(client)
 
+        next_tab = st.session_state.pop("workflow_tab_next", None)
+        if next_tab in WORKFLOW_TABS:
+            st.session_state.workflow_tab = next_tab
+
         session_tab, disease_tab, water_tab, decision_tab, records_tab = st.tabs(
-            [
-                "Session",
-                "Disease",
-                "Water & Twin",
-                "Simulate & Recommend",
-                "Narration & Records",
-            ]
+            WORKFLOW_TABS,
+            key="workflow_tab",
+            default=st.session_state.workflow_tab,
+            on_change="rerun",
         )
 
         with session_tab:
             _render_session_tab(client)
+            _render_next_part_button("Session")
         with disease_tab:
             _render_disease_tab(client)
+            _render_next_part_button("Disease")
         with water_tab:
             _render_water_tab(client)
+            _render_next_part_button("Water & Twin")
         with decision_tab:
             _render_decision_tab(client)
+            _render_next_part_button("Simulate & Recommend")
         with records_tab:
             _render_records_tab(client)
     finally:
@@ -549,8 +562,8 @@ def _render_active_session_bar() -> None:
 
 def _render_sidebar(client: CropTwinAPIClient) -> None:
     with st.sidebar:
-        _sidebar_title("Connection status")
-        _render_connection_status()
+        _sidebar_title("Workflow progress")
+        _render_workflow_progress()
 
         _sidebar_title("Session")
         state_id_to_load = st.text_input(
@@ -573,20 +586,6 @@ def _render_sidebar(client: CropTwinAPIClient) -> None:
             if st.button("Reset UI", use_container_width=True):
                 _reset_ui()
 
-        with st.expander("Settings", expanded=False):
-            st.caption("API base URL is configured internally and is not shown here.")
-
-            if st.button("Check connection", use_container_width=True):
-                result = _call_api("Connection check", lambda: client.health(), store_as="health_response")
-                st.session_state.connection_status = "connected" if result else "unavailable"
-                st.rerun()
-
-            if st.button("Load system information", use_container_width=True):
-                _call_api("System information", lambda: client.system_info(), store_as="system_info_response")
-            if st.session_state.system_info_response:
-                st.caption("System information")
-                st.json(st.session_state.system_info_response)
-
         st.caption("Reset clears only this browser session. Backend sessions remain until the API restarts.")
 
 
@@ -597,18 +596,28 @@ def _sidebar_title(label: str) -> None:
     )
 
 
-def _render_connection_status() -> None:
-    status = st.session_state.connection_status
-    if status == "connected":
-        tone, text = "success", "Connected"
-    elif status == "unavailable":
-        tone, text = "danger", "Unavailable"
-    else:
-        tone, text = "warning", "Not checked"
-    st.markdown(
-        f'<div class="ct-status-pill"><span class="ct-dot {tone}"></span>{text}</div>',
-        unsafe_allow_html=True,
-    )
+def _render_workflow_progress() -> None:
+    completed = {
+        "session": bool(st.session_state.session_response or st.session_state.active_state_id),
+        "disease": bool(st.session_state.disease_response),
+        "water": bool(st.session_state.water_response),
+        "twin": bool(st.session_state.twin_response),
+        "simulation": bool(st.session_state.simulation_response),
+        "recommendation": bool(st.session_state.recommendation_response),
+        "narration": bool(st.session_state.narration_response),
+    }
+    states = workflow_progress_states(completed)
+    lines = []
+    for state in states:
+        if state["state"] == "completed":
+            marker = "✅"
+        elif state["state"] == "active":
+            marker = "➤"
+        else:
+            marker = "○"
+        lines.append(f"{marker} {escape_html(state['label'])}")
+
+    st.markdown("\n".join(lines))
 
 
 def _render_session_tab(client: CropTwinAPIClient) -> None:
@@ -624,25 +633,19 @@ def _render_session_tab(client: CropTwinAPIClient) -> None:
                     "Latitude",
                     value=17.3850,
                     format="%.6f",
-                    help="Latitude is used with longitude for optional elevation lookup.",
+                    help="Latitude is used with longitude to identify the farm location.",
                 )
                 longitude = st.number_input(
                     "Longitude",
                     value=78.4867,
                     format="%.6f",
-                    help="Longitude is used with latitude for optional elevation lookup.",
-                )
-                use_auto_elevation = st.checkbox(
-                    "Fetch elevation from latitude and longitude",
-                    value=True,
-                    help="When enabled, the backend calls Open-Meteo elevation during session creation.",
+                    help="Longitude is used with latitude to identify the farm location.",
                 )
                 elevation_m = st.number_input(
                     "Elevation (m)",
                     value=542.0,
                     format="%.1f",
-                    disabled=use_auto_elevation,
-                    help="Optional manual override. Disable automatic lookup to send this value.",
+                    help="Manual elevation entry for the session location.",
                 )
 
             submitted = st.form_submit_button("Create session", type="primary")
@@ -654,11 +657,10 @@ def _render_session_tab(client: CropTwinAPIClient) -> None:
                         "name": location_name,
                         "latitude": latitude,
                         "longitude": longitude,
+                        "elevation_m": elevation_m,
                     },
                     "soil_texture": soil_texture,
                 }
-                if not use_auto_elevation:
-                    payload["location"]["elevation_m"] = elevation_m
                 result = _call_api("Create session", lambda: client.create_session(payload))
                 if result:
                     _clear_downstream("session")
@@ -1018,6 +1020,29 @@ def _show_response(label: str, response: dict[str, Any] | None) -> None:
         return
     with st.expander(label, expanded=False):
         st.json(response)
+
+
+def _set_next_workflow_tab(next_tab: str) -> None:
+    st.session_state.workflow_tab_next = next_tab
+
+
+def _render_next_part_button(current_tab: str) -> None:
+    if current_tab not in WORKFLOW_TABS:
+        return
+
+    current_index = WORKFLOW_TABS.index(current_tab)
+    if current_index >= len(WORKFLOW_TABS) - 1:
+        return
+
+    next_tab = WORKFLOW_TABS[current_index + 1]
+    st.button(
+        "Next part",
+        type="primary",
+        use_container_width=True,
+        key=f"next_{current_tab}",
+        on_click=_set_next_workflow_tab,
+        args=(next_tab,),
+    )
 
 
 def _badge(label: str, value: object, tone: str) -> str:
