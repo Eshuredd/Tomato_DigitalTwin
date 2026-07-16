@@ -373,6 +373,7 @@ def test_registered_routes_match_accepted_contract() -> None:
         ("POST", "/sessions"),
         ("GET", "/sessions/{state_id}"),
         ("GET", "/sessions/{state_id}/history"),
+        ("GET", "/sessions/{state_id}/weather-snapshot"),
         ("POST", "/sessions/{state_id}/predict-disease"),
         ("POST", "/sessions/{state_id}/compute-water-state"),
         ("POST", "/sessions/{state_id}/update-twin-state"),

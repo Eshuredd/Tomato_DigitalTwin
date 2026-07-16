@@ -20,16 +20,22 @@ from frontend.api_client import (  # noqa: E402
 from frontend.ui_helpers import (  # noqa: E402
     ACTION_OPTIONS,
     SOIL_TEXTURE_OPTIONS,
+    action_help_text,
     badge_tone_for_moisture,
     badge_tone_for_stress,
     badge_tone_for_uncertainty,
+    detect_weather_manual_overrides,
+    drip_runtime_to_litres_and_depth,
     encode_image_bytes_to_base64,
     escape_html,
     format_action_label,
     format_percent,
+    friendly_wetness_risk_label,
     humanize_disease_label,
+    irrigation_depth_from_litres_area,
     keys_to_clear_after,
     top_class_probabilities,
+    weather_values_from_snapshot,
     workflow_progress_states,
 )
 
@@ -57,7 +63,45 @@ SESSION_KEYS = {
     "session_state_response": None,
     "health_response": None,
     "system_info_response": None,
+    "weather_snapshot_response": None,
+    "weather_fetched_values": None,
+    "weather_manual_overrides": None,
+    "water_current_date": date.today(),
+    "weather_tmin_c": 22.0,
+    "weather_tmax_c": 32.0,
+    "weather_humidity_pct": 65.0,
+    "weather_wind_speed_mps": 2.0,
+    "weather_rainfall_mm": 0.0,
+    "weather_shortwave_radiation_sum_mj_m2": 18.0,
+    "weather_eto_reference_feed": 0.0,
 }
+
+WEATHER_SESSION_FIELD_KEYS = {
+    "tmin_c": "weather_tmin_c",
+    "tmax_c": "weather_tmax_c",
+    "humidity_pct": "weather_humidity_pct",
+    "wind_speed_mps": "weather_wind_speed_mps",
+    "rainfall_mm": "weather_rainfall_mm",
+    "shortwave_radiation_sum_mj_m2": "weather_shortwave_radiation_sum_mj_m2",
+    "eto_reference_feed": "weather_eto_reference_feed",
+}
+
+WEATHER_FIELD_LABELS = {
+    "tmin_c": "Minimum temperature",
+    "tmax_c": "Maximum temperature",
+    "humidity_pct": "Mean humidity",
+    "wind_speed_mps": "Wind speed normalized to 2 m",
+    "rainfall_mm": "Rainfall",
+    "shortwave_radiation_sum_mj_m2": "Sunlight energy",
+    "eto_reference_feed": "Reference ETo",
+}
+
+IRRIGATION_INPUT_MODES = [
+    "No recent irrigation",
+    "I know the depth in millimetres",
+    "I know total litres and irrigated area",
+    "I know drip runtime and emitter details",
+]
 
 
 def main() -> None:
@@ -748,56 +792,305 @@ def _render_water_tab(client: CropTwinAPIClient) -> None:
         st.info("Complete Disease evidence before moving to Water & Twin.")
         return
 
-    with _card("Weather inputs", "Compute crop water state from submitted weather values and optional irrigation."):
-        with st.form("water_form"):
-            current_date = st.date_input("Current date", value=date.today())
-            col_a, col_b, col_c = st.columns(3)
-            with col_a:
-                tmin_c = st.number_input("Temperature minimum (C)", value=22.0, format="%.1f")
-                tmax_c = st.number_input("Temperature maximum (C)", value=32.0, format="%.1f")
-                humidity_pct = st.number_input("Humidity (%)", min_value=0.0, max_value=100.0, value=65.0)
-            with col_b:
-                wind_speed_mps = st.number_input("Wind speed (m/s)", min_value=0.0, value=2.0)
-                rainfall_mm = st.number_input("Rainfall (mm)", min_value=0.0, value=0.0)
-                shortwave = st.number_input("Solar radiation (MJ/m2)", min_value=0.0, value=18.0)
-            with col_c:
-                eto_feed = st.number_input("Reference ETo (mm)", min_value=0.0, value=0.0)
-                include_irrigation = st.checkbox("Include last irrigation")
-                irrigation_amount = st.number_input("Irrigation amount (mm)", min_value=0.0, value=8.0)
-                irrigation_date = st.date_input("Irrigation date", value=date.today())
-                irrigation_time = st.time_input("Irrigation time", value=time(6, 0))
+    with _card(
+        "Weather and recent irrigation",
+        "Fetch farm weather, review the values, then compute the deterministic water state.",
+    ):
+        current_date = st.date_input("Selected date", key="water_current_date")
+        st.caption(f"Selected date: {current_date.isoformat()}")
 
-            submitted = st.form_submit_button("Compute water state", type="primary")
-            if submitted:
-                payload: dict[str, Any] = {
-                    "current_date": current_date.isoformat(),
-                    "weather": {
-                        "tmin_c": tmin_c,
-                        "tmax_c": tmax_c,
-                        "humidity_pct": humidity_pct,
-                        "wind_speed_mps": wind_speed_mps,
-                        "shortwave_radiation_sum_mj_m2": shortwave,
-                        "rainfall_mm": rainfall_mm,
-                        "eto_reference_feed": eto_feed or None,
-                    },
-                }
-                if include_irrigation:
-                    timestamp = datetime.combine(irrigation_date, irrigation_time, tzinfo=timezone.utc)
-                    payload["last_irrigation_event"] = {
-                        "timestamp": timestamp.isoformat().replace("+00:00", "Z"),
-                        "amount_mm": irrigation_amount,
-                    }
-                result = _call_api(
-                    "Water-state computation",
-                    lambda: client.compute_water_state(st.session_state.active_state_id, payload),
-                )
-                if result:
-                    _clear_downstream("water")
-                    st.session_state.water_response = result
-                    st.rerun()
+        if st.button("Fetch weather for this farm", type="primary", use_container_width=True):
+            result = _call_api(
+                "Weather lookup",
+                lambda: client.get_weather_snapshot(
+                    st.session_state.active_state_id,
+                    st.session_state.water_current_date,
+                ),
+            )
+            if result:
+                _apply_weather_snapshot(result)
+                st.session_state.water_response = None
+                _clear_downstream("water")
+                st.rerun()
+
+        _render_weather_source_summary(st.session_state.weather_snapshot_response)
+        _render_weather_inputs()
+        irrigation_event = _render_irrigation_inputs()
+
+        if st.button("Compute water state", type="primary", use_container_width=True):
+            if irrigation_event is False:
+                st.error("Fix the recent irrigation details before computing water state.")
+                return
+
+            payload: dict[str, Any] = {
+                "current_date": st.session_state.water_current_date.isoformat(),
+                "weather": _current_weather_payload(),
+            }
+            if irrigation_event is not None:
+                payload["last_irrigation_event"] = irrigation_event
+
+            result = _call_api(
+                "Water-state computation",
+                lambda: client.compute_water_state(st.session_state.active_state_id, payload),
+            )
+            if result:
+                _clear_downstream("water")
+                st.session_state.water_response = result
+                st.rerun()
 
     _render_water_summary(st.session_state.water_response)
     _render_twin_state_card(client)
+
+
+def _apply_weather_snapshot(snapshot: dict[str, Any]) -> None:
+    values = weather_values_from_snapshot(snapshot)
+    for field, value in values.items():
+        st.session_state[WEATHER_SESSION_FIELD_KEYS[field]] = value
+
+    st.session_state.weather_snapshot_response = snapshot
+    st.session_state.weather_fetched_values = values
+    st.session_state.weather_manual_overrides = {
+        field: False
+        for field in WEATHER_SESSION_FIELD_KEYS
+    }
+
+
+def _render_weather_source_summary(snapshot: dict[str, Any] | None) -> None:
+    if not snapshot:
+        st.info("Fetch weather for this farm, or open Advanced to enter values manually.")
+        return
+
+    st.markdown(
+        '<div class="ct-mini-success">'
+        "Weather source: Open-Meteo"
+        f"<br>Requested date: {escape_html(snapshot.get('target_date', 'n/a'))}"
+        f"<br>Source timezone: {escape_html(snapshot.get('source_timezone', 'n/a'))}"
+        f"<br>Fetched at: {escape_html(snapshot.get('fetched_at', 'n/a'))}"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    _show_response("Weather snapshot response", snapshot)
+
+
+def _render_weather_inputs() -> None:
+    with st.expander(
+        "Advanced: review or edit weather values",
+        expanded=st.session_state.weather_snapshot_response is None,
+    ):
+        col_a, col_b, col_c = st.columns(3)
+        with col_a:
+            st.number_input(
+                "Minimum temperature (C)",
+                key="weather_tmin_c",
+                format="%.1f",
+            )
+            st.number_input(
+                "Maximum temperature (C)",
+                key="weather_tmax_c",
+                format="%.1f",
+            )
+            st.number_input(
+                "Mean humidity (%)",
+                min_value=0.0,
+                max_value=100.0,
+                key="weather_humidity_pct",
+            )
+        with col_b:
+            st.number_input(
+                "Wind speed at crop height (m/s)",
+                min_value=0.0,
+                key="weather_wind_speed_mps",
+                help="Open-Meteo wind is fetched at 10 m and normalized to 2 m by the backend.",
+            )
+            st.number_input(
+                "Rainfall (mm)",
+                min_value=0.0,
+                key="weather_rainfall_mm",
+            )
+            st.number_input(
+                "Sunlight energy (MJ/m2)",
+                min_value=0.0,
+                key="weather_shortwave_radiation_sum_mj_m2",
+            )
+        with col_c:
+            st.number_input(
+                "Reference ETo (mm)",
+                min_value=0.0,
+                key="weather_eto_reference_feed",
+                help=(
+                    "Weather-driven reference water loss. CropTwin recomputes this "
+                    "locally; the API value is used only for comparison."
+                ),
+            )
+
+        overrides = detect_weather_manual_overrides(
+            _current_weather_values(),
+            st.session_state.weather_fetched_values,
+        )
+        st.session_state.weather_manual_overrides = overrides
+        overridden_labels = [
+            WEATHER_FIELD_LABELS[field]
+            for field, is_override in overrides.items()
+            if is_override
+        ]
+        if overridden_labels:
+            st.warning("Manual overrides: " + ", ".join(overridden_labels))
+        elif st.session_state.weather_snapshot_response:
+            st.caption("Fetched weather values are unchanged.")
+
+
+def _current_weather_values() -> dict[str, float]:
+    return {
+        field: float(st.session_state[key])
+        for field, key in WEATHER_SESSION_FIELD_KEYS.items()
+    }
+
+
+def _current_weather_payload() -> dict[str, float]:
+    values = _current_weather_values()
+    return {
+        "tmin_c": values["tmin_c"],
+        "tmax_c": values["tmax_c"],
+        "humidity_pct": values["humidity_pct"],
+        "wind_speed_mps": values["wind_speed_mps"],
+        "shortwave_radiation_sum_mj_m2": values["shortwave_radiation_sum_mj_m2"],
+        "rainfall_mm": values["rainfall_mm"],
+        "eto_reference_feed": values["eto_reference_feed"],
+    }
+
+
+def _render_irrigation_inputs() -> dict[str, Any] | None | bool:
+    st.markdown("#### Recent irrigation")
+    mode = st.selectbox(
+        "How do you know the recent irrigation amount?",
+        IRRIGATION_INPUT_MODES,
+        key="irrigation_input_mode",
+    )
+
+    if mode == "No recent irrigation":
+        st.caption("No recent irrigation event will be sent with this water-state request.")
+        return None
+
+    col_date, col_time = st.columns(2)
+    with col_date:
+        irrigation_date = st.date_input(
+            "Irrigation date",
+            value=date.today(),
+            key=f"irrigation_date_{mode}",
+        )
+    with col_time:
+        irrigation_time = st.time_input(
+            "Irrigation time",
+            value=time(6, 0),
+            key=f"irrigation_time_{mode}",
+        )
+
+    if mode == "I know the depth in millimetres":
+        amount_mm = st.number_input(
+            "Irrigation depth (mm)",
+            min_value=0.0,
+            value=0.0,
+            key="irrigation_depth_mm",
+        )
+        st.caption(f"Calculated irrigation depth: {amount_mm:.2f} mm from entered depth.")
+        return _last_irrigation_event_payload(irrigation_date, irrigation_time, amount_mm)
+
+    if mode == "I know total litres and irrigated area":
+        col_litres, col_area = st.columns(2)
+        with col_litres:
+            total_litres = st.number_input(
+                "Total water applied (litres)",
+                min_value=0.0,
+                value=0.0,
+                key="irrigation_total_litres",
+            )
+        with col_area:
+            irrigated_area_m2 = st.number_input(
+                "Irrigated area (m2)",
+                min_value=0.0,
+                value=0.0,
+                key="irrigation_area_m2_litres",
+            )
+        try:
+            amount_mm = irrigation_depth_from_litres_area(
+                total_litres=total_litres,
+                irrigated_area_m2=irrigated_area_m2,
+            )
+        except ValueError as exc:
+            st.caption(str(exc))
+            return False
+
+        st.caption(
+            "Calculated irrigation depth: "
+            f"{amount_mm:.2f} mm from {total_litres:.2f} litres over "
+            f"{irrigated_area_m2:.2f} m2."
+        )
+        return _last_irrigation_event_payload(irrigation_date, irrigation_time, amount_mm)
+
+    col_emitters, col_flow, col_runtime, col_area = st.columns(4)
+    with col_emitters:
+        emitter_count = st.number_input(
+            "Emitter count",
+            min_value=0,
+            value=0,
+            step=1,
+            key="irrigation_emitter_count",
+        )
+    with col_flow:
+        emitter_flow_lph = st.number_input(
+            "Emitter flow (litres/hour)",
+            min_value=0.0,
+            value=0.0,
+            key="irrigation_emitter_flow_lph",
+        )
+    with col_runtime:
+        runtime_minutes = st.number_input(
+            "Runtime (minutes)",
+            min_value=0.0,
+            value=0.0,
+            key="irrigation_runtime_minutes",
+        )
+    with col_area:
+        irrigated_area_m2 = st.number_input(
+            "Irrigated area (m2)",
+            min_value=0.0,
+            value=0.0,
+            key="irrigation_area_m2_drip",
+        )
+
+    try:
+        conversion = drip_runtime_to_litres_and_depth(
+            emitter_count=emitter_count,
+            emitter_flow_lph=emitter_flow_lph,
+            runtime_minutes=runtime_minutes,
+            irrigated_area_m2=irrigated_area_m2,
+        )
+    except ValueError as exc:
+        st.caption(str(exc))
+        return False
+
+    st.caption(
+        "Calculated irrigation depth: "
+        f"{conversion['amount_mm']:.2f} mm from {conversion['total_litres']:.2f} "
+        f"litres over {irrigated_area_m2:.2f} m2."
+    )
+    return _last_irrigation_event_payload(
+        irrigation_date,
+        irrigation_time,
+        conversion["amount_mm"],
+    )
+
+
+def _last_irrigation_event_payload(
+    irrigation_date: date,
+    irrigation_time: time,
+    amount_mm: float,
+) -> dict[str, Any]:
+    timestamp = datetime.combine(irrigation_date, irrigation_time, tzinfo=timezone.utc)
+    return {
+        "timestamp": timestamp.isoformat().replace("+00:00", "Z"),
+        "amount_mm": amount_mm,
+    }
 
 
 def _render_water_summary(response: dict[str, Any] | None) -> None:
@@ -805,21 +1098,46 @@ def _render_water_summary(response: dict[str, Any] | None) -> None:
         return
     with _card("Water-state results", "Root-zone depletion and stress bands from the deterministic water model."):
         col_a, col_b, col_c = st.columns(3)
-        col_a.metric("ETo", f"{response['eto_computed']:.2f} mm")
-        col_b.metric("ETc", f"{response['etc']:.2f} mm")
-        col_c.metric("Root-zone depletion", f"{response['root_zone_depletion']:.2f} mm")
+        col_a.metric(
+            "Reference water loss",
+            f"{response['eto_computed']:.2f} mm",
+            help=(
+                "Weather-driven reference water loss. CropTwin recomputes this "
+                "locally; the API value is used only for comparison."
+            ),
+        )
+        col_b.metric(
+            "Tomato crop water use",
+            f"{response['etc']:.2f} mm",
+            help="Estimated tomato-crop water use: ETo multiplied by the crop coefficient.",
+        )
+        col_c.metric(
+            "Root-zone depletion",
+            f"{response['root_zone_depletion']:.2f} mm",
+            help="Estimated water currently missing from the crop root zone.",
+        )
         col_d, col_e, col_f = st.columns(3)
-        col_d.metric("RAW threshold", f"{response['raw_threshold']:.2f} mm")
-        col_e.markdown(
+        col_d.metric(
+            "Readily available water threshold",
+            f"{response['raw_threshold']:.2f} mm",
+            help="RAW: The depletion threshold beyond which crop water stress may begin.",
+        )
+        col_e.metric(
+            "Total available water",
+            f"{response['taw']:.2f} mm",
+            help="TAW: The estimated total plant-available water in the root zone.",
+        )
+        col_f.markdown(
             _badge(
                 "Moisture",
                 response["estimated_moisture_state"],
                 badge_tone_for_moisture(response["estimated_moisture_state"]),
+            )
+            + _badge(
+                "Stress",
+                response["stress_band"],
+                badge_tone_for_stress(response["stress_band"]),
             ),
-            unsafe_allow_html=True,
-        )
-        col_f.markdown(
-            _badge("Stress", response["stress_band"], badge_tone_for_stress(response["stress_band"])),
             unsafe_allow_html=True,
         )
         _show_response("Water response", response)
@@ -918,11 +1236,18 @@ def _render_simulation_results(
                     if recommended:
                         st.markdown(_badge("Recommended", "Backend selected", "success"), unsafe_allow_html=True)
                     st.markdown(f"#### {escape_html(format_action_label(action))}")
+                    help_text = action_help_text(action)
+                    if help_text:
+                        st.caption(help_text)
                     st.write(f"Root-zone depletion: {row['projected_root_zone_depletion']:.2f} mm")
                     st.write(f"Readily available water crossed: {'Yes' if row['projected_raw_crossing'] else 'No'}")
                     st.write(f"Predicted stress level: {row['projected_stress_band']}")
-                    st.write(f"Predicted water use: {row['projected_water_use']:.2f} mm")
-                    st.caption(row["disease_wetness_risk_note"])
+                    st.write(f"Simulated irrigation applied: {row['projected_water_use']:.2f} mm")
+                    st.caption(
+                        "This is the irrigation depth the simulator assumes would refill "
+                        "the estimated deficit at the selected irrigation time."
+                    )
+                    st.caption(friendly_wetness_risk_label(row["disease_wetness_risk_note"]))
 
 
 def _render_records_tab(client: CropTwinAPIClient) -> None:

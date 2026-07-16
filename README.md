@@ -23,9 +23,11 @@ CropTwin does not treat model output as a confirmed diagnosis, and it does not r
 
 - Tomato session creation with location, planting date, and soil texture.
 - Open-Meteo elevation lookup when session elevation is omitted.
+- Open-Meteo daily weather retrieval for the active farm location, with manual overrides.
 - Tomato growth-stage determination from planting date.
 - ETo calculation with Penman-Monteith and Hargreaves-Samani fallback.
 - ETc, root-zone depletion, moisture-state, and stress-band estimation.
+- Farmer-friendly irrigation input using depth, litres over area, or drip runtime details.
 - Tomato-leaf image classification with calibrated confidence and uncertainty bands.
 - Current digital-twin state creation from cached disease, growth, and water outputs.
 - Candidate irrigation-action simulation.
@@ -72,13 +74,14 @@ The disease model does not compute water balance, run simulations, or choose the
 1. Create or load a tomato session.
 2. Upload a tomato-leaf image.
 3. Receive disease evidence, calibrated confidence, and uncertainty.
-4. Enter weather and optional irrigation information.
-5. Compute ETo, ETc, water state, and stress.
-6. Update the current digital-twin state.
-7. Simulate candidate irrigation actions.
-8. Generate the deterministic recommendation.
-9. Generate farmer-readable narration.
-10. Review current state and history.
+4. Fetch weather for the farm or review weather values manually.
+5. Enter recent irrigation as millimetres, total litres over area, or drip runtime details.
+6. Compute ETo, ETc, water state, and stress.
+7. Update the current digital-twin state.
+8. Simulate candidate irrigation actions.
+9. Generate the deterministic recommendation.
+10. Generate farmer-readable narration.
+11. Review current state and history.
 
 Supported simulation actions:
 
@@ -86,7 +89,7 @@ Supported simulation actions:
 |---|---|
 | `IRRIGATE_NOW` | Irrigate immediately |
 | `IRRIGATE_IN_6H` | Irrigate in 6 hours |
-| `IRRIGATE_TOMORROW_AM` | Irrigate tomorrow morning |
+| `IRRIGATE_TOMORROW_AM` | Irrigate in 24 hours; current MVP approximation for tomorrow morning |
 | `NO_IRRIGATION_24H` | Do not irrigate during the next 24 hours |
 
 ## Technology Stack
@@ -221,6 +224,21 @@ Implemented assumptions and calculations include:
 
 Disease evidence can add caution reasons, inspection advisory, or irrigation constraints such as avoiding overhead irrigation for stronger fungal wetness risk. It does not override the water engine.
 
+## Weather and Irrigation Inputs
+
+`GET /sessions/{state_id}/weather-snapshot?target_date=YYYY-MM-DD` retrieves one day of model-derived weather from Open-Meteo using the stored session latitude and longitude. The weather snapshot includes:
+
+- minimum and maximum 2 m air temperature
+- mean relative humidity
+- precipitation sum
+- shortwave radiation sum
+- mean 10 m wind speed, normalized to 2 m for Penman-Monteith input
+- Open-Meteo FAO ETo
+
+CropTwin still computes ETo locally. The Open-Meteo ETo value is stored only as `WeatherInput.eto_reference_feed` for comparison, not as the final CropTwin ETo. Weather values can be manually overridden before water-state computation.
+
+Recent irrigation can be entered as millimetres, total litres plus irrigated area, or drip runtime plus emitter details. The backend still receives the canonical `LastIrrigationEvent.amount_mm`. The conversion basis is that 1 litre over 1 m2 equals 1 mm.
+
 ## Streamlit Frontend
 
 The Streamlit frontend lives in `frontend/`. It is an HTTP client for the FastAPI API and does not import backend model or agronomy modules directly.
@@ -233,7 +251,8 @@ The frontend supports:
 - read-only active-session display
 - tomato-leaf upload
 - disease evidence, confidence, uncertainty, and top probabilities
-- weather and irrigation input
+- Open-Meteo weather fetch with manual weather overrides
+- farmer-friendly irrigation conversion from litres/area or drip runtime details
 - water-state and twin-state summaries
 - action simulation comparison
 - deterministic recommendation display
@@ -254,6 +273,7 @@ No screenshot files are currently stored in the repository.
 | `POST` | `/sessions` | Create a session |
 | `GET` | `/sessions/{state_id}` | Read current session state |
 | `GET` | `/sessions/{state_id}/history` | Read twin history |
+| `GET` | `/sessions/{state_id}/weather-snapshot` | Fetch one-day Open-Meteo weather for the stored farm location |
 | `POST` | `/sessions/{state_id}/predict-disease` | Run disease inference |
 | `POST` | `/sessions/{state_id}/compute-water-state` | Compute growth and water state |
 | `POST` | `/sessions/{state_id}/update-twin-state` | Build current twin state |
@@ -271,29 +291,31 @@ Local API documentation:
 
 ```text
 AMD_DigitalTwin/
-  app/
-    disease/
-    external/
-    growth_stage/
-    narration/
-    recommendation/
-    routes/
-    simulation/
-    water/
-    dependencies.py
-    main.py
-    schemas.py
-    state_store.py
+  backend/
+    app/
+      disease/
+      external/
+      growth_stage/
+      narration/
+      recommendation/
+      routes/
+      simulation/
+      water/
+      dependencies.py
+      main.py
+      schemas.py
+      state_store.py
+    tests/
   frontend/
     app.py
     api_client.py
     ui_helpers.py
     requirements.txt
     README.md
-  model_artifacts/
-    croptwin_disease/
-  tests/
-  requirements.txt
+  docker/
+  .streamlit/
+  Dockerfile
+  pyproject.toml
   README.md
 ```
 
@@ -420,8 +442,9 @@ The full suite includes API workflow tests, route tests, disease artifact valida
 - State is stored in memory and is lost when the backend process restarts.
 - No persistent database is implemented.
 - No authentication or multi-user isolation is implemented.
-- Weather values are manually entered; live weather ingestion is not implemented.
-- Open-Meteo is used only for elevation lookup when session elevation is omitted.
+- Open-Meteo weather retrieval is available with manual overrides; the data is model-derived and is not equivalent to an on-farm weather station.
+- No on-farm weather-station or soil-moisture-sensor integration is implemented.
+- Real irrigation amounts still require farmer, controller, or sensor information.
 - PlantVillage images have controlled backgrounds and do not prove real-field performance.
 - Unrelated or out-of-distribution images may still produce predictions.
 - Confidence thresholds were selected from the current validation split.
@@ -434,7 +457,7 @@ The full suite includes API workflow tests, route tests, disease artifact valida
 
 - SQLite or PostgreSQL persistence.
 - Authentication and user/session separation.
-- Live weather integration.
+- On-farm weather-station and soil-moisture-sensor integration.
 - Real-field tomato-leaf dataset evaluation.
 - Out-of-distribution and non-tomato image rejection.
 - Model monitoring and recalibration workflow.

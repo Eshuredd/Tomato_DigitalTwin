@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -243,6 +243,27 @@ class WeatherInput(BaseModel):
     eto_reference_feed: float | None = None
 
     model_config = ConfigDict(extra="forbid")
+
+
+class WeatherSnapshotResponse(BaseModel):
+    state_id: str
+    target_date: date
+    source: Literal["open_meteo"]
+    source_timezone: str
+    latitude: float
+    longitude: float
+    tmin_c: float
+    tmax_c: float
+    humidity_pct: Annotated[float, Field(ge=0.0, le=100.0)]
+    wind_speed_mps: Annotated[float, Field(ge=0.0)]
+    wind_source_height_m: Annotated[float, Field(gt=0.0)]
+    wind_normalized_height_m: Annotated[float, Field(gt=0.0)]
+    rainfall_mm: Annotated[float, Field(ge=0.0)]
+    shortwave_radiation_sum_mj_m2: Annotated[float, Field(ge=0.0)]
+    eto_reference_feed: Annotated[float, Field(ge=0.0)]
+    fetched_at: datetime
+
+    model_config = ConfigDict(extra="forbid", strict=True)
 
 
 class LastIrrigationEvent(BaseModel):

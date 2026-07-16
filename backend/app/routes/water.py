@@ -8,18 +8,22 @@ and does not simulate, recommend, or narrate.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from datetime import date
+
+from fastapi import APIRouter, Depends, Query
 
 from app.dependencies import (
     TwinAPIException,
     call_store_or_raise,
     get_state_store,
 )
+from app.external.weather_client import WeatherClientError, fetch_daily_weather
 from app.growth_stage.resolver import resolve_growth_stage
 from app.schemas import (
     ComputeWaterStateRequest,
     StateIdRequest,
     UpdateTwinStateResponse,
+    WeatherSnapshotResponse,
     WaterStateResponse,
 )
 from app.state_store import InMemoryTwinStateStore
@@ -32,6 +36,8 @@ router = APIRouter(tags=["water"])
 
 
 INVALID_WATER_STATE_REQUEST_CODE = "INVALID_WATER_STATE_REQUEST"
+INVALID_WEATHER_REQUEST_CODE = "INVALID_WEATHER_REQUEST"
+WEATHER_LOOKUP_FAILED_CODE = "WEATHER_LOOKUP_FAILED"
 STATE_ID_MISMATCH_CODE = "STATE_ID_MISMATCH"
 SESSION_ELEVATION_MISSING_CODE = "SESSION_ELEVATION_MISSING"
 
@@ -46,6 +52,33 @@ def _validate_state_id(state_id: str) -> None:
                 "reason": "Path state_id must contain a non-whitespace value.",
             },
         )
+
+
+def _validate_weather_state_id(state_id: str) -> None:
+    if not state_id.strip():
+        raise TwinAPIException(
+            status_code=422,
+            code=INVALID_WEATHER_REQUEST_CODE,
+            message="Invalid weather request.",
+            details={
+                "reason": "Path state_id must contain a non-whitespace value.",
+            },
+        )
+
+
+def _parse_weather_target_date(target_date: str) -> date:
+    try:
+        return date.fromisoformat(target_date)
+    except ValueError as exc:
+        raise TwinAPIException(
+            status_code=422,
+            code=INVALID_WEATHER_REQUEST_CODE,
+            message="Invalid weather request.",
+            details={
+                "reason": "target_date must be an ISO date in YYYY-MM-DD format.",
+                "target_date": target_date,
+            },
+        ) from exc
 
 
 def _validate_matching_state_id(
@@ -81,6 +114,51 @@ def _validate_session_elevation(elevation_m: float | None) -> float:
         )
 
     return elevation_m
+
+
+@router.get(
+    "/sessions/{state_id}/weather-snapshot",
+    response_model=WeatherSnapshotResponse,
+)
+async def get_weather_snapshot_route(
+    state_id: str,
+    target_date: str = Query(...),
+    store: InMemoryTwinStateStore = Depends(get_state_store),
+) -> WeatherSnapshotResponse:
+    _validate_weather_state_id(state_id)
+    parsed_target_date = _parse_weather_target_date(target_date)
+
+    record = call_store_or_raise(
+        store.get_record,
+        state_id,
+    )
+
+    try:
+        snapshot = await fetch_daily_weather(
+            latitude=record.location.latitude,
+            longitude=record.location.longitude,
+            target_date=parsed_target_date,
+        )
+    except ValueError as exc:
+        raise TwinAPIException(
+            status_code=422,
+            code=INVALID_WEATHER_REQUEST_CODE,
+            message="Invalid weather request.",
+            details={"reason": str(exc)},
+        ) from exc
+    except WeatherClientError as exc:
+        raise TwinAPIException(
+            status_code=502,
+            code=WEATHER_LOOKUP_FAILED_CODE,
+            message="Failed to retrieve weather for this farm.",
+            details={
+                "reason": str(exc),
+                "target_date": parsed_target_date.isoformat(),
+                "source": "open_meteo",
+            },
+        ) from exc
+
+    return snapshot.model_copy(update={"state_id": state_id})
 
 
 @router.post(

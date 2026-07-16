@@ -1,22 +1,29 @@
 from __future__ import annotations
 
 import base64
+import math
 
 import pytest
 
 from frontend.ui_helpers import (
     MAX_IMAGE_BYTES,
+    action_help_text,
     badge_tone_for_moisture,
     badge_tone_for_stress,
     badge_tone_for_uncertainty,
+    detect_weather_manual_overrides,
+    drip_runtime_to_litres_and_depth,
     encode_image_bytes_to_base64,
     escape_html,
     format_action_label,
     format_percent,
+    friendly_wetness_risk_label,
     humanize_disease_label,
+    irrigation_depth_from_litres_area,
     keys_to_clear_after,
     sanitize_error_details,
     top_class_probabilities,
+    weather_values_from_snapshot,
     workflow_progress_states,
 )
 
@@ -97,4 +104,113 @@ def test_workflow_progress_states_identify_active_step() -> None:
 
 
 def test_format_action_label() -> None:
-    assert format_action_label("IRRIGATE_TOMORROW_AM") == "Irrigate Tomorrow Am"
+    assert format_action_label("IRRIGATE_TOMORROW_AM") == "Irrigate in 24 hours"
+    assert action_help_text("IRRIGATE_TOMORROW_AM") == (
+        "Current MVP approximation for tomorrow morning."
+    )
+
+
+def test_litres_area_to_millimetres_conversion() -> None:
+    assert irrigation_depth_from_litres_area(
+        total_litres=100.0,
+        irrigated_area_m2=50.0,
+    ) == pytest.approx(2.0)
+
+
+def test_drip_runtime_to_litres_and_millimetres_conversion() -> None:
+    result = drip_runtime_to_litres_and_depth(
+        emitter_count=20,
+        emitter_flow_lph=2.0,
+        runtime_minutes=30.0,
+        irrigated_area_m2=10.0,
+    )
+
+    assert result["runtime_hours"] == pytest.approx(0.5)
+    assert result["total_litres"] == pytest.approx(20.0)
+    assert result["amount_mm"] == pytest.approx(2.0)
+
+
+def test_irrigation_conversion_rejects_zero_or_negative_area() -> None:
+    with pytest.raises(ValueError, match="irrigated_area_m2"):
+        irrigation_depth_from_litres_area(
+            total_litres=10.0,
+            irrigated_area_m2=0.0,
+        )
+    with pytest.raises(ValueError, match="irrigated_area_m2"):
+        irrigation_depth_from_litres_area(
+            total_litres=10.0,
+            irrigated_area_m2=-1.0,
+        )
+
+
+def test_drip_conversion_rejects_invalid_emitter_count() -> None:
+    with pytest.raises(ValueError, match="emitter_count"):
+        drip_runtime_to_litres_and_depth(
+            emitter_count=0,
+            emitter_flow_lph=2.0,
+            runtime_minutes=30.0,
+            irrigated_area_m2=10.0,
+        )
+    with pytest.raises(ValueError, match="emitter_count"):
+        drip_runtime_to_litres_and_depth(
+            emitter_count=1.5,  # type: ignore[arg-type]
+            emitter_flow_lph=2.0,
+            runtime_minutes=30.0,
+            irrigated_area_m2=10.0,
+        )
+
+
+def test_drip_conversion_rejects_invalid_runtime() -> None:
+    with pytest.raises(ValueError, match="runtime_minutes"):
+        drip_runtime_to_litres_and_depth(
+            emitter_count=10,
+            emitter_flow_lph=2.0,
+            runtime_minutes=0.0,
+            irrigated_area_m2=10.0,
+        )
+
+
+def test_irrigation_conversion_rejects_non_finite_input() -> None:
+    with pytest.raises(ValueError, match="total_litres"):
+        irrigation_depth_from_litres_area(
+            total_litres=math.inf,
+            irrigated_area_m2=10.0,
+        )
+
+
+def test_friendly_wetness_risk_label_mapping() -> None:
+    assert friendly_wetness_risk_label(
+        "fungal_disease_present_avoid_leaf_wetness"
+    ) == "Fungal evidence present — avoid wetting leaves"
+
+
+def test_weather_response_population() -> None:
+    snapshot = {
+        "tmin_c": 21.5,
+        "tmax_c": 32.25,
+        "humidity_pct": 67.0,
+        "wind_speed_mps": 2.55,
+        "rainfall_mm": 4.2,
+        "shortwave_radiation_sum_mj_m2": 19.75,
+        "eto_reference_feed": 5.1,
+    }
+
+    assert weather_values_from_snapshot(snapshot) == snapshot
+
+
+def test_manual_override_state_behaviour() -> None:
+    fetched = {
+        "tmin_c": 21.5,
+        "tmax_c": 32.25,
+        "humidity_pct": 67.0,
+        "wind_speed_mps": 2.55,
+        "rainfall_mm": 4.2,
+        "shortwave_radiation_sum_mj_m2": 19.75,
+        "eto_reference_feed": 5.1,
+    }
+    current = {**fetched, "rainfall_mm": 6.0}
+
+    overrides = detect_weather_manual_overrides(current, fetched)
+
+    assert overrides["rainfall_mm"] is True
+    assert overrides["tmin_c"] is False

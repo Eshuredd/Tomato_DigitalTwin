@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 import json
 
 import httpx
@@ -77,6 +78,20 @@ def test_compute_water_state_posts_state_id_in_body() -> None:
     assert result == {"stress_band": "low"}
 
 
+def test_get_weather_snapshot_uses_expected_route_and_query() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == "/sessions/state-1/weather-snapshot"
+        assert request.url.params["target_date"] == "2026-07-10"
+        return httpx.Response(200, json={"source": "open_meteo"})
+
+    client = _client(httpx.MockTransport(handler))
+
+    assert client.get_weather_snapshot("state-1", date(2026, 7, 10)) == {
+        "source": "open_meteo"
+    }
+
+
 def test_update_simulate_recommend_and_narrate_contracts() -> None:
     seen: list[tuple[str, bytes]] = []
 
@@ -125,6 +140,30 @@ def test_structured_error_is_normalized_and_redacted() -> None:
     assert error.value.code == "DISEASE_MODEL_UNAVAILABLE"
     assert error.value.details["image_base64"] == "[redacted]"
     assert "secret" not in str(error.value.details)
+
+
+def test_weather_snapshot_error_is_normalized() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/sessions/state-1/weather-snapshot"
+        return httpx.Response(
+            502,
+            json={
+                "error": {
+                    "code": "WEATHER_LOOKUP_FAILED",
+                    "message": "Failed to retrieve weather for this farm.",
+                    "details": {"source": "open_meteo"},
+                }
+            },
+        )
+
+    client = _client(httpx.MockTransport(handler))
+
+    with pytest.raises(CropTwinAPIError) as error:
+        client.get_weather_snapshot("state-1", "2026-07-10")
+
+    assert error.value.status_code == 502
+    assert error.value.code == "WEATHER_LOOKUP_FAILED"
+    assert error.value.details == {"source": "open_meteo"}
 
 
 def test_fastapi_validation_error_is_normalized() -> None:

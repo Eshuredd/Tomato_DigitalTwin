@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 import os
 from typing import Any
 
@@ -105,6 +106,22 @@ class CropTwinAPIClient:
             json=body,
         )
 
+    def get_weather_snapshot(
+        self,
+        state_id: str,
+        target_date: date | str,
+    ) -> dict[str, Any]:
+        target_date_value = (
+            target_date.isoformat()
+            if isinstance(target_date, date)
+            else str(target_date)
+        )
+        return self._request(
+            "GET",
+            f"/sessions/{state_id}/weather-snapshot",
+            params={"target_date": target_date_value},
+        )
+
     def update_twin_state(self, state_id: str) -> dict[str, Any]:
         return self._request(
             "POST",
@@ -131,6 +148,7 @@ class CropTwinAPIClient:
         path: str,
         *,
         json: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> dict[str, Any]:
         try:
@@ -138,25 +156,28 @@ class CropTwinAPIClient:
                 method,
                 path,
                 json=json,
+                params=params,
                 timeout=timeout or self._timeout,
             )
         except httpx.TimeoutException as exc:
             raise CropTwinAPIError(
                 "The CropTwin API request timed out.",
                 code="REQUEST_TIMEOUT",
-                details=_redact_sensitive({"request": json}),
+                details=_redact_sensitive({"request": json, "params": params}),
             ) from exc
         except httpx.ConnectError as exc:
             raise CropTwinAPIError(
                 "Could not connect to the CropTwin API.",
                 code="CONNECTION_ERROR",
-                details=_redact_sensitive({"request": json}),
+                details=_redact_sensitive({"request": json, "params": params}),
             ) from exc
         except httpx.RequestError as exc:
             raise CropTwinAPIError(
                 "The CropTwin API request failed.",
                 code="REQUEST_ERROR",
-                details=_redact_sensitive({"error": str(exc), "request": json}),
+                details=_redact_sensitive(
+                    {"error": str(exc), "request": json, "params": params}
+                ),
             ) from exc
 
         if response.status_code >= 400:
