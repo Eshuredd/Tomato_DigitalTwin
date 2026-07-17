@@ -16,6 +16,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SUPERVISOR_CONF = REPO_ROOT / "docker" / "supervisord.conf"
 DOCKERFILE = REPO_ROOT / "Dockerfile"
 ALEMBIC_ENV = REPO_ROOT / "backend" / "alembic" / "env.py"
+ALEMBIC_INITIAL_REVISION = (
+    REPO_ROOT
+    / "backend"
+    / "alembic"
+    / "versions"
+    / "202607160001_initial_persistence.py"
+)
 COMPOSE_FILE = REPO_ROOT / "docker-compose.yml"
 COMPOSE_POSTGRES_FILE = REPO_ROOT / "docker-compose.postgres.yml"
 README = REPO_ROOT / "README.md"
@@ -143,6 +150,50 @@ def test_alembic_env_uses_runtime_database_url_setting() -> None:
     assert "get_persistence_settings" in source
     assert 'config.set_main_option("sqlalchemy.url", settings.database_url)' in source
     assert "url=settings.database_url" in source
+
+
+def test_initial_alembic_migration_contains_explicit_schema_operations() -> None:
+    source = ALEMBIC_INITIAL_REVISION.read_text(encoding="utf-8")
+
+    assert "Base.metadata.create_all" not in source
+    assert "Base.metadata.drop_all" not in source
+    assert "op.create_table" in source
+    assert "op.create_index" in source
+    assert "op.drop_table" in source
+    for table_name in (
+        "farms",
+        "plots",
+        "crop_cycles",
+        "disease_observations",
+        "growth_observations",
+        "water_observations",
+        "irrigation_events",
+        "twin_state_snapshots",
+        "simulation_runs",
+        "recommendation_runs",
+        "actual_actions",
+    ):
+        assert f'"{table_name}"' in source
+    for index_name in (
+        "ix_crop_cycles_plot_id",
+        "ix_disease_observations_state_id",
+        "ix_disease_observations_computed_at",
+        "ix_growth_observations_state_id",
+        "ix_growth_observations_computed_at",
+        "ix_water_observations_state_id",
+        "ix_water_observations_observed_at",
+        "ix_twin_state_snapshots_state_id",
+        "ix_twin_state_snapshots_computed_at",
+        "ix_simulation_runs_state_id",
+        "ix_simulation_runs_computed_at",
+        "ix_recommendation_runs_state_id",
+        "ix_recommendation_runs_computed_at",
+        "ix_irrigation_events_state_id",
+        "ix_irrigation_events_occurred_at",
+        "ix_actual_actions_state_id",
+        "ix_actual_actions_performed_at",
+    ):
+        assert f'"{index_name}"' in source
 
 
 def test_committed_compose_file_does_not_contain_postgres_password_value() -> None:

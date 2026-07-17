@@ -640,7 +640,7 @@ Current local verification:
 
 | Command | Result |
 |---|---|
-| `PYTHONPATH=backend python3 -m pytest -v backend/tests` | `203 passed, 1 skipped in 0.78s` |
+| `PYTHONPATH=backend python3 -m pytest -v backend/tests` | `204 passed, 1 skipped in 0.71s` |
 
 The full suite includes API workflow tests, route tests, persistence store-contract tests, deployment configuration tests, disease artifact validation, image validation, uncertainty policy tests, ETo/Open-Meteo tests, water-balance tests, and frontend HTTP/helper tests. Some route tests use dependency overrides; the optional real artifact smoke test runs when the local runtime can execute it.
 
