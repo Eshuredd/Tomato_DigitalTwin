@@ -31,6 +31,7 @@ from app.schemas import (
     CropType,
     HistoryEvent,
     SoilTexture,
+    ObservationTimeBasis,
 )
 
 
@@ -59,6 +60,66 @@ class DuplicateIrrigationEventApplicationError(Exception):
             f"Irrigation event '{irrigation_event_id}' has already been applied."
         )
         self.irrigation_event_id = irrigation_event_id
+
+
+class IrrigationEventStateMismatchError(Exception):
+    def __init__(
+        self,
+        irrigation_event_id: str,
+        *,
+        expected_state_id: str,
+        actual_state_id: str,
+    ) -> None:
+        super().__init__(
+            f"Irrigation event '{irrigation_event_id}' belongs to state "
+            f"'{actual_state_id}', not '{expected_state_id}'."
+        )
+        self.irrigation_event_id = irrigation_event_id
+        self.expected_state_id = expected_state_id
+        self.actual_state_id = actual_state_id
+
+
+class IrrigationEventPayloadConflictError(Exception):
+    def __init__(self, irrigation_event_id: str, *, field: str) -> None:
+        super().__init__(
+            f"Irrigation event '{irrigation_event_id}' conflicts on {field}."
+        )
+        self.irrigation_event_id = irrigation_event_id
+        self.field = field
+
+
+class RelatedRecommendationNotFoundError(Exception):
+    def __init__(self, recommendation_id: str) -> None:
+        super().__init__(f"Recommendation '{recommendation_id}' was not found.")
+        self.recommendation_id = recommendation_id
+
+
+class RecommendationStateMismatchError(Exception):
+    def __init__(
+        self,
+        recommendation_id: str,
+        *,
+        expected_state_id: str,
+        actual_state_id: str,
+    ) -> None:
+        super().__init__(
+            f"Recommendation '{recommendation_id}' belongs to state "
+            f"'{actual_state_id}', not '{expected_state_id}'."
+        )
+        self.recommendation_id = recommendation_id
+        self.expected_state_id = expected_state_id
+        self.actual_state_id = actual_state_id
+
+
+class DuplicateActualActionError(Exception):
+    def __init__(self, actual_action_id: str) -> None:
+        super().__init__(f"Actual action '{actual_action_id}' already exists.")
+        self.actual_action_id = actual_action_id
+
+
+class PersistenceIntegrityError(Exception):
+    def __init__(self, message: str = "Persistence integrity check failed.") -> None:
+        super().__init__(message)
 
 
 class TwinSessionRecord(BaseModel):
@@ -119,15 +180,51 @@ def with_irrigation_event_id(
     return event.model_copy(update={"irrigation_event_id": irrigation_event_id})
 
 
+def normalize_irrigation_event(
+    state_id: str,
+    event: LastIrrigationEvent,
+) -> LastIrrigationEvent:
+    return with_irrigation_event_id(state_id, event)
+
+
+def irrigation_event_payload_conflict_field(
+    existing: LastIrrigationEvent,
+    candidate: LastIrrigationEvent,
+) -> str | None:
+    existing_id = existing.irrigation_event_id
+    candidate_id = candidate.irrigation_event_id
+    if existing_id != candidate_id:
+        return "irrigation_event_id"
+    if ensure_utc_datetime(
+        existing.timestamp,
+        field_name="last_irrigation_event.timestamp",
+    ) != ensure_utc_datetime(
+        candidate.timestamp,
+        field_name="last_irrigation_event.timestamp",
+    ):
+        return "timestamp"
+    if f"{float(existing.amount_mm):.6f}" != f"{float(candidate.amount_mm):.6f}":
+        return "amount_mm"
+    if existing.source != candidate.source:
+        return "source"
+    return None
+
+
 class InMemoryTwinStateStore:
     def __init__(self, max_history: int = 10) -> None:
         self._sessions: dict[str, TwinSessionRecord] = {}
         self._farms: dict[str, FarmResponse] = {}
         self._plots: dict[str, PlotResponse] = {}
         self._actual_actions: dict[str, list[ActualActionResponse]] = {}
-        self._applied_irrigation_event_ids: set[str] = set()
+        self._irrigation_events: dict[str, tuple[str, LastIrrigationEvent]] = {}
+        self._water_by_irrigation_event_id: dict[str, WaterStateResponse] = {}
+        self._recommendations_by_id: dict[str, tuple[str, RecommendationResponse]] = {}
         self._disease_history: dict[str, list[DiseasePredictionResponse]] = {}
         self._growth_history: dict[str, list[GrowthStageResponse]] = {}
+        self._growth_observation_metadata: dict[
+            str,
+            list[tuple[datetime, ObservationTimeBasis, datetime]],
+        ] = {}
         self._water_history: dict[str, list[WaterStateResponse]] = {}
         self._max_history = max_history
         self._lock = threading.RLock()
@@ -137,6 +234,75 @@ class InMemoryTwinStateStore:
         if record is None:
             raise StateNotFoundError(state_id)
         return record
+
+    def _validate_irrigation_event_unlocked(
+        self,
+        state_id: str,
+        event: LastIrrigationEvent,
+    ) -> LastIrrigationEvent:
+        normalized = normalize_irrigation_event(state_id, event)
+        event_id = normalized.irrigation_event_id
+        if event_id is None:
+            raise ValueError("irrigation_event_id is required.")
+
+        existing = self._irrigation_events.get(event_id)
+        if existing is None:
+            return normalized
+
+        existing_state_id, existing_event = existing
+        if existing_state_id != state_id:
+            raise IrrigationEventStateMismatchError(
+                event_id,
+                expected_state_id=state_id,
+                actual_state_id=existing_state_id,
+            )
+
+        conflict_field = irrigation_event_payload_conflict_field(
+            existing_event,
+            normalized,
+        )
+        if conflict_field is not None:
+            raise IrrigationEventPayloadConflictError(
+                event_id,
+                field=conflict_field,
+            )
+
+        return normalized
+
+    def _record_irrigation_event_unlocked(
+        self,
+        state_id: str,
+        event: LastIrrigationEvent,
+    ) -> LastIrrigationEvent:
+        normalized = self._validate_irrigation_event_unlocked(state_id, event)
+        event_id = normalized.irrigation_event_id
+        if event_id is None:
+            raise ValueError("irrigation_event_id is required.")
+        self._irrigation_events.setdefault(
+            event_id,
+            (state_id, normalized.model_copy(deep=True)),
+        )
+        return normalized
+
+    def _validate_related_recommendation_unlocked(
+        self,
+        state_id: str,
+        recommendation_id: str | None,
+    ) -> None:
+        if recommendation_id is None:
+            return
+
+        existing = self._recommendations_by_id.get(recommendation_id)
+        if existing is None:
+            raise RelatedRecommendationNotFoundError(recommendation_id)
+
+        recommendation_state_id, _recommendation = existing
+        if recommendation_state_id != state_id:
+            raise RecommendationStateMismatchError(
+                recommendation_id,
+                expected_state_id=state_id,
+                actual_state_id=recommendation_state_id,
+            )
 
     def create_session(
         self,
@@ -198,15 +364,54 @@ class InMemoryTwinStateStore:
             return record.latest_disease_state.model_copy(deep=True)
 
     def cache_growth_state(
-        self, state_id: str, growth_state: GrowthStageResponse
+        self,
+        state_id: str,
+        growth_state: GrowthStageResponse,
+        *,
+        observed_at: datetime | None = None,
+        observation_time_basis: ObservationTimeBasis | None = None,
+        computed_at: datetime | None = None,
     ) -> GrowthStageResponse:
         with self._lock:
             record = self._get_record_unlocked(state_id)
             if growth_state.state_id != state_id:
                 raise ValueError("growth_state.state_id does not match state_id.")
+            if observed_at is not None:
+                observed_at_value = ensure_utc_datetime(
+                    observed_at,
+                    field_name="observed_at",
+                )
+            else:
+                observed_at_value = datetime.combine(
+                    growth_state.current_date,
+                    datetime.min.time(),
+                    tzinfo=timezone.utc,
+                )
+            if computed_at is not None:
+                computed_at_value = ensure_utc_datetime(
+                    computed_at,
+                    field_name="computed_at",
+                )
+            else:
+                computed_at_value = utc_now()
+            if (
+                observation_time_basis is not None
+                and not isinstance(observation_time_basis, ObservationTimeBasis)
+            ):
+                raise ValueError(
+                    "observation_time_basis must be an ObservationTimeBasis."
+                )
+            basis_value = (
+                ObservationTimeBasis.DATE_ONLY_UTC_START
+                if observation_time_basis is None
+                else observation_time_basis
+            )
             record.latest_growth_state = growth_state.model_copy(deep=True)
             self._growth_history.setdefault(state_id, []).append(
                 record.latest_growth_state.model_copy(deep=True)
+            )
+            self._growth_observation_metadata.setdefault(state_id, []).append(
+                (observed_at_value, basis_value, computed_at_value)
             )
             return record.latest_growth_state.model_copy(deep=True)
 
@@ -224,17 +429,85 @@ class InMemoryTwinStateStore:
             if water_state.state_id != state_id:
                 raise ValueError("water_state.state_id does not match state_id.")
             if irrigation_event is not None:
-                normalized_event = with_irrigation_event_id(state_id, irrigation_event)
+                normalized_event = self._record_irrigation_event_unlocked(
+                    state_id,
+                    irrigation_event,
+                )
                 event_id = normalized_event.irrigation_event_id
                 if event_id is None:
                     raise ValueError("irrigation_event_id is required.")
-                if event_id in self._applied_irrigation_event_ids:
+                if event_id in self._water_by_irrigation_event_id:
                     raise DuplicateIrrigationEventApplicationError(event_id)
-                self._applied_irrigation_event_ids.add(event_id)
             record.latest_water_state = water_state.model_copy(deep=True)
             self._water_history.setdefault(state_id, []).append(
                 record.latest_water_state.model_copy(deep=True)
             )
+            if irrigation_event is not None and event_id is not None:
+                self._water_by_irrigation_event_id[event_id] = (
+                    record.latest_water_state.model_copy(deep=True)
+                )
+            return record.latest_water_state.model_copy(deep=True)
+
+    def cache_water_update(
+        self,
+        state_id: str,
+        growth_state: GrowthStageResponse,
+        water_state: WaterStateResponse,
+        *,
+        weather_payload: dict[str, object] | None = None,
+        previous_root_zone_depletion_mm: float | None = None,
+        irrigation_event: LastIrrigationEvent | None = None,
+    ) -> WaterStateResponse:
+        with self._lock:
+            record = self._get_record_unlocked(state_id)
+            if growth_state.state_id != state_id:
+                raise ValueError("growth_state.state_id does not match state_id.")
+            if water_state.state_id != state_id:
+                raise ValueError("water_state.state_id does not match state_id.")
+            canonical_water_state = water_state.model_copy(
+                update={
+                    "observed_at": ensure_utc_datetime(
+                        water_state.observed_at,
+                        field_name="observed_at",
+                    ),
+                    "computed_at": utc_now(),
+                },
+                deep=True,
+            )
+
+            event_id: str | None = None
+            if irrigation_event is not None:
+                normalized_event = self._record_irrigation_event_unlocked(
+                    state_id,
+                    irrigation_event,
+                )
+                event_id = normalized_event.irrigation_event_id
+                if event_id is None:
+                    raise ValueError("irrigation_event_id is required.")
+                existing_water = self._water_by_irrigation_event_id.get(event_id)
+                if existing_water is not None:
+                    return existing_water.model_copy(deep=True)
+
+            record.latest_growth_state = growth_state.model_copy(deep=True)
+            self._growth_history.setdefault(state_id, []).append(
+                record.latest_growth_state.model_copy(deep=True)
+            )
+            self._growth_observation_metadata.setdefault(state_id, []).append(
+                (
+                    canonical_water_state.observed_at,
+                    canonical_water_state.observation_time_basis,
+                    canonical_water_state.computed_at,
+                )
+            )
+
+            record.latest_water_state = canonical_water_state.model_copy(deep=True)
+            self._water_history.setdefault(state_id, []).append(
+                record.latest_water_state.model_copy(deep=True)
+            )
+            if event_id is not None:
+                self._water_by_irrigation_event_id[event_id] = (
+                    record.latest_water_state.model_copy(deep=True)
+                )
             return record.latest_water_state.model_copy(deep=True)
 
     def cache_simulation(
@@ -259,7 +532,18 @@ class InMemoryTwinStateStore:
                 raise ValueError("recommendation.state_id does not match state_id.")
             if record.latest_simulation is None:
                 raise MissingCachedOutputError(state_id, "latest_simulation")
-            record.latest_recommendation = recommendation.model_copy(deep=True)
+            recommendation_id = (
+                recommendation.recommendation_id
+                or f"recommendation_{uuid.uuid4().hex}"
+            )
+            record.latest_recommendation = recommendation.model_copy(
+                update={"recommendation_id": recommendation_id},
+                deep=True,
+            )
+            self._recommendations_by_id[recommendation_id] = (
+                state_id,
+                record.latest_recommendation.model_copy(deep=True),
+            )
             return record.latest_recommendation.model_copy(deep=True)
 
     def update_current_state(self, state_id: str) -> UpdateTwinStateResponse:
@@ -501,10 +785,49 @@ class InMemoryTwinStateStore:
         self,
         state_id: str,
         irrigation_event_id: str,
+        *,
+        irrigation_event: LastIrrigationEvent | None = None,
     ) -> bool:
         with self._lock:
             self._get_record_unlocked(state_id)
-            return irrigation_event_id in self._applied_irrigation_event_ids
+            if irrigation_event is not None:
+                normalized_event = self._validate_irrigation_event_unlocked(
+                    state_id,
+                    irrigation_event,
+                )
+                if normalized_event.irrigation_event_id != irrigation_event_id:
+                    raise IrrigationEventPayloadConflictError(
+                        irrigation_event_id,
+                        field="irrigation_event_id",
+                    )
+            existing = self._irrigation_events.get(irrigation_event_id)
+            if existing is None:
+                return False
+            existing_state_id, _existing_event = existing
+            if existing_state_id != state_id:
+                raise IrrigationEventStateMismatchError(
+                    irrigation_event_id,
+                    expected_state_id=state_id,
+                    actual_state_id=existing_state_id,
+                )
+            return irrigation_event_id in self._water_by_irrigation_event_id
+
+    def get_water_state_for_irrigation_event(
+        self,
+        state_id: str,
+        irrigation_event: LastIrrigationEvent,
+    ) -> WaterStateResponse | None:
+        with self._lock:
+            self._get_record_unlocked(state_id)
+            normalized_event = self._validate_irrigation_event_unlocked(
+                state_id,
+                irrigation_event,
+            )
+            event_id = normalized_event.irrigation_event_id
+            if event_id is None:
+                raise ValueError("irrigation_event_id is required.")
+            water_state = self._water_by_irrigation_event_id.get(event_id)
+            return water_state.model_copy(deep=True) if water_state is not None else None
 
     def record_actual_action(
         self,
@@ -516,12 +839,23 @@ class InMemoryTwinStateStore:
     ) -> ActualActionResponse:
         with self._lock:
             self._get_record_unlocked(state_id)
+            self._validate_related_recommendation_unlocked(
+                state_id,
+                request.related_recommendation_id,
+            )
             action_id = actual_action_id or f"actual_{uuid.uuid4().hex}"
             timestamp = (
                 utc_now()
                 if recorded_at is None
                 else ensure_utc_datetime(recorded_at, field_name="recorded_at")
             )
+            actions = self._actual_actions.setdefault(state_id, [])
+            if any(
+                existing.actual_action_id == action_id
+                for state_actions in self._actual_actions.values()
+                for existing in state_actions
+            ):
+                raise DuplicateActualActionError(action_id)
             action = ActualActionResponse(
                 actual_action_id=action_id,
                 state_id=state_id,
@@ -532,9 +866,6 @@ class InMemoryTwinStateStore:
                 notes=request.notes,
                 recorded_at=timestamp,
             )
-            actions = self._actual_actions.setdefault(state_id, [])
-            if any(existing.actual_action_id == action_id for existing in actions):
-                raise ValueError(f"Actual action '{action_id}' already exists.")
             actions.append(action)
             return action.model_copy(deep=True)
 
@@ -562,9 +893,12 @@ class InMemoryTwinStateStore:
             self._farms.clear()
             self._plots.clear()
             self._actual_actions.clear()
-            self._applied_irrigation_event_ids.clear()
+            self._irrigation_events.clear()
+            self._water_by_irrigation_event_id.clear()
+            self._recommendations_by_id.clear()
             self._disease_history.clear()
             self._growth_history.clear()
+            self._growth_observation_metadata.clear()
             self._water_history.clear()
 
     def count(self) -> int:

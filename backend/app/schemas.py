@@ -544,6 +544,7 @@ class SimulateActionsResponse(BaseModel):
 
 
 class RecommendationResponse(BaseModel):
+    recommendation_id: str | None = None
     state_id: str
     chosen_action: ActionEnum
     irrigation_constraint: IrrigationConstraint

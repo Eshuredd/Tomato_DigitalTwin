@@ -691,7 +691,7 @@ def test_irrigation_event_double_counting(
     client_and_store: tuple[TestClient, InMemoryTwinStateStore],
     elevation_call_count: list[int],
 ) -> None:
-    client, _store = client_and_store
+    client, store = client_and_store
 
     irrigated_state_id = _create_session(
         client,
@@ -743,6 +743,8 @@ def test_irrigation_event_double_counting(
         last_irrigation_event=event,
     )
 
+    assert len(store._water_history[irrigated_state_id]) == 1  # noqa: SLF001
+
     no_event_request = ComputeWaterStateRequest(
         state_id=irrigated_state_id,
         current_date=CURRENT_DATE,
@@ -764,6 +766,176 @@ def test_irrigation_event_double_counting(
         no_event_response.json(),
     )
 
-    assert repeated_event_water_state.root_zone_depletion == pytest.approx(
-        no_event_water_state.root_zone_depletion,
+    assert repeated_event_water_state == first_irrigated_water_state
+    assert repeated_event_water_state.root_zone_depletion < (
+        no_event_water_state.root_zone_depletion
     )
+    assert len(store._water_history[irrigated_state_id]) == 2  # noqa: SLF001
+
+
+def test_actual_action_accepts_same_state_recommendation(
+    client_and_store: tuple[TestClient, InMemoryTwinStateStore],
+    elevation_call_count: list[int],
+) -> None:
+    client, _store = client_and_store
+    state_id = _create_session(
+        client,
+        elevation_call_count,
+        expected_elevation_calls=1,
+    )
+    _complete_current_state_prerequisites(client, state_id)
+    _simulate_actions(client, state_id)
+    recommendation = _recommend(client, state_id)
+
+    assert recommendation.recommendation_id is not None
+
+    response = client.post(
+        f"/sessions/{state_id}/actual-actions",
+        json={
+            "action": ActionEnum.IRRIGATE_NOW.value,
+            "performed_at": "2026-07-10T08:00:00Z",
+            "amount_mm": 8.0,
+            "related_recommendation_id": recommendation.recommendation_id,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["related_recommendation_id"] == (
+        recommendation.recommendation_id
+    )
+
+
+def test_actual_action_rejects_cross_state_recommendation(
+    client_and_store: tuple[TestClient, InMemoryTwinStateStore],
+    elevation_call_count: list[int],
+) -> None:
+    client, _store = client_and_store
+    first_state_id = _create_session(
+        client,
+        elevation_call_count,
+        expected_elevation_calls=1,
+    )
+    second_state_id = _create_session(
+        client,
+        elevation_call_count,
+        expected_elevation_calls=2,
+    )
+    _complete_current_state_prerequisites(client, second_state_id)
+    _simulate_actions(client, second_state_id)
+    recommendation = _recommend(client, second_state_id)
+
+    response = client.post(
+        f"/sessions/{first_state_id}/actual-actions",
+        json={
+            "action": ActionEnum.IRRIGATE_NOW.value,
+            "performed_at": "2026-07-10T08:00:00Z",
+            "related_recommendation_id": recommendation.recommendation_id,
+        },
+    )
+
+    assert response.status_code == 422
+    assert _assert_error_envelope(response)["code"] == "RECOMMENDATION_STATE_MISMATCH"
+
+
+def test_actual_action_rejects_unknown_recommendation(
+    client_and_store: tuple[TestClient, InMemoryTwinStateStore],
+    elevation_call_count: list[int],
+) -> None:
+    client, _store = client_and_store
+    state_id = _create_session(
+        client,
+        elevation_call_count,
+        expected_elevation_calls=1,
+    )
+
+    response = client.post(
+        f"/sessions/{state_id}/actual-actions",
+        json={
+            "action": ActionEnum.IRRIGATE_NOW.value,
+            "performed_at": "2026-07-10T08:00:00Z",
+            "related_recommendation_id": "recommendation-missing",
+        },
+    )
+
+    assert response.status_code == 422
+    assert _assert_error_envelope(response)["code"] == (
+        "RELATED_RECOMMENDATION_NOT_FOUND"
+    )
+
+
+def test_cross_state_irrigation_event_is_rejected(
+    client_and_store: tuple[TestClient, InMemoryTwinStateStore],
+    elevation_call_count: list[int],
+) -> None:
+    client, _store = client_and_store
+    first_state_id = _create_session(
+        client,
+        elevation_call_count,
+        expected_elevation_calls=1,
+    )
+    second_state_id = _create_session(
+        client,
+        elevation_call_count,
+        expected_elevation_calls=2,
+    )
+    event = LastIrrigationEvent(
+        irrigation_event_id="manual-shared-id",
+        timestamp=datetime(2026, 7, 9, 8, 0, tzinfo=timezone.utc),
+        amount_mm=8.0,
+    )
+    _compute_water_state(client, first_state_id, last_irrigation_event=event)
+
+    request = ComputeWaterStateRequest(
+        state_id=second_state_id,
+        current_date=CURRENT_DATE,
+        weather=_weather_input(),
+        last_irrigation_event=event,
+    )
+    response = client.post(
+        f"/sessions/{second_state_id}/compute-water-state",
+        json=request.model_dump(mode="json"),
+    )
+
+    assert response.status_code == 422
+    assert _assert_error_envelope(response)["code"] == (
+        "IRRIGATION_EVENT_STATE_MISMATCH"
+    )
+
+
+def test_irrigation_event_payload_conflict_is_rejected(
+    client_and_store: tuple[TestClient, InMemoryTwinStateStore],
+    elevation_call_count: list[int],
+) -> None:
+    client, _store = client_and_store
+    state_id = _create_session(
+        client,
+        elevation_call_count,
+        expected_elevation_calls=1,
+    )
+    event = LastIrrigationEvent(
+        irrigation_event_id="manual-conflict-id",
+        timestamp=datetime(2026, 7, 9, 8, 0, tzinfo=timezone.utc),
+        amount_mm=8.0,
+    )
+    _compute_water_state(client, state_id, last_irrigation_event=event)
+
+    conflicting_event = LastIrrigationEvent(
+        irrigation_event_id="manual-conflict-id",
+        timestamp=event.timestamp,
+        amount_mm=9.0,
+    )
+    request = ComputeWaterStateRequest(
+        state_id=state_id,
+        current_date=CURRENT_DATE,
+        weather=_weather_input(),
+        last_irrigation_event=conflicting_event,
+    )
+    response = client.post(
+        f"/sessions/{state_id}/compute-water-state",
+        json=request.model_dump(mode="json"),
+    )
+
+    assert response.status_code == 409
+    error = _assert_error_envelope(response)
+    assert error["code"] == "IRRIGATION_EVENT_PAYLOAD_CONFLICT"
+    assert error["details"]["field"] == "amount_mm"

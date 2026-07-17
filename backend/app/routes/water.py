@@ -202,13 +202,14 @@ def compute_water_state_route(
                 message="Invalid water state request.",
                 details={"reason": "irrigation_event_id could not be resolved."},
             )
-        already_applied = call_store_or_raise(
-            store.has_applied_irrigation_event,
+        existing_water_state = call_store_or_raise(
+            store.get_water_state_for_irrigation_event,
             state_id,
-            event_id,
+            candidate_event,
         )
-        if not already_applied:
-            irrigation_event_for_update = candidate_event
+        if existing_water_state is not None:
+            return existing_water_state
+        irrigation_event_for_update = candidate_event
 
     previous_root_zone_depletion_mm = (
         None
@@ -256,15 +257,10 @@ def compute_water_state_route(
             details={"reason": str(exc)},
         ) from exc
 
-    call_store_or_raise(
-        store.cache_growth_state,
+    return call_store_or_raise(
+        store.cache_water_update,
         state_id=state_id,
         growth_state=growth_state,
-    )
-
-    return call_store_or_raise(
-        store.cache_water_state,
-        state_id=state_id,
         water_state=water_state,
         weather_payload=request.weather.model_dump(mode="json"),
         previous_root_zone_depletion_mm=previous_root_zone_depletion_mm,

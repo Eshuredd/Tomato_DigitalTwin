@@ -72,8 +72,11 @@ class CropCycleModel(Base):
 class DiseaseObservationModel(Base):
     __tablename__ = "disease_observations"
     __table_args__ = (
-        Index("ix_disease_observations_state_id", "state_id"),
-        Index("ix_disease_observations_computed_at", "computed_at"),
+        Index(
+            "ix_disease_observations_state_computed_at",
+            "state_id",
+            "computed_at",
+        ),
     )
 
     observation_id: Mapped[str] = mapped_column(String(120), primary_key=True)
@@ -96,8 +99,11 @@ class DiseaseObservationModel(Base):
 class GrowthObservationModel(Base):
     __tablename__ = "growth_observations"
     __table_args__ = (
-        Index("ix_growth_observations_state_id", "state_id"),
-        Index("ix_growth_observations_computed_at", "computed_at"),
+        Index(
+            "ix_growth_observations_state_computed_at",
+            "state_id",
+            "computed_at",
+        ),
     )
 
     observation_id: Mapped[str] = mapped_column(String(120), primary_key=True)
@@ -119,8 +125,11 @@ class GrowthObservationModel(Base):
 class IrrigationEventModel(Base):
     __tablename__ = "irrigation_events"
     __table_args__ = (
-        Index("ix_irrigation_events_state_id", "state_id"),
-        Index("ix_irrigation_events_occurred_at", "occurred_at"),
+        Index(
+            "ix_irrigation_events_state_occurred_at",
+            "state_id",
+            "occurred_at",
+        ),
     )
 
     irrigation_event_id: Mapped[str] = mapped_column(String(160), primary_key=True)
@@ -133,19 +142,22 @@ class IrrigationEventModel(Base):
     amount_mm: Mapped[float] = mapped_column(Float, nullable=False)
     source: Mapped[str] = mapped_column(String(60), nullable=False)
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    applied_to_water_observation_id: Mapped[str | None] = mapped_column(
-        String(120),
-        nullable=True,
-        unique=True,
-    )
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
 
 
 class WaterObservationModel(Base):
     __tablename__ = "water_observations"
     __table_args__ = (
-        Index("ix_water_observations_state_id", "state_id"),
-        Index("ix_water_observations_observed_at", "observed_at"),
+        Index(
+            "ix_water_observations_state_computed_at",
+            "state_id",
+            "computed_at",
+        ),
+        Index(
+            "ux_water_observations_irrigation_event_id",
+            "irrigation_event_id",
+            unique=True,
+        ),
     )
 
     observation_id: Mapped[str] = mapped_column(String(120), primary_key=True)
@@ -174,8 +186,11 @@ class WaterObservationModel(Base):
 class TwinStateSnapshotModel(Base):
     __tablename__ = "twin_state_snapshots"
     __table_args__ = (
-        Index("ix_twin_state_snapshots_state_id", "state_id"),
-        Index("ix_twin_state_snapshots_computed_at", "computed_at"),
+        Index(
+            "ix_twin_state_snapshots_state_computed_at",
+            "state_id",
+            "computed_at",
+        ),
     )
 
     snapshot_id: Mapped[str] = mapped_column(String(120), primary_key=True)
@@ -228,8 +243,12 @@ class TwinStateSnapshotModel(Base):
 class SimulationRunModel(Base):
     __tablename__ = "simulation_runs"
     __table_args__ = (
-        Index("ix_simulation_runs_state_id", "state_id"),
-        Index("ix_simulation_runs_computed_at", "computed_at"),
+        Index(
+            "ix_simulation_runs_state_snapshot_computed_at",
+            "state_id",
+            "source_snapshot_id",
+            "computed_at",
+        ),
     )
 
     simulation_id: Mapped[str] = mapped_column(String(120), primary_key=True)
@@ -251,8 +270,13 @@ class SimulationRunModel(Base):
 class RecommendationRunModel(Base):
     __tablename__ = "recommendation_runs"
     __table_args__ = (
-        Index("ix_recommendation_runs_state_id", "state_id"),
-        Index("ix_recommendation_runs_computed_at", "computed_at"),
+        Index(
+            "ix_recommendation_runs_state_snapshot_simulation_computed_at",
+            "state_id",
+            "source_snapshot_id",
+            "source_simulation_id",
+            "computed_at",
+        ),
     )
 
     recommendation_id: Mapped[str] = mapped_column(String(120), primary_key=True)
@@ -279,8 +303,11 @@ class RecommendationRunModel(Base):
 class ActualActionModel(Base):
     __tablename__ = "actual_actions"
     __table_args__ = (
-        Index("ix_actual_actions_state_id", "state_id"),
-        Index("ix_actual_actions_performed_at", "performed_at"),
+        Index(
+            "ix_actual_actions_state_performed_at",
+            "state_id",
+            "performed_at",
+        ),
     )
 
     actual_action_id: Mapped[str] = mapped_column(String(120), primary_key=True)

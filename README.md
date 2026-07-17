@@ -147,7 +147,11 @@ For the local/Docker MVP, automatic table creation is enabled by default with `C
 
 Persistent entities include Farm, Plot, Crop Cycle / Session, disease observations, growth observations, water observations, immutable twin-state snapshots, simulation runs, recommendation runs, irrigation events, and actual actions. Standalone `POST /sessions` remains supported and does not create fake Farm or Plot records. Plot-created crop cycles copy plot location, elevation, and soil texture into the crop-cycle snapshot so historical sessions do not change when plot metadata changes.
 
-Actual actions record what physically happened. They remain separate from recommendations and do not automatically modify water state in this task.
+Irrigation-event IDs are scoped to one crop cycle. An event ID cannot be reused for a different crop cycle or for a different timestamp, amount, or source. `water_observations.irrigation_event_id` is the authoritative application link, is unique when present, and links one irrigation event to at most one water observation. Identical irrigation retries return the original persisted water result instead of applying the event again.
+
+Actual actions record what physically happened. They remain separate from recommendations, do not automatically modify water state in this task, and may reference only recommendations from the same crop cycle. Historical recommendations from the same crop cycle can still be referenced.
+
+Alembic migrations are covered by real upgrade/downgrade smoke tests against temporary SQLite databases. The tests also verify the authoritative irrigation-event link, foreign-key enforcement, and duplicate-link protection.
 
 The disease model is a locally stored Torchvision/PyTorch artifact. CropTwin does not use Hugging Face and does not download model weights at runtime.
 
@@ -274,6 +278,8 @@ Disease evidence can add caution reasons, inspection advisory, or irrigation con
 
 For existing water requests that provide only `current_date`, CropTwin uses `00:00 UTC` on that date and marks `observation_time_basis=DATE_ONLY_UTC_START`. Explicit `observed_at` values must be timezone-aware and are normalized to UTC. Disease predictions without capture metadata use the server receipt/prediction timestamp with `observation_time_basis=SERVER_RECEIVED`.
 
+When a water request computes both growth and water observations, the stored growth observation uses the same `observed_at` and `observation_time_basis` as the paired water observation.
+
 ### Water Surplus Accounting
 
 The deterministic bucket update is:
@@ -301,6 +307,8 @@ depletion_beyond_taw_mm = max(0, raw_depletion - TAW)
 CropTwin still computes ETo locally. The Open-Meteo ETo value is stored only as `WeatherInput.eto_reference_feed` for comparison, not as the final CropTwin ETo. Weather values can be manually overridden before water-state computation.
 
 Recent irrigation can be entered as millimetres, total litres plus irrigated area, or drip runtime plus emitter details. The backend still receives the canonical `LastIrrigationEvent.amount_mm`. The conversion basis is that 1 litre over 1 m2 equals 1 mm.
+
+If the request does not supply an irrigation-event ID, CropTwin derives a stable ID from `state_id`, timestamp, and normalized `amount_mm`. Supplying the same event again is idempotent; reusing an event ID with different payload values is rejected.
 
 ## Streamlit Frontend
 
@@ -640,7 +648,7 @@ Current local verification:
 
 | Command | Result |
 |---|---|
-| `PYTHONPATH=backend python3 -m pytest -v backend/tests` | `204 passed, 1 skipped in 0.71s` |
+| `PYTHONPATH=backend python3 -m pytest -v backend/tests` | `219 passed, 1 skipped in 1.04s` |
 
 The full suite includes API workflow tests, route tests, persistence store-contract tests, deployment configuration tests, disease artifact validation, image validation, uncertainty policy tests, ETo/Open-Meteo tests, water-balance tests, and frontend HTTP/helper tests. Some route tests use dependency overrides; the optional real artifact smoke test runs when the local runtime can execute it.
 

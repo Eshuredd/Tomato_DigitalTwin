@@ -16,9 +16,15 @@ from app.schemas import (
     TwinCurrentState,
 )
 from app.state_store import (
+    DuplicateActualActionError,
     DuplicateIrrigationEventApplicationError,
     IncompleteStateError,
+    IrrigationEventPayloadConflictError,
+    IrrigationEventStateMismatchError,
     MissingCachedOutputError,
+    PersistenceIntegrityError,
+    RecommendationStateMismatchError,
+    RelatedRecommendationNotFoundError,
     StateNotFoundError,
     TwinSessionRecord,
     state_store,
@@ -179,6 +185,65 @@ def raise_from_store_error(exc: Exception) -> NoReturn:
             code="IRRIGATION_EVENT_ALREADY_APPLIED",
             message=str(exc),
             details={"irrigation_event_id": exc.irrigation_event_id},
+        )
+
+    if isinstance(exc, IrrigationEventStateMismatchError):
+        raise_api_error(
+            status_code=422,
+            code="IRRIGATION_EVENT_STATE_MISMATCH",
+            message=str(exc),
+            details={
+                "irrigation_event_id": exc.irrigation_event_id,
+                "expected_state_id": exc.expected_state_id,
+                "actual_state_id": exc.actual_state_id,
+            },
+        )
+
+    if isinstance(exc, IrrigationEventPayloadConflictError):
+        raise_api_error(
+            status_code=409,
+            code="IRRIGATION_EVENT_PAYLOAD_CONFLICT",
+            message=str(exc),
+            details={
+                "irrigation_event_id": exc.irrigation_event_id,
+                "field": exc.field,
+            },
+        )
+
+    if isinstance(exc, RelatedRecommendationNotFoundError):
+        raise_api_error(
+            status_code=422,
+            code="RELATED_RECOMMENDATION_NOT_FOUND",
+            message=str(exc),
+            details={"recommendation_id": exc.recommendation_id},
+        )
+
+    if isinstance(exc, RecommendationStateMismatchError):
+        raise_api_error(
+            status_code=422,
+            code="RECOMMENDATION_STATE_MISMATCH",
+            message=str(exc),
+            details={
+                "recommendation_id": exc.recommendation_id,
+                "expected_state_id": exc.expected_state_id,
+                "actual_state_id": exc.actual_state_id,
+            },
+        )
+
+    if isinstance(exc, DuplicateActualActionError):
+        raise_api_error(
+            status_code=409,
+            code="DUPLICATE_ACTUAL_ACTION",
+            message=str(exc),
+            details={"actual_action_id": exc.actual_action_id},
+        )
+
+    if isinstance(exc, PersistenceIntegrityError):
+        raise_api_error(
+            status_code=500,
+            code="PERSISTENCE_INTEGRITY_ERROR",
+            message=str(exc),
+            details={},
         )
 
     if isinstance(exc, ValueError):

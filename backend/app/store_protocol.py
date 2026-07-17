@@ -13,6 +13,7 @@ from app.schemas import (
     FarmResponse,
     GrowthStageResponse,
     LastIrrigationEvent,
+    ObservationTimeBasis,
     PlotCreateRequest,
     PlotResponse,
     RecommendationResponse,
@@ -51,11 +52,26 @@ class TwinStateStore(Protocol):
         self,
         state_id: str,
         growth_state: GrowthStageResponse,
+        *,
+        observed_at: datetime | None = None,
+        observation_time_basis: ObservationTimeBasis | None = None,
+        computed_at: datetime | None = None,
     ) -> GrowthStageResponse: ...
 
     def cache_water_state(
         self,
         state_id: str,
+        water_state: WaterStateResponse,
+        *,
+        weather_payload: dict[str, object] | None = None,
+        previous_root_zone_depletion_mm: float | None = None,
+        irrigation_event: LastIrrigationEvent | None = None,
+    ) -> WaterStateResponse: ...
+
+    def cache_water_update(
+        self,
+        state_id: str,
+        growth_state: GrowthStageResponse,
         water_state: WaterStateResponse,
         *,
         weather_payload: dict[str, object] | None = None,
@@ -129,7 +145,15 @@ class TwinStateStore(Protocol):
         self,
         state_id: str,
         irrigation_event_id: str,
+        *,
+        irrigation_event: LastIrrigationEvent | None = None,
     ) -> bool: ...
+
+    def get_water_state_for_irrigation_event(
+        self,
+        state_id: str,
+        irrigation_event: LastIrrigationEvent,
+    ) -> WaterStateResponse | None: ...
 
     def record_actual_action(
         self,
