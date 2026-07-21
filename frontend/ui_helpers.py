@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import base64
 from html import escape
+import json
 import math
 from typing import Any
+import uuid
 
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
@@ -71,6 +73,8 @@ DOWNSTREAM_KEYS_BY_STEP = {
         "weather_snapshot_response",
         "weather_fetched_values",
         "weather_manual_overrides",
+        "water_update_id",
+        "water_update_signature",
     ),
     "disease": (
         "twin_response",
@@ -79,6 +83,8 @@ DOWNSTREAM_KEYS_BY_STEP = {
         "narration_response",
         "session_state_response",
         "history_response",
+        "water_update_id",
+        "water_update_signature",
     ),
     "water": (
         "twin_response",
@@ -298,6 +304,27 @@ def detect_weather_manual_overrides(
         fetched = _finite_float(field, fetched_values[field])
         overrides[field] = abs(current - fetched) > tolerance_value
     return overrides
+
+
+def generate_water_update_id() -> str:
+    return str(uuid.uuid4())
+
+
+def water_update_payload_signature(
+    *,
+    state_id: str,
+    payload: dict[str, Any],
+) -> str:
+    return json.dumps(
+        {
+            "state_id": state_id,
+            "payload": payload,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+        allow_nan=False,
+    )
 
 
 def _finite_float(name: str, value: object) -> float:

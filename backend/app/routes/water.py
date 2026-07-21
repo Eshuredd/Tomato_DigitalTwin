@@ -28,8 +28,12 @@ from app.schemas import (
     WeatherSnapshotResponse,
     WaterStateResponse,
 )
-from app.state_store import with_irrigation_event_id
+from app.state_store import utc_now, with_irrigation_event_id
 from app.store_protocol import TwinStateStore
+from app.water.update_identity import (
+    compute_water_update_fingerprint,
+    derive_water_update_id,
+)
 from app.water.water_balance import (
     compute_water_state as compute_water_state_domain,
 )
@@ -187,35 +191,6 @@ def compute_water_state_route(
 
     elevation_m = _validate_session_elevation(record.location.elevation_m)
 
-    previous_current_state = record.current_state
-    irrigation_event_for_update: LastIrrigationEvent | None = None
-    if request.last_irrigation_event is not None:
-        candidate_event = with_irrigation_event_id(
-            state_id,
-            request.last_irrigation_event,
-        )
-        event_id = candidate_event.irrigation_event_id
-        if event_id is None:
-            raise TwinAPIException(
-                status_code=422,
-                code=INVALID_WATER_STATE_REQUEST_CODE,
-                message="Invalid water state request.",
-                details={"reason": "irrigation_event_id could not be resolved."},
-            )
-        existing_water_state = call_store_or_raise(
-            store.get_water_state_for_irrigation_event,
-            state_id,
-            candidate_event,
-        )
-        if existing_water_state is not None:
-            return existing_water_state
-        irrigation_event_for_update = candidate_event
-
-    previous_root_zone_depletion_mm = (
-        None
-        if previous_current_state is None
-        else previous_current_state.root_zone_depletion
-    )
     if request.observed_at is None:
         observed_at = datetime.combine(
             request.current_date,
@@ -227,7 +202,75 @@ def compute_water_state_route(
         observed_at = request.observed_at
         observation_time_basis = ObservationTimeBasis.EXPLICIT
 
+    water_update_id = request.water_update_id or derive_water_update_id(
+        state_id=state_id,
+        observed_at=observed_at,
+        observation_time_basis=observation_time_basis,
+    )
+
+    reported_irrigation_event: LastIrrigationEvent | None = None
+    reported_irrigation_event_id: str | None = None
+    if request.last_irrigation_event is not None:
+        reported_irrigation_event = with_irrigation_event_id(
+            state_id,
+            request.last_irrigation_event,
+        )
+        reported_irrigation_event_id = reported_irrigation_event.irrigation_event_id
+        if reported_irrigation_event_id is None:
+            raise TwinAPIException(
+                status_code=422,
+                code=INVALID_WATER_STATE_REQUEST_CODE,
+                message="Invalid water state request.",
+                details={"reason": "irrigation_event_id could not be resolved."},
+            )
+
+    request_fingerprint = compute_water_update_fingerprint(
+        state_id=state_id,
+        water_update_id=water_update_id,
+        current_date=request.current_date,
+        observed_at=observed_at,
+        observation_time_basis=observation_time_basis,
+        weather=request.weather,
+        last_irrigation_event=reported_irrigation_event,
+    )
+
+    existing_water_state = call_store_or_raise(
+        store.get_water_state_for_update,
+        state_id,
+        water_update_id,
+        request_fingerprint,
+    )
+    if existing_water_state is not None:
+        return existing_water_state
+
+    previous_current_state = record.current_state
+    previous_root_zone_depletion_mm = (
+        None
+        if previous_current_state is None
+        else previous_current_state.root_zone_depletion
+    )
+
+    irrigation_event_already_applied = False
+    effective_irrigation_mm = 0.0
+    irrigation_event_for_balance: LastIrrigationEvent | None = None
+    if reported_irrigation_event is not None and reported_irrigation_event_id is not None:
+        irrigation_event_already_applied = call_store_or_raise(
+            store.has_applied_irrigation_event,
+            state_id,
+            reported_irrigation_event_id,
+            irrigation_event=reported_irrigation_event,
+        )
+        if irrigation_event_already_applied:
+            effective_irrigation_mm = 0.0
+            irrigation_event_for_balance = None
+        else:
+            effective_irrigation_mm = reported_irrigation_event.amount_mm
+            irrigation_event_for_balance = reported_irrigation_event
+    else:
+        effective_irrigation_mm = 0.0
+
     try:
+        computed_at = utc_now()
         growth_state = resolve_growth_stage(
             state_id=state_id,
             crop_type=record.crop_type,
@@ -244,10 +287,28 @@ def compute_water_state_route(
             weather=request.weather,
             latitude_deg=record.location.latitude,
             elevation_m=elevation_m,
-            last_irrigation_event=irrigation_event_for_update,
+            last_irrigation_event=irrigation_event_for_balance,
             previous_root_zone_depletion_mm=previous_root_zone_depletion_mm,
             observed_at=observed_at,
             observation_time_basis=observation_time_basis,
+            computed_at=computed_at,
+        )
+        water_state = water_state.model_copy(
+            update={
+                "water_update_id": water_update_id,
+                "reported_irrigation_event_id": reported_irrigation_event_id,
+                "applied_irrigation_event_id": (
+                    reported_irrigation_event_id
+                    if irrigation_event_for_balance is not None
+                    else None
+                ),
+                "effective_irrigation_mm": effective_irrigation_mm,
+                "irrigation_event_already_accounted_for": (
+                    reported_irrigation_event_id is not None
+                    and irrigation_event_already_applied
+                ),
+            },
+            deep=True,
         )
     except ValueError as exc:
         raise TwinAPIException(
@@ -262,9 +323,13 @@ def compute_water_state_route(
         state_id=state_id,
         growth_state=growth_state,
         water_state=water_state,
+        water_update_id=water_update_id,
+        request_fingerprint=request_fingerprint,
         weather_payload=request.weather.model_dump(mode="json"),
         previous_root_zone_depletion_mm=previous_root_zone_depletion_mm,
-        irrigation_event=irrigation_event_for_update,
+        reported_irrigation_event=reported_irrigation_event,
+        effective_irrigation_mm=effective_irrigation_mm,
+        computed_at=computed_at,
     )
 
 

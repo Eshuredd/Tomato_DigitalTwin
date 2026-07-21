@@ -147,11 +147,13 @@ For the local/Docker MVP, automatic table creation is enabled by default with `C
 
 Persistent entities include Farm, Plot, Crop Cycle / Session, disease observations, growth observations, water observations, immutable twin-state snapshots, simulation runs, recommendation runs, irrigation events, and actual actions. Standalone `POST /sessions` remains supported and does not create fake Farm or Plot records. Plot-created crop cycles copy plot location, elevation, and soil texture into the crop-cycle snapshot so historical sessions do not change when plot metadata changes.
 
-Irrigation-event IDs are scoped to one crop cycle. An event ID cannot be reused for a different crop cycle or for a different timestamp, amount, or source. `water_observations.irrigation_event_id` is the authoritative application link, is unique when present, and links one irrigation event to at most one water observation. Identical irrigation retries return the original persisted water result instead of applying the event again.
+Water updates and irrigation events use different identities. `water_update_id` identifies one physical/source water observation and is scoped by `state_id`; exact retries use the same `water_update_id` plus a canonical SHA-256 request fingerprint. Reusing a `water_update_id` with changed calculation inputs returns a conflict. If old clients omit `water_update_id`, CropTwin derives `derived-water-update-*` from `state_id`, UTC `observed_at`, and `observation_time_basis`, so one crop cycle has one compatibility observation for one exact observed instant unless the caller provides a distinct ID.
+
+Irrigation-event IDs identify physical irrigation events. An event ID cannot be reused for a different crop cycle or for a different timestamp, amount, or source. `water_observations.irrigation_event_id` is the authoritative application link, is unique when present, and links one irrigation event to the water observation that first applied it. Later water observations may report the same historical event; CropTwin stores that provenance in `reported_irrigation_event_id`, sets `effective_irrigation_mm` to `0`, leaves `irrigation_event_id` null for the later row, and still computes the new weather and ETc. Database uniqueness guards exact retries and prevents one irrigation event from being applied twice. If two different updates race to apply the same event, the losing request receives a conflict and should retry.
 
 Actual actions record what physically happened. They remain separate from recommendations, do not automatically modify water state in this task, and may reference only recommendations from the same crop cycle. Historical recommendations from the same crop cycle can still be referenced.
 
-Alembic migrations are covered by real upgrade/downgrade smoke tests against temporary SQLite databases. The tests also verify the authoritative irrigation-event link, foreign-key enforcement, and duplicate-link protection.
+Alembic migrations are covered by real upgrade/downgrade smoke tests against temporary SQLite databases. The tests also verify the authoritative irrigation-event link, water-update uniqueness, reported-event provenance, foreign-key enforcement, and duplicate-link protection.
 
 The disease model is a locally stored Torchvision/PyTorch artifact. CropTwin does not use Hugging Face and does not download model weights at runtime.
 
@@ -308,7 +310,16 @@ CropTwin still computes ETo locally. The Open-Meteo ETo value is stored only as 
 
 Recent irrigation can be entered as millimetres, total litres plus irrigated area, or drip runtime plus emitter details. The backend still receives the canonical `LastIrrigationEvent.amount_mm`. The conversion basis is that 1 litre over 1 m2 equals 1 mm.
 
-If the request does not supply an irrigation-event ID, CropTwin derives a stable ID from `state_id`, timestamp, and normalized `amount_mm`. Supplying the same event again is idempotent; reusing an event ID with different payload values is rejected.
+If the request does not supply an irrigation-event ID, CropTwin derives a stable event ID from `state_id`, timestamp, and normalized `amount_mm`. Reusing an event ID with different timestamp, amount, or source is rejected. Reusing an already-applied event ID in a later water observation is not an error and does not make the later request an exact retry.
+
+Example:
+
+| Observation | `water_update_id` | Reported `irrigation_event_id` | Applied link | Effective irrigation |
+|---|---|---|---|---:|
+| July 10 | `update-july-10` | `irrigation-123` | `irrigation-123` | `5 mm` |
+| July 11 | `update-july-11` | `irrigation-123` | none | `0 mm` |
+
+The July 11 update still processes July 11 weather and ETc. It simply records that `irrigation-123` had already been included in an earlier water balance.
 
 ## Streamlit Frontend
 
@@ -472,6 +483,8 @@ The frontend uses `CROPTWIN_API_BASE_URL` or the Settings panel to choose the AP
 | `POST` | `/sessions/{state_id}/narrate` | Explain recommendation |
 | `POST` | `/sessions/{state_id}/actual-actions` | Record a physical farmer action |
 | `GET` | `/sessions/{state_id}/actual-actions` | List physical farmer actions |
+
+`POST /sessions/{state_id}/compute-water-state` accepts optional `water_update_id`. The path `state_id` remains authoritative, and older clients may omit the field. Exact retries return the canonical persisted `WaterStateResponse`; conflicting reuse of `water_update_id` or `irrigation_event_id` returns a structured conflict response with `status_code`, `code`, `message`, and `details`.
 
 Local API documentation:
 

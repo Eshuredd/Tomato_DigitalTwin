@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import math
+import uuid
 
 import pytest
 
@@ -18,11 +19,13 @@ from frontend.ui_helpers import (
     format_action_label,
     format_percent,
     friendly_wetness_risk_label,
+    generate_water_update_id,
     humanize_disease_label,
     irrigation_depth_from_litres_area,
     keys_to_clear_after,
     sanitize_error_details,
     top_class_probabilities,
+    water_update_payload_signature,
     weather_values_from_snapshot,
     workflow_progress_states,
 )
@@ -214,3 +217,26 @@ def test_manual_override_state_behaviour() -> None:
 
     assert overrides["rainfall_mm"] is True
     assert overrides["tmin_c"] is False
+
+
+def test_water_update_payload_signature_and_uuid_generation() -> None:
+    payload = {
+        "current_date": "2026-07-10",
+        "weather": {"rainfall_mm": 0.0, "tmax_c": 31.0},
+    }
+    first = water_update_payload_signature(state_id="state-1", payload=payload)
+    second = water_update_payload_signature(
+        state_id="state-1",
+        payload={
+            "weather": {"tmax_c": 31.0, "rainfall_mm": 0.0},
+            "current_date": "2026-07-10",
+        },
+    )
+    changed = water_update_payload_signature(
+        state_id="state-1",
+        payload={**payload, "current_date": "2026-07-11"},
+    )
+
+    assert first == second
+    assert first != changed
+    uuid.UUID(generate_water_update_id())

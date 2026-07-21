@@ -3,7 +3,18 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import Date, DateTime, Float, ForeignKey, Index, JSON, String, Text
+from sqlalchemy import (
+    CheckConstraint,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -148,6 +159,15 @@ class IrrigationEventModel(Base):
 class WaterObservationModel(Base):
     __tablename__ = "water_observations"
     __table_args__ = (
+        UniqueConstraint(
+            "state_id",
+            "water_update_id",
+            name="uq_water_observations_state_water_update_id",
+        ),
+        CheckConstraint(
+            "effective_irrigation_mm >= 0",
+            name="ck_water_observations_effective_irrigation_mm_non_negative",
+        ),
         Index(
             "ix_water_observations_state_computed_at",
             "state_id",
@@ -157,6 +177,12 @@ class WaterObservationModel(Base):
             "ux_water_observations_irrigation_event_id",
             "irrigation_event_id",
             unique=True,
+        ),
+        Index(
+            "ix_water_observations_state_reported_irrigation_observed",
+            "state_id",
+            "reported_irrigation_event_id",
+            "observed_at",
         ),
     )
 
@@ -169,6 +195,8 @@ class WaterObservationModel(Base):
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     observation_time_basis: Mapped[str] = mapped_column(String(40), nullable=False)
+    water_update_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     weather_payload_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     previous_root_zone_depletion_mm: Mapped[float | None] = mapped_column(Float, nullable=True)
     raw_root_zone_depletion_mm: Mapped[float] = mapped_column(Float, nullable=False)
@@ -180,6 +208,12 @@ class WaterObservationModel(Base):
         ForeignKey("irrigation_events.irrigation_event_id"),
         nullable=True,
     )
+    reported_irrigation_event_id: Mapped[str | None] = mapped_column(
+        String(160),
+        ForeignKey("irrigation_events.irrigation_event_id"),
+        nullable=True,
+    )
+    effective_irrigation_mm: Mapped[float] = mapped_column(Float, nullable=False)
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
 
 

@@ -386,12 +386,30 @@ class LastIrrigationEvent(BaseModel):
 
 class ComputeWaterStateRequest(BaseModel):
     state_id: str
+    water_update_id: str | None = None
     current_date: date
     weather: WeatherInput
     last_irrigation_event: LastIrrigationEvent | None = None
     observed_at: datetime | None = None
 
     model_config = ConfigDict(extra="forbid")
+
+    @field_validator("water_update_id", mode="before")
+    @classmethod
+    def _water_update_id_must_be_bounded(
+        cls,
+        value: object,
+    ) -> object:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            return value
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("water_update_id must be non-empty when supplied.")
+        if len(stripped) > 160:
+            raise ValueError("water_update_id must be at most 160 characters.")
+        return stripped
 
     @field_validator("observed_at")
     @classmethod
@@ -413,6 +431,11 @@ class ComputeWaterStateRequest(BaseModel):
 
 class WaterStateResponse(BaseModel):
     state_id: str
+    water_update_id: str | None = None
+    reported_irrigation_event_id: str | None = None
+    applied_irrigation_event_id: str | None = None
+    effective_irrigation_mm: Annotated[float, Field(ge=0.0)] = 0.0
+    irrigation_event_already_accounted_for: bool = False
     crop_type: CropType
     growth_stage: GrowthStage
     soil_texture: SoilTexture
@@ -623,6 +646,7 @@ class NarrationResponse(BaseModel):
 
 
 class ErrorDetail(BaseModel):
+    status_code: int | None = None
     code: str
     message: str
     details: dict[str, object] = Field(default_factory=dict)

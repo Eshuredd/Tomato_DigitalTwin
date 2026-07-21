@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
+import json
+import math
 import uuid
 from typing import TypeVar
 
@@ -66,6 +69,8 @@ from app.state_store import (
     RelatedRecommendationNotFoundError,
     StateNotFoundError,
     TwinSessionRecord,
+    WaterUpdateConcurrencyConflictError,
+    WaterUpdatePayloadConflictError,
     ensure_utc_datetime,
     irrigation_event_payload_conflict_field,
     normalize_irrigation_event,
@@ -305,6 +310,26 @@ class SQLAlchemyTwinStateStore:
         )
         event_id = normalized_event.irrigation_event_id if normalized_event else None
         observation_id = self._new_id("water_obs")
+        water_update_id = f"legacy-cache-water-state-{observation_id}"
+        effective_irrigation_mm = (
+            0.0
+            if normalized_event is None
+            else self._validate_effective_irrigation_mm(normalized_event.amount_mm)
+        )
+        canonical_water_state = water_state.model_copy(
+            update={
+                "reported_irrigation_event_id": event_id,
+                "applied_irrigation_event_id": event_id,
+                "effective_irrigation_mm": effective_irrigation_mm,
+                "irrigation_event_already_accounted_for": False,
+            },
+            deep=True,
+        )
+        request_fingerprint = self._legacy_water_state_fingerprint(
+            state_id=state_id,
+            water_update_id=water_update_id,
+            water_state=canonical_water_state,
+        )
         try:
             with self._session_factory() as session:
                 with session.begin():
@@ -326,21 +351,37 @@ class SQLAlchemyTwinStateStore:
                     water_row = WaterObservationModel(
                         observation_id=observation_id,
                         state_id=state_id,
-                        observed_at=self._as_utc(water_state.observed_at),
-                        computed_at=self._as_utc(water_state.computed_at),
-                        observation_time_basis=water_state.observation_time_basis.value,
+                        observed_at=self._as_utc(canonical_water_state.observed_at),
+                        computed_at=self._as_utc(canonical_water_state.computed_at),
+                        observation_time_basis=(
+                            canonical_water_state.observation_time_basis.value
+                        ),
+                        water_update_id=water_update_id,
+                        request_fingerprint=request_fingerprint,
                         weather_payload_json=weather_payload,
                         previous_root_zone_depletion_mm=previous_root_zone_depletion_mm,
-                        raw_root_zone_depletion_mm=water_state.raw_root_zone_depletion_mm,
-                        root_zone_depletion_mm=water_state.root_zone_depletion_mm,
-                        water_surplus_mm=water_state.water_surplus_mm,
-                        depletion_beyond_taw_mm=water_state.depletion_beyond_taw_mm,
+                        raw_root_zone_depletion_mm=(
+                            canonical_water_state.raw_root_zone_depletion_mm
+                        ),
+                        root_zone_depletion_mm=(
+                            canonical_water_state.root_zone_depletion_mm
+                        ),
+                        water_surplus_mm=canonical_water_state.water_surplus_mm,
+                        depletion_beyond_taw_mm=(
+                            canonical_water_state.depletion_beyond_taw_mm
+                        ),
                         irrigation_event_id=event_id,
-                        payload_json=self._dump(water_state),
+                        reported_irrigation_event_id=event_id,
+                        effective_irrigation_mm=effective_irrigation_mm,
+                        payload_json=self._dump(canonical_water_state),
                     )
                     session.add(water_row)
-                    cycle.latest_observed_at = self._as_utc(water_state.observed_at)
-                    cycle.latest_computed_at = self._as_utc(water_state.computed_at)
+                    cycle.latest_observed_at = self._as_utc(
+                        canonical_water_state.observed_at,
+                    )
+                    cycle.latest_computed_at = self._as_utc(
+                        canonical_water_state.computed_at,
+                    )
         except IntegrityError as exc:
             if normalized_event is not None and event_id is not None:
                 self._existing_water_after_irrigation_integrity_error(
@@ -349,7 +390,7 @@ class SQLAlchemyTwinStateStore:
                 )
                 raise DuplicateIrrigationEventApplicationError(event_id) from exc
             raise PersistenceIntegrityError() from exc
-        return water_state.model_copy(deep=True)
+        return canonical_water_state.model_copy(deep=True)
 
     def cache_water_update(
         self,
@@ -357,55 +398,126 @@ class SQLAlchemyTwinStateStore:
         growth_state: GrowthStageResponse,
         water_state: WaterStateResponse,
         *,
+        water_update_id: str,
+        request_fingerprint: str,
         weather_payload: dict[str, object] | None = None,
         previous_root_zone_depletion_mm: float | None = None,
-        irrigation_event: LastIrrigationEvent | None = None,
+        reported_irrigation_event: LastIrrigationEvent | None = None,
+        effective_irrigation_mm: float = 0.0,
+        computed_at: datetime | None = None,
     ) -> WaterStateResponse:
         if growth_state.state_id != state_id:
             raise ValueError("growth_state.state_id does not match state_id.")
         if water_state.state_id != state_id:
             raise ValueError("water_state.state_id does not match state_id.")
 
+        water_update_id_value = self._validate_water_update_id(water_update_id)
+        request_fingerprint_value = self._validate_request_fingerprint(
+            request_fingerprint,
+        )
         normalized_event = (
-            normalize_irrigation_event(state_id, irrigation_event)
-            if irrigation_event is not None
+            normalize_irrigation_event(state_id, reported_irrigation_event)
+            if reported_irrigation_event is not None
             else None
         )
-        event_id = normalized_event.irrigation_event_id if normalized_event else None
+        reported_event_id = (
+            normalized_event.irrigation_event_id
+            if normalized_event is not None
+            else None
+        )
+        effective_irrigation_mm_value = self._validate_effective_irrigation_mm(
+            effective_irrigation_mm,
+        )
         observed_at = self._as_utc(water_state.observed_at)
-        computed_at = utc_now()
+        computed_at_value = (
+            utc_now()
+            if computed_at is None
+            else ensure_utc_datetime(computed_at, field_name="computed_at")
+        )
         canonical_water_state = water_state.model_copy(
-            update={"observed_at": observed_at, "computed_at": computed_at},
+            update={
+                "observed_at": observed_at,
+                "computed_at": computed_at_value,
+            },
             deep=True,
         )
         try:
             with self._session_factory() as session:
                 with session.begin():
                     cycle = self._get_cycle_or_raise(session, state_id)
-                    if normalized_event is not None and event_id is not None:
+                    existing_update = self._water_for_update(
+                        session,
+                        state_id=state_id,
+                        water_update_id=water_update_id_value,
+                    )
+                    if existing_update is not None:
+                        return self._water_state_for_update_row_or_raise(
+                            existing_update,
+                            state_id=state_id,
+                            water_update_id=water_update_id_value,
+                            request_fingerprint=request_fingerprint_value,
+                        )
+
+                    applied_event_id: str | None = None
+                    already_accounted_for = False
+                    if normalized_event is not None and reported_event_id is not None:
                         self._get_or_create_irrigation_event(
                             session,
                             state_id=state_id,
                             event=normalized_event,
-                            recorded_at=computed_at,
+                            recorded_at=computed_at_value,
                         )
                         existing_water = self._water_for_irrigation_event(
                             session,
                             state_id=state_id,
-                            event_id=event_id,
+                            event_id=reported_event_id,
                         )
                         if existing_water is not None:
-                            return self._payload_as(
-                                existing_water,
-                                WaterStateResponse,
-                            ).model_copy(deep=True)
+                            already_accounted_for = True
+                            if effective_irrigation_mm_value != 0.0:
+                                raise WaterUpdateConcurrencyConflictError(
+                                    state_id,
+                                    reported_event_id,
+                                )
+                        else:
+                            self._validate_effective_matches_event(
+                                state_id=state_id,
+                                irrigation_event_id=reported_event_id,
+                                event_amount_mm=normalized_event.amount_mm,
+                                effective_irrigation_mm=(
+                                    effective_irrigation_mm_value
+                                ),
+                            )
+                            applied_event_id = reported_event_id
+                    elif effective_irrigation_mm_value != 0.0:
+                        raise ValueError(
+                            "effective_irrigation_mm must be 0 when no irrigation "
+                            "event is reported."
+                        )
+
+                    canonical_water_state = canonical_water_state.model_copy(
+                        update={
+                            "water_update_id": water_update_id_value,
+                            "reported_irrigation_event_id": reported_event_id,
+                            "applied_irrigation_event_id": applied_event_id,
+                            "effective_irrigation_mm": (
+                                effective_irrigation_mm_value
+                            ),
+                            "irrigation_event_already_accounted_for": (
+                                reported_event_id is not None
+                                and already_accounted_for
+                                and effective_irrigation_mm_value == 0.0
+                            ),
+                        },
+                        deep=True,
+                    )
 
                     session.add(
                         GrowthObservationModel(
                             observation_id=self._new_id("growth_obs"),
                             state_id=state_id,
                             observed_at=observed_at,
-                            computed_at=computed_at,
+                            computed_at=computed_at_value,
                             observation_time_basis=(
                                 canonical_water_state.observation_time_basis.value
                             ),
@@ -421,10 +533,12 @@ class SQLAlchemyTwinStateStore:
                             observation_id=self._new_id("water_obs"),
                             state_id=state_id,
                             observed_at=observed_at,
-                            computed_at=computed_at,
+                            computed_at=computed_at_value,
                             observation_time_basis=(
                                 canonical_water_state.observation_time_basis.value
                             ),
+                            water_update_id=water_update_id_value,
+                            request_fingerprint=request_fingerprint_value,
                             weather_payload_json=weather_payload,
                             previous_root_zone_depletion_mm=(
                                 previous_root_zone_depletion_mm
@@ -439,19 +553,25 @@ class SQLAlchemyTwinStateStore:
                             depletion_beyond_taw_mm=(
                                 canonical_water_state.depletion_beyond_taw_mm
                             ),
-                            irrigation_event_id=event_id,
+                            irrigation_event_id=applied_event_id,
+                            reported_irrigation_event_id=reported_event_id,
+                            effective_irrigation_mm=(
+                                effective_irrigation_mm_value
+                            ),
                             payload_json=self._dump(canonical_water_state),
                         )
                     )
                     cycle.latest_observed_at = observed_at
-                    cycle.latest_computed_at = computed_at
+                    cycle.latest_computed_at = computed_at_value
         except IntegrityError as exc:
-            if normalized_event is not None:
-                return self._existing_water_after_irrigation_integrity_error(
-                    state_id=state_id,
-                    event=normalized_event,
-                )
-            raise PersistenceIntegrityError() from exc
+            return self._handle_water_update_integrity_error(
+                state_id=state_id,
+                water_update_id=water_update_id_value,
+                request_fingerprint=request_fingerprint_value,
+                reported_irrigation_event=normalized_event,
+                effective_irrigation_mm=effective_irrigation_mm_value,
+                original_error=exc,
+            )
 
         return canonical_water_state.model_copy(deep=True)
 
@@ -894,33 +1014,31 @@ class SQLAlchemyTwinStateStore:
                 is not None
             )
 
-    def get_water_state_for_irrigation_event(
+    def get_water_state_for_update(
         self,
         state_id: str,
-        irrigation_event: LastIrrigationEvent,
+        water_update_id: str,
+        request_fingerprint: str,
     ) -> WaterStateResponse | None:
-        normalized_event = normalize_irrigation_event(state_id, irrigation_event)
-        event_id = normalized_event.irrigation_event_id
-        if event_id is None:
-            raise ValueError("irrigation_event_id is required.")
+        water_update_id_value = self._validate_water_update_id(water_update_id)
+        request_fingerprint_value = self._validate_request_fingerprint(
+            request_fingerprint,
+        )
         with self._session_factory() as session:
             self._get_cycle_or_raise(session, state_id)
-            event = session.get(IrrigationEventModel, event_id)
-            if event is None:
-                return None
-            self._validate_irrigation_event_row(
-                event,
-                state_id=state_id,
-                event=normalized_event,
-            )
-            water = self._water_for_irrigation_event(
+            water = self._water_for_update(
                 session,
                 state_id=state_id,
-                event_id=event_id,
+                water_update_id=water_update_id_value,
             )
             if water is None:
                 return None
-            return self._payload_as(water, WaterStateResponse).model_copy(deep=True)
+            return self._water_state_for_update_row_or_raise(
+                water,
+                state_id=state_id,
+                water_update_id=water_update_id_value,
+                request_fingerprint=request_fingerprint_value,
+            )
 
     def record_actual_action(
         self,
@@ -1077,6 +1195,93 @@ class SQLAlchemyTwinStateStore:
             .limit(1)
         ).first()
 
+    def _water_for_update(
+        self,
+        session: Session,
+        *,
+        state_id: str,
+        water_update_id: str,
+    ) -> WaterObservationModel | None:
+        return session.scalars(
+            select(WaterObservationModel)
+            .where(
+                WaterObservationModel.state_id == state_id,
+                WaterObservationModel.water_update_id == water_update_id,
+            )
+            .limit(1)
+        ).first()
+
+    def _water_state_for_update_row_or_raise(
+        self,
+        row: WaterObservationModel,
+        *,
+        state_id: str,
+        water_update_id: str,
+        request_fingerprint: str,
+    ) -> WaterStateResponse:
+        if row.state_id != state_id:
+            raise StateNotFoundError(state_id)
+        if row.request_fingerprint != request_fingerprint:
+            raise WaterUpdatePayloadConflictError(
+                state_id,
+                water_update_id,
+                existing_fingerprint=row.request_fingerprint,
+                request_fingerprint=request_fingerprint,
+            )
+        return self._payload_as(row, WaterStateResponse).model_copy(deep=True)
+
+    def _handle_water_update_integrity_error(
+        self,
+        *,
+        state_id: str,
+        water_update_id: str,
+        request_fingerprint: str,
+        reported_irrigation_event: LastIrrigationEvent | None,
+        effective_irrigation_mm: float,
+        original_error: IntegrityError,
+    ) -> WaterStateResponse:
+        with self._session_factory() as session:
+            self._get_cycle_or_raise(session, state_id)
+            existing_update = self._water_for_update(
+                session,
+                state_id=state_id,
+                water_update_id=water_update_id,
+            )
+            if existing_update is not None:
+                return self._water_state_for_update_row_or_raise(
+                    existing_update,
+                    state_id=state_id,
+                    water_update_id=water_update_id,
+                    request_fingerprint=request_fingerprint,
+                )
+
+            if reported_irrigation_event is not None:
+                event_id = reported_irrigation_event.irrigation_event_id
+                if event_id is None:
+                    raise ValueError("irrigation_event_id is required.")
+                event_row = session.get(IrrigationEventModel, event_id)
+                if event_row is not None:
+                    self._validate_irrigation_event_row(
+                        event_row,
+                        state_id=state_id,
+                        event=reported_irrigation_event,
+                    )
+                    existing_application = self._water_for_irrigation_event(
+                        session,
+                        state_id=state_id,
+                        event_id=event_id,
+                    )
+                    if (
+                        existing_application is not None
+                        and effective_irrigation_mm != 0.0
+                    ):
+                        raise WaterUpdateConcurrencyConflictError(
+                            state_id,
+                            event_id,
+                        ) from original_error
+
+        raise PersistenceIntegrityError() from original_error
+
     def _existing_water_after_irrigation_integrity_error(
         self,
         *,
@@ -1129,6 +1334,81 @@ class SQLAlchemyTwinStateStore:
     @staticmethod
     def _new_id(prefix: str) -> str:
         return f"{prefix}_{uuid.uuid4().hex}"
+
+    @staticmethod
+    def _validate_water_update_id(water_update_id: str) -> str:
+        if not isinstance(water_update_id, str):
+            raise ValueError("water_update_id must be a string.")
+        normalized = water_update_id.strip()
+        if not normalized:
+            raise ValueError("water_update_id must be non-empty.")
+        if len(normalized) > 160:
+            raise ValueError("water_update_id must be at most 160 characters.")
+        return normalized
+
+    @staticmethod
+    def _validate_request_fingerprint(request_fingerprint: str) -> str:
+        if not isinstance(request_fingerprint, str):
+            raise ValueError("request_fingerprint must be a string.")
+        normalized = request_fingerprint.strip()
+        if not normalized:
+            raise ValueError("request_fingerprint must be non-empty.")
+        if len(normalized) > 128:
+            raise ValueError("request_fingerprint must be at most 128 characters.")
+        return normalized
+
+    @staticmethod
+    def _validate_effective_irrigation_mm(value: float) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("effective_irrigation_mm must be a finite number.")
+        result = float(value)
+        if not math.isfinite(result):
+            raise ValueError("effective_irrigation_mm must be a finite number.")
+        if result < 0.0:
+            raise ValueError("effective_irrigation_mm must be >= 0.")
+        return result
+
+    @staticmethod
+    def _validate_effective_matches_event(
+        *,
+        state_id: str,
+        irrigation_event_id: str,
+        event_amount_mm: float,
+        effective_irrigation_mm: float,
+    ) -> None:
+        if math.isclose(
+            float(event_amount_mm),
+            float(effective_irrigation_mm),
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        ):
+            return
+        raise PersistenceIntegrityError(
+            "Water update effective irrigation does not match the current "
+            f"application state for irrigation event '{irrigation_event_id}' "
+            f"on state '{state_id}'."
+        )
+
+    @staticmethod
+    def _legacy_water_state_fingerprint(
+        *,
+        state_id: str,
+        water_update_id: str,
+        water_state: WaterStateResponse,
+    ) -> str:
+        payload = {
+            "legacy_cache_water_state": True,
+            "state_id": state_id,
+            "water_update_id": water_update_id,
+            "water_state": water_state.model_dump(mode="json"),
+        }
+        canonical = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _dump(model: BaseModel) -> dict[str, object]:

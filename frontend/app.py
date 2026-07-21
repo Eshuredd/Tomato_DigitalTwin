@@ -31,10 +31,12 @@ from frontend.ui_helpers import (  # noqa: E402
     format_action_label,
     format_percent,
     friendly_wetness_risk_label,
+    generate_water_update_id,
     humanize_disease_label,
     irrigation_depth_from_litres_area,
     keys_to_clear_after,
     top_class_probabilities,
+    water_update_payload_signature,
     weather_values_from_snapshot,
     workflow_progress_states,
 )
@@ -66,6 +68,8 @@ SESSION_KEYS = {
     "weather_snapshot_response": None,
     "weather_fetched_values": None,
     "weather_manual_overrides": None,
+    "water_update_id": None,
+    "water_update_signature": None,
     "water_current_date": date.today(),
     "weather_tmin_c": 22.0,
     "weather_tmax_c": 32.0,
@@ -817,7 +821,25 @@ def _render_water_tab(client: CropTwinAPIClient) -> None:
         _render_weather_inputs()
         irrigation_event = _render_irrigation_inputs()
 
-        if st.button("Compute water state", type="primary", use_container_width=True):
+        col_compute, col_new = st.columns([3, 1])
+        with col_compute:
+            compute_submitted = st.button(
+                "Compute water state",
+                type="primary",
+                use_container_width=True,
+            )
+        with col_new:
+            new_observation = st.button(
+                "New observation",
+                use_container_width=True,
+            )
+        if new_observation:
+            _reset_water_update_id()
+            st.session_state.water_response = None
+            _clear_downstream("water")
+            st.rerun()
+
+        if compute_submitted:
             if irrigation_event is False:
                 st.error("Fix the recent irrigation details before computing water state.")
                 return
@@ -828,6 +850,7 @@ def _render_water_tab(client: CropTwinAPIClient) -> None:
             }
             if irrigation_event is not None:
                 payload["last_irrigation_event"] = irrigation_event
+            payload["water_update_id"] = _water_update_id_for_payload(payload)
 
             result = _call_api(
                 "Water-state computation",
@@ -1093,6 +1116,27 @@ def _last_irrigation_event_payload(
     }
 
 
+def _water_update_id_for_payload(payload: dict[str, Any]) -> str:
+    signature = water_update_payload_signature(
+        state_id=st.session_state.active_state_id,
+        payload=payload,
+    )
+    retained_id = st.session_state.water_update_id
+    if (
+        not retained_id
+        or st.session_state.water_update_signature != signature
+    ):
+        retained_id = generate_water_update_id()
+        st.session_state.water_update_id = retained_id
+        st.session_state.water_update_signature = signature
+    return retained_id
+
+
+def _reset_water_update_id() -> None:
+    st.session_state.water_update_id = None
+    st.session_state.water_update_signature = None
+
+
 def _render_water_summary(response: dict[str, Any] | None) -> None:
     if not response:
         return
@@ -1166,6 +1210,11 @@ def _render_water_summary(response: dict[str, Any] | None) -> None:
             st.caption(
                 "Exact observation time was not supplied; the API represented the "
                 "date-only observation as 00:00 UTC for compatibility."
+            )
+        if response.get("irrigation_event_already_accounted_for"):
+            st.info(
+                "The reported irrigation event was already included in an earlier "
+                "water balance, so 0 mm from that event was applied to this update."
             )
         _show_response("Water response", response)
 

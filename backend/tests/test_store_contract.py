@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone, timedelta
+import threading
 
 import pytest
 from sqlalchemy import func, select, text
@@ -42,10 +43,16 @@ from app.state_store import (
     RecommendationStateMismatchError,
     RelatedRecommendationNotFoundError,
     StateNotFoundError,
+    WaterUpdateConcurrencyConflictError,
+    WaterUpdatePayloadConflictError,
     derive_irrigation_event_id,
     with_irrigation_event_id,
 )
 from app.store_protocol import TwinStateStore
+from app.water.update_identity import (
+    compute_water_update_fingerprint,
+    derive_water_update_id,
+)
 from app.water.water_balance import compute_water_state
 
 
@@ -216,6 +223,36 @@ def _observation_counts(store: TwinStateStore, state_id: str) -> tuple[int, int]
     return int(growth_count or 0), int(water_count or 0)
 
 
+def _water_observation_metadata(
+    store: TwinStateStore,
+    state_id: str,
+) -> list[dict[str, object]]:
+    if isinstance(store, InMemoryTwinStateStore):
+        return list(store._water_observation_metadata.get(state_id, []))  # noqa: SLF001
+
+    assert isinstance(store, SQLAlchemyTwinStateStore)
+    with store._session_factory() as session:  # noqa: SLF001
+        rows = session.execute(
+            select(
+                WaterObservationModel.water_update_id,
+                WaterObservationModel.reported_irrigation_event_id,
+                WaterObservationModel.irrigation_event_id,
+                WaterObservationModel.effective_irrigation_mm,
+            )
+            .where(WaterObservationModel.state_id == state_id)
+            .order_by(WaterObservationModel.computed_at)
+        ).all()
+    return [
+        {
+            "water_update_id": row.water_update_id,
+            "reported_irrigation_event_id": row.reported_irrigation_event_id,
+            "irrigation_event_id": row.irrigation_event_id,
+            "effective_irrigation_mm": row.effective_irrigation_mm,
+        }
+        for row in rows
+    ]
+
+
 def _latest_growth_metadata(
     store: TwinStateStore,
     state_id: str,
@@ -240,6 +277,50 @@ def _latest_growth_metadata(
             else row.observed_at.astimezone(timezone.utc)
         )
         return observed_at, ObservationTimeBasis(row.observation_time_basis)
+
+
+def _cache_water_update(
+    store: TwinStateStore,
+    state_id: str,
+    growth,
+    water,
+    *,
+    weather: WeatherInput | None = None,
+    water_update_id: str | None = None,
+    reported_irrigation_event: LastIrrigationEvent | None = None,
+    effective_irrigation_mm: float = 0.0,
+):
+    reported_event = (
+        with_irrigation_event_id(state_id, reported_irrigation_event)
+        if reported_irrigation_event is not None
+        else None
+    )
+    update_id = water_update_id or derive_water_update_id(
+        state_id=state_id,
+        observed_at=water.observed_at,
+        observation_time_basis=water.observation_time_basis,
+    )
+    weather_value = weather or _weather()
+    fingerprint = compute_water_update_fingerprint(
+        state_id=state_id,
+        water_update_id=update_id,
+        current_date=growth.current_date,
+        observed_at=water.observed_at,
+        observation_time_basis=water.observation_time_basis,
+        weather=weather_value,
+        last_irrigation_event=reported_event,
+    )
+    return store.cache_water_update(
+        state_id,
+        growth,
+        water,
+        water_update_id=update_id,
+        request_fingerprint=fingerprint,
+        weather_payload=weather_value.model_dump(mode="json"),
+        reported_irrigation_event=reported_event,
+        effective_irrigation_mm=effective_irrigation_mm,
+        computed_at=water.computed_at,
+    )
 
 
 def test_store_contract_current_state_history_and_detached_objects(
@@ -605,22 +686,30 @@ def test_store_contract_atomic_water_update_is_idempotent_and_timestamped(
         observation_time_basis=ObservationTimeBasis.EXPLICIT,
     )
 
-    first = store.cache_water_update(
+    first = _cache_water_update(
+        store,
         session.state_id,
         growth,
         water,
-        weather_payload=_weather().model_dump(mode="json"),
-        irrigation_event=event,
+        water_update_id="update-manual-once",
+        reported_irrigation_event=event,
+        effective_irrigation_mm=event.amount_mm,
     )
-    second = store.cache_water_update(
+    second = _cache_water_update(
+        store,
         session.state_id,
         growth,
         water,
-        weather_payload=_weather().model_dump(mode="json"),
-        irrigation_event=event,
+        water_update_id="update-manual-once",
+        reported_irrigation_event=event,
+        effective_irrigation_mm=event.amount_mm,
     )
 
     assert second == first
+    assert first.water_update_id == "update-manual-once"
+    assert first.reported_irrigation_event_id == "manual-once"
+    assert first.applied_irrigation_event_id == "manual-once"
+    assert first.effective_irrigation_mm == pytest.approx(8.0)
     assert _observation_counts(store, session.state_id) == (1, 1)
     growth_observed_at, growth_basis = _latest_growth_metadata(store, session.state_id)
     assert growth_observed_at == first.observed_at
@@ -636,10 +725,231 @@ def test_store_contract_atomic_water_update_is_idempotent_and_timestamped(
         latitude_deg=record.location.latitude,
         elevation_m=record.location.elevation_m or 0.0,
     )
-    store.cache_water_update(session.state_id, growth, no_event_water)
-    store.cache_water_update(session.state_id, growth, no_event_water)
+    first_no_event = _cache_water_update(
+        store,
+        session.state_id,
+        growth,
+        no_event_water,
+        effective_irrigation_mm=0.0,
+    )
+    second_no_event = _cache_water_update(
+        store,
+        session.state_id,
+        growth,
+        no_event_water,
+        effective_irrigation_mm=0.0,
+    )
 
-    assert _observation_counts(store, session.state_id) == (3, 3)
+    assert second_no_event == first_no_event
+    assert _observation_counts(store, session.state_id) == (2, 2)
+
+
+def test_store_contract_water_update_identity_conflicts_and_derivation(
+    store_factory: StoreFactory,
+) -> None:
+    store = store_factory()
+    session = store.create_session(_session_request(), state_id="state-update-id")
+    record = store.get_record(session.state_id)
+    observed_at = datetime(2026, 7, 10, 7, 30, tzinfo=timezone.utc)
+    growth = resolve_growth_stage(
+        state_id=session.state_id,
+        crop_type=record.crop_type,
+        planting_date=record.planting_date,
+        current_date=date(2026, 7, 10),
+    )
+    first_weather = _weather(rainfall_mm=0.5)
+    changed_weather = _weather(rainfall_mm=2.5)
+    first_water = compute_water_state(
+        state_id=session.state_id,
+        crop_type=record.crop_type,
+        growth_stage=growth.growth_stage,
+        soil_texture=record.soil_texture,
+        current_date=date(2026, 7, 10),
+        weather=first_weather,
+        latitude_deg=record.location.latitude,
+        elevation_m=record.location.elevation_m or 0.0,
+        observed_at=observed_at,
+        observation_time_basis=ObservationTimeBasis.EXPLICIT,
+    )
+    changed_water = compute_water_state(
+        state_id=session.state_id,
+        crop_type=record.crop_type,
+        growth_stage=growth.growth_stage,
+        soil_texture=record.soil_texture,
+        current_date=date(2026, 7, 10),
+        weather=changed_weather,
+        latitude_deg=record.location.latitude,
+        elevation_m=record.location.elevation_m or 0.0,
+        observed_at=observed_at,
+        observation_time_basis=ObservationTimeBasis.EXPLICIT,
+    )
+
+    first = _cache_water_update(
+        store,
+        session.state_id,
+        growth,
+        first_water,
+        weather=first_weather,
+        water_update_id="same-update-id",
+    )
+    identical = _cache_water_update(
+        store,
+        session.state_id,
+        growth,
+        first_water,
+        weather=first_weather,
+        water_update_id="same-update-id",
+    )
+
+    assert identical == first
+    assert _observation_counts(store, session.state_id) == (1, 1)
+    with pytest.raises(WaterUpdatePayloadConflictError):
+        _cache_water_update(
+            store,
+            session.state_id,
+            growth,
+            changed_water,
+            weather=changed_weather,
+            water_update_id="same-update-id",
+        )
+
+    explicit_second = _cache_water_update(
+        store,
+        session.state_id,
+        growth,
+        changed_water,
+        weather=changed_weather,
+        water_update_id="different-update-id",
+    )
+    assert explicit_second.water_update_id == "different-update-id"
+    assert _observation_counts(store, session.state_id) == (2, 2)
+
+    derived = derive_water_update_id(
+        state_id=session.state_id,
+        observed_at=observed_at,
+        observation_time_basis=ObservationTimeBasis.EXPLICIT,
+    )
+    assert derived == derive_water_update_id(
+        state_id=session.state_id,
+        observed_at=observed_at,
+        observation_time_basis=ObservationTimeBasis.EXPLICIT,
+    )
+    assert derived != derive_water_update_id(
+        state_id=session.state_id,
+        observed_at=observed_at + timedelta(minutes=1),
+        observation_time_basis=ObservationTimeBasis.EXPLICIT,
+    )
+    assert derived != derive_water_update_id(
+        state_id="another-state",
+        observed_at=observed_at,
+        observation_time_basis=ObservationTimeBasis.EXPLICIT,
+    )
+
+
+def test_store_contract_historical_irrigation_reuse_persists_new_observation(
+    store_factory: StoreFactory,
+) -> None:
+    store = store_factory()
+    session = store.create_session(_session_request(), state_id="state-history-event")
+    record = store.get_record(session.state_id)
+    event = LastIrrigationEvent(
+        irrigation_event_id="event-123",
+        timestamp=datetime(2026, 7, 10, 6, 0, tzinfo=timezone.utc),
+        amount_mm=8.0,
+        source=IrrigationEventSource.MANUAL,
+    )
+    first_growth = resolve_growth_stage(
+        state_id=session.state_id,
+        crop_type=record.crop_type,
+        planting_date=record.planting_date,
+        current_date=date(2026, 7, 10),
+    )
+    first_weather = _weather(rainfall_mm=0.0)
+    first_water = compute_water_state(
+        state_id=session.state_id,
+        crop_type=record.crop_type,
+        growth_stage=first_growth.growth_stage,
+        soil_texture=record.soil_texture,
+        current_date=date(2026, 7, 10),
+        weather=first_weather,
+        latitude_deg=record.location.latitude,
+        elevation_m=record.location.elevation_m or 0.0,
+        last_irrigation_event=event,
+    )
+    first = _cache_water_update(
+        store,
+        session.state_id,
+        first_growth,
+        first_water,
+        weather=first_weather,
+        water_update_id="update-july-10",
+        reported_irrigation_event=event,
+        effective_irrigation_mm=event.amount_mm,
+    )
+
+    second_growth = resolve_growth_stage(
+        state_id=session.state_id,
+        crop_type=record.crop_type,
+        planting_date=record.planting_date,
+        current_date=date(2026, 7, 11),
+    )
+    second_weather = WeatherInput(
+        tmin_c=25.0,
+        tmax_c=35.0,
+        humidity_pct=50.0,
+        wind_speed_mps=2.5,
+        shortwave_radiation_sum_mj_m2=22.0,
+        rainfall_mm=0.0,
+        eto_reference_feed=5.8,
+    )
+    second_water = compute_water_state(
+        state_id=session.state_id,
+        crop_type=record.crop_type,
+        growth_stage=second_growth.growth_stage,
+        soil_texture=record.soil_texture,
+        current_date=date(2026, 7, 11),
+        weather=second_weather,
+        latitude_deg=record.location.latitude,
+        elevation_m=record.location.elevation_m or 0.0,
+        previous_root_zone_depletion_mm=first.root_zone_depletion,
+        last_irrigation_event=None,
+    )
+    second = _cache_water_update(
+        store,
+        session.state_id,
+        second_growth,
+        second_water,
+        weather=second_weather,
+        water_update_id="update-july-11",
+        reported_irrigation_event=event,
+        effective_irrigation_mm=0.0,
+    )
+
+    assert second != first
+    assert second.eto_computed != first.eto_computed
+    assert second.etc != first.etc
+    assert second.water_update_id == "update-july-11"
+    assert second.reported_irrigation_event_id == "event-123"
+    assert second.applied_irrigation_event_id is None
+    assert second.effective_irrigation_mm == pytest.approx(0.0)
+    assert second.irrigation_event_already_accounted_for is True
+    assert second.root_zone_depletion > first.root_zone_depletion
+    assert _observation_counts(store, session.state_id) == (2, 2)
+
+    metadata = _water_observation_metadata(store, session.state_id)
+    assert [row["water_update_id"] for row in metadata] == [
+        "update-july-10",
+        "update-july-11",
+    ]
+    assert [row["reported_irrigation_event_id"] for row in metadata] == [
+        "event-123",
+        "event-123",
+    ]
+    assert [row["irrigation_event_id"] for row in metadata] == [
+        "event-123",
+        None,
+    ]
+    assert [row["effective_irrigation_mm"] for row in metadata] == [8.0, 0.0]
 
 
 def test_store_contract_irrigation_event_ownership_and_payload_conflicts(
@@ -672,7 +982,15 @@ def test_store_contract_irrigation_event_ownership_and_payload_conflicts(
         elevation_m=first_record.location.elevation_m or 0.0,
         last_irrigation_event=event,
     )
-    store.cache_water_update(first.state_id, growth, water, irrigation_event=event)
+    _cache_water_update(
+        store,
+        first.state_id,
+        growth,
+        water,
+        water_update_id="update-manual-owned",
+        reported_irrigation_event=event,
+        effective_irrigation_mm=event.amount_mm,
+    )
 
     assert store.has_applied_irrigation_event(
         first.state_id,
@@ -716,7 +1034,7 @@ def test_store_contract_irrigation_event_ownership_and_payload_conflicts(
             )
 
 
-def test_sqlalchemy_concurrent_identical_irrigation_event_is_idempotent(tmp_path) -> None:
+def test_sqlalchemy_concurrent_identical_water_update_retry_is_idempotent(tmp_path) -> None:
     database_url = f"sqlite+pysqlite:///{tmp_path / 'concurrent.db'}"
     setup_store = SQLAlchemyTwinStateStore(database_url=database_url, auto_create=True)
     session = setup_store.create_session(
@@ -747,26 +1065,209 @@ def test_sqlalchemy_concurrent_identical_irrigation_event_is_idempotent(tmp_path
         elevation_m=record.location.elevation_m or 0.0,
         last_irrigation_event=event,
     )
+    barrier = threading.Barrier(2)
 
-    def worker() -> float:
+    def worker() -> object:
         store = SQLAlchemyTwinStateStore(
             database_url=database_url,
-            auto_create=True,
+            auto_create=False,
         )
-        result = store.cache_water_update(
+        barrier.wait(timeout=10)
+        return _cache_water_update(
+            store,
             session.state_id,
             growth,
             water,
-            weather_payload=_weather().model_dump(mode="json"),
-            irrigation_event=event,
+            water_update_id="update-concurrent-identical",
+            reported_irrigation_event=event,
+            effective_irrigation_mm=event.amount_mm,
         )
-        return result.root_zone_depletion
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(lambda _index: worker(), range(2)))
 
-    assert results[0] == pytest.approx(results[1])
+    assert results[0] == results[1]
     assert _observation_counts(setup_store, session.state_id) == (1, 1)
+    metadata = _water_observation_metadata(setup_store, session.state_id)
+    assert len(metadata) == 1
+    assert metadata[0]["irrigation_event_id"] == "manual-concurrent"
+
+
+def test_sqlalchemy_concurrent_conflicting_water_update_rejects_loser(tmp_path) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'conflicting-retry.db'}"
+    setup_store = SQLAlchemyTwinStateStore(database_url=database_url, auto_create=True)
+    session = setup_store.create_session(
+        _session_request(),
+        state_id="state-concurrent-conflict",
+    )
+    record = setup_store.get_record(session.state_id)
+    observed_at = datetime(2026, 7, 10, 7, 30, tzinfo=timezone.utc)
+    growth = resolve_growth_stage(
+        state_id=session.state_id,
+        crop_type=record.crop_type,
+        planting_date=record.planting_date,
+        current_date=date(2026, 7, 10),
+    )
+    first_weather = _weather(rainfall_mm=0.0)
+    second_weather = _weather(rainfall_mm=4.0)
+
+    def water_for(weather: WeatherInput):
+        return compute_water_state(
+            state_id=session.state_id,
+            crop_type=record.crop_type,
+            growth_stage=growth.growth_stage,
+            soil_texture=record.soil_texture,
+            current_date=date(2026, 7, 10),
+            weather=weather,
+            latitude_deg=record.location.latitude,
+            elevation_m=record.location.elevation_m or 0.0,
+            observed_at=observed_at,
+            observation_time_basis=ObservationTimeBasis.EXPLICIT,
+        )
+
+    barrier = threading.Barrier(2)
+
+    def worker(weather: WeatherInput) -> object:
+        store = SQLAlchemyTwinStateStore(
+            database_url=database_url,
+            auto_create=False,
+        )
+        barrier.wait(timeout=10)
+        try:
+            return _cache_water_update(
+                store,
+                session.state_id,
+                growth,
+                water_for(weather),
+                weather=weather,
+                water_update_id="same-concurrent-update",
+            )
+        except Exception as exc:  # noqa: BLE001
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(worker, [first_weather, second_weather]))
+
+    successes = [result for result in results if not isinstance(result, Exception)]
+    conflicts = [
+        result for result in results if isinstance(result, WaterUpdatePayloadConflictError)
+    ]
+    assert len(successes) == 1
+    assert len(conflicts) == 1
+    assert _observation_counts(setup_store, session.state_id) == (1, 1)
+
+
+def test_sqlalchemy_concurrent_different_updates_racing_for_event_retry_succeeds(
+    tmp_path,
+) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'event-race.db'}"
+    setup_store = SQLAlchemyTwinStateStore(database_url=database_url, auto_create=True)
+    session = setup_store.create_session(
+        _session_request(),
+        state_id="state-event-race",
+    )
+    record = setup_store.get_record(session.state_id)
+    event = LastIrrigationEvent(
+        irrigation_event_id="manual-race",
+        timestamp=datetime(2026, 7, 9, 8, 0, tzinfo=timezone.utc),
+        amount_mm=8.0,
+        source=IrrigationEventSource.MANUAL,
+    )
+    growth = resolve_growth_stage(
+        state_id=session.state_id,
+        crop_type=record.crop_type,
+        planting_date=record.planting_date,
+        current_date=date(2026, 7, 10),
+    )
+    weather = _weather()
+
+    def water_for(observed_at: datetime, *, apply_event: bool):
+        return compute_water_state(
+            state_id=session.state_id,
+            crop_type=record.crop_type,
+            growth_stage=growth.growth_stage,
+            soil_texture=record.soil_texture,
+            current_date=date(2026, 7, 10),
+            weather=weather,
+            latitude_deg=record.location.latitude,
+            elevation_m=record.location.elevation_m or 0.0,
+            last_irrigation_event=event if apply_event else None,
+            observed_at=observed_at,
+            observation_time_basis=ObservationTimeBasis.EXPLICIT,
+        )
+
+    attempts = {
+        "update-race-a": datetime(2026, 7, 10, 7, 0, tzinfo=timezone.utc),
+        "update-race-b": datetime(2026, 7, 10, 8, 0, tzinfo=timezone.utc),
+    }
+    barrier = threading.Barrier(2)
+
+    def worker(item: tuple[str, datetime]) -> tuple[str, object]:
+        update_id, observed_at = item
+        store = SQLAlchemyTwinStateStore(
+            database_url=database_url,
+            auto_create=False,
+        )
+        barrier.wait(timeout=10)
+        try:
+            return (
+                update_id,
+                _cache_water_update(
+                    store,
+                    session.state_id,
+                    growth,
+                    water_for(observed_at, apply_event=True),
+                    weather=weather,
+                    water_update_id=update_id,
+                    reported_irrigation_event=event,
+                    effective_irrigation_mm=event.amount_mm,
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return update_id, exc
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(worker, attempts.items()))
+
+    successes = {
+        update_id: result
+        for update_id, result in results
+        if not isinstance(result, Exception)
+    }
+    conflicts = {
+        update_id: result
+        for update_id, result in results
+        if isinstance(result, WaterUpdateConcurrencyConflictError)
+    }
+    assert len(successes) == 1
+    assert len(conflicts) == 1
+    assert _observation_counts(setup_store, session.state_id) == (1, 1)
+
+    losing_update_id = next(iter(conflicts))
+    losing_observed_at = attempts[losing_update_id]
+    retry_store = SQLAlchemyTwinStateStore(
+        database_url=database_url,
+        auto_create=False,
+    )
+    retry = _cache_water_update(
+        retry_store,
+        session.state_id,
+        growth,
+        water_for(losing_observed_at, apply_event=False),
+        weather=weather,
+        water_update_id=losing_update_id,
+        reported_irrigation_event=event,
+        effective_irrigation_mm=0.0,
+    )
+
+    assert retry.water_update_id == losing_update_id
+    assert retry.reported_irrigation_event_id == "manual-race"
+    assert retry.applied_irrigation_event_id is None
+    assert retry.effective_irrigation_mm == pytest.approx(0.0)
+    assert retry.irrigation_event_already_accounted_for is True
+    assert _observation_counts(setup_store, session.state_id) == (2, 2)
+    metadata = _water_observation_metadata(setup_store, session.state_id)
+    assert [row["irrigation_event_id"] for row in metadata].count("manual-race") == 1
 
 
 def test_sqlalchemy_store_persists_across_instances_and_rolls_back(tmp_path) -> None:

@@ -208,13 +208,19 @@ def _compute_water_state(
     client: TestClient,
     state_id: str,
     *,
+    water_update_id: str | None = None,
+    current_date: date = CURRENT_DATE,
+    weather: WeatherInput | None = None,
+    observed_at: datetime | None = None,
     last_irrigation_event: LastIrrigationEvent | None = None,
 ) -> WaterStateResponse:
     request = ComputeWaterStateRequest(
         state_id=state_id,
-        current_date=CURRENT_DATE,
-        weather=_weather_input(),
+        water_update_id=water_update_id,
+        current_date=current_date,
+        weather=weather or _weather_input(),
         last_irrigation_event=last_irrigation_event,
+        observed_at=observed_at,
     )
 
     response = client.post(
@@ -356,6 +362,7 @@ def _assert_error_envelope(response) -> dict[str, object]:
     assert isinstance(error["code"], str)
     assert isinstance(error["message"], str)
     assert isinstance(error["details"], dict)
+    assert isinstance(error["status_code"], int)
 
     return error
 
@@ -714,6 +721,7 @@ def test_irrigation_event_double_counting(
     first_irrigated_water_state = _compute_water_state(
         client,
         irrigated_state_id,
+        water_update_id="update-july-10",
         last_irrigation_event=event,
     )
 
@@ -726,6 +734,7 @@ def test_irrigation_event_double_counting(
     baseline_first_water_state = _compute_water_state(
         client,
         baseline_state_id,
+        water_update_id="baseline-july-10",
         last_irrigation_event=None,
     )
 
@@ -740,37 +749,127 @@ def test_irrigation_event_double_counting(
     repeated_event_water_state = _compute_water_state(
         client,
         irrigated_state_id,
+        water_update_id="update-july-10",
         last_irrigation_event=event,
     )
 
     assert len(store._water_history[irrigated_state_id]) == 1  # noqa: SLF001
 
-    no_event_request = ComputeWaterStateRequest(
-        state_id=irrigated_state_id,
+    assert repeated_event_water_state == first_irrigated_water_state
+    assert repeated_event_water_state.applied_irrigation_event_id is not None
+    assert repeated_event_water_state.effective_irrigation_mm == pytest.approx(8.0)
+
+    later_weather = WeatherInput(
+        tmin_c=25.0,
+        tmax_c=35.0,
+        humidity_pct=50.0,
+        wind_speed_mps=2.5,
+        shortwave_radiation_sum_mj_m2=22.0,
+        rainfall_mm=0.0,
+        eto_reference_feed=5.8,
+    )
+    later_event_water_state = _compute_water_state(
+        client,
+        irrigated_state_id,
+        water_update_id="update-july-11",
+        current_date=date(2026, 7, 11),
+        weather=later_weather,
+        last_irrigation_event=event,
+    )
+
+    assert later_event_water_state != first_irrigated_water_state
+    assert later_event_water_state.water_update_id == "update-july-11"
+    assert later_event_water_state.reported_irrigation_event_id is not None
+    assert later_event_water_state.applied_irrigation_event_id is None
+    assert later_event_water_state.effective_irrigation_mm == pytest.approx(0.0)
+    assert later_event_water_state.irrigation_event_already_accounted_for is True
+    assert later_event_water_state.eto_computed != (
+        first_irrigated_water_state.eto_computed
+    )
+    assert len(store._growth_history[irrigated_state_id]) == 2  # noqa: SLF001
+    assert len(store._water_history[irrigated_state_id]) == 2  # noqa: SLF001
+
+
+def test_water_update_id_conflict_returns_409(
+    client_and_store: tuple[TestClient, InMemoryTwinStateStore],
+    elevation_call_count: list[int],
+) -> None:
+    client, _store = client_and_store
+    state_id = _create_session(
+        client,
+        elevation_call_count,
+        expected_elevation_calls=1,
+    )
+    first_request = ComputeWaterStateRequest(
+        state_id=state_id,
+        water_update_id="same-water-update",
         current_date=CURRENT_DATE,
         weather=_weather_input(),
-        last_irrigation_event=None,
     )
+    first_response = client.post(
+        f"/sessions/{state_id}/compute-water-state",
+        json=first_request.model_dump(mode="json"),
+    )
+    assert first_response.status_code == 200
 
-    no_event_response = client.post(
-        (
-            f"/sessions/{irrigated_state_id}"
-            "/compute-water-state"
+    changed_request = ComputeWaterStateRequest(
+        state_id=state_id,
+        water_update_id="same-water-update",
+        current_date=CURRENT_DATE,
+        weather=WeatherInput(
+            tmin_c=25.0,
+            tmax_c=35.0,
+            humidity_pct=50.0,
+            wind_speed_mps=2.5,
+            shortwave_radiation_sum_mj_m2=22.0,
+            rainfall_mm=0.0,
+            eto_reference_feed=5.8,
         ),
-        json=no_event_request.model_dump(mode="json"),
+    )
+    changed_response = client.post(
+        f"/sessions/{state_id}/compute-water-state",
+        json=changed_request.model_dump(mode="json"),
     )
 
-    assert no_event_response.status_code == 200
+    assert changed_response.status_code == 409
+    error = _assert_error_envelope(changed_response)
+    assert error["code"] == "WATER_UPDATE_CONFLICT"
+    assert error["details"]["water_update_id"] == "same-water-update"
 
-    no_event_water_state = WaterStateResponse.model_validate(
-        no_event_response.json(),
+
+def test_omitted_water_update_id_derives_stable_retry_identity(
+    client_and_store: tuple[TestClient, InMemoryTwinStateStore],
+    elevation_call_count: list[int],
+) -> None:
+    client, store = client_and_store
+    state_id = _create_session(
+        client,
+        elevation_call_count,
+        expected_elevation_calls=1,
+    )
+    request = ComputeWaterStateRequest(
+        state_id=state_id,
+        current_date=CURRENT_DATE,
+        weather=_weather_input(),
     )
 
-    assert repeated_event_water_state == first_irrigated_water_state
-    assert repeated_event_water_state.root_zone_depletion < (
-        no_event_water_state.root_zone_depletion
+    first_response = client.post(
+        f"/sessions/{state_id}/compute-water-state",
+        json=request.model_dump(mode="json"),
     )
-    assert len(store._water_history[irrigated_state_id]) == 2  # noqa: SLF001
+    second_response = client.post(
+        f"/sessions/{state_id}/compute-water-state",
+        json=request.model_dump(mode="json"),
+    )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert WaterStateResponse.model_validate(first_response.json()) == (
+        WaterStateResponse.model_validate(second_response.json())
+    )
+    body = first_response.json()
+    assert body["water_update_id"].startswith("derived-water-update-")
+    assert len(store._water_history[state_id]) == 1  # noqa: SLF001
 
 
 def test_actual_action_accepts_same_state_recommendation(
@@ -917,7 +1016,12 @@ def test_irrigation_event_payload_conflict_is_rejected(
         timestamp=datetime(2026, 7, 9, 8, 0, tzinfo=timezone.utc),
         amount_mm=8.0,
     )
-    _compute_water_state(client, state_id, last_irrigation_event=event)
+    _compute_water_state(
+        client,
+        state_id,
+        water_update_id="event-conflict-first",
+        last_irrigation_event=event,
+    )
 
     conflicting_event = LastIrrigationEvent(
         irrigation_event_id="manual-conflict-id",
@@ -926,6 +1030,7 @@ def test_irrigation_event_payload_conflict_is_rejected(
     )
     request = ComputeWaterStateRequest(
         state_id=state_id,
+        water_update_id="event-conflict-second",
         current_date=CURRENT_DATE,
         weather=_weather_input(),
         last_irrigation_event=conflicting_event,

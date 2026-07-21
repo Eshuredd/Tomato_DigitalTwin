@@ -20,6 +20,10 @@ from app.water.water_balance import (
     compute_water_state,
     update_root_zone_depletion_mm,
 )
+from app.water.update_identity import (
+    compute_water_update_fingerprint,
+    derive_water_update_id,
+)
 
 
 def _weather(*, rainfall_mm: float = 0.0) -> WeatherInput:
@@ -194,6 +198,85 @@ def test_compute_water_request_validates_explicit_observed_at() -> None:
             weather=_weather(),
             observed_at=datetime(2026, 7, 11, 0, 30, tzinfo=timezone.utc),
         )
+
+
+def test_compute_water_request_validates_water_update_id() -> None:
+    request = ComputeWaterStateRequest(
+        state_id="state-1",
+        water_update_id="  update-1  ",
+        current_date=date(2026, 7, 10),
+        weather=_weather(),
+    )
+    assert request.water_update_id == "update-1"
+
+    with pytest.raises(ValidationError):
+        ComputeWaterStateRequest(
+            state_id="state-1",
+            water_update_id="   ",
+            current_date=date(2026, 7, 10),
+            weather=_weather(),
+        )
+
+    with pytest.raises(ValidationError):
+        ComputeWaterStateRequest(
+            state_id="state-1",
+            water_update_id="x" * 161,
+            current_date=date(2026, 7, 10),
+            weather=_weather(),
+        )
+
+
+def test_water_update_identity_helpers_are_stable_and_canonical() -> None:
+    observed_at = datetime(2026, 7, 10, 7, 30, tzinfo=timezone.utc)
+    event = LastIrrigationEvent(
+        irrigation_event_id="event-1",
+        timestamp=datetime(2026, 7, 9, 8, 0, tzinfo=timezone.utc),
+        amount_mm=5.0,
+    )
+    derived = derive_water_update_id(
+        state_id="state-1",
+        observed_at=observed_at,
+        observation_time_basis=ObservationTimeBasis.EXPLICIT,
+    )
+
+    assert derived.startswith("derived-water-update-")
+    assert derived == derive_water_update_id(
+        state_id="state-1",
+        observed_at=observed_at,
+        observation_time_basis=ObservationTimeBasis.EXPLICIT,
+    )
+
+    first = compute_water_update_fingerprint(
+        state_id="state-1",
+        water_update_id="update-1",
+        current_date=date(2026, 7, 10),
+        observed_at=observed_at,
+        observation_time_basis=ObservationTimeBasis.EXPLICIT,
+        weather=_weather(rainfall_mm=0.0),
+        last_irrigation_event=event,
+    )
+    changed_weather = compute_water_update_fingerprint(
+        state_id="state-1",
+        water_update_id="update-1",
+        current_date=date(2026, 7, 10),
+        observed_at=observed_at,
+        observation_time_basis=ObservationTimeBasis.EXPLICIT,
+        weather=_weather(rainfall_mm=1.0),
+        last_irrigation_event=event,
+    )
+    no_event = compute_water_update_fingerprint(
+        state_id="state-1",
+        water_update_id="update-1",
+        current_date=date(2026, 7, 10),
+        observed_at=observed_at,
+        observation_time_basis=ObservationTimeBasis.EXPLICIT,
+        weather=_weather(rainfall_mm=0.0),
+        last_irrigation_event=None,
+    )
+
+    assert len(first) == 64
+    assert first != changed_weather
+    assert first != no_event
 
 
 def test_last_irrigation_event_requires_aware_timestamp() -> None:

@@ -62,6 +62,10 @@ Session creation fetches elevation automatically from Open-Meteo when the elevat
 
 Recent irrigation can be entered as direct depth, total litres over an irrigated area, or drip runtime with emitter details. The frontend converts farmer-friendly inputs into the backend's canonical millimetre depth.
 
+For each unchanged water-state submission, the frontend generates one standard-library UUID as `water_update_id` and retains it in Streamlit session state across automatic reruns, timeouts, and temporary API errors. Changing the selected date, weather payload, or irrigation inputs invalidates that retained ID; the "New observation" command clears it explicitly. The raw ID is available only in the collapsed technical response JSON.
+
 Water-state results now display observed time, CropTwin computation time, current root-zone deficit, unallocated excess water, and deficit beyond assumed total available water. The Streamlit workflow continues to submit date-only water observations unless extended by a caller, so the API marks those observations as `DATE_ONLY_UTC_START`.
+
+If the API reports that a submitted irrigation event was already accounted for, the frontend shows an informational note that 0 mm from that event was applied to the current update.
 
 Farm and Plot management endpoints exist in the backend API, but this frontend remains focused on the existing session workflow. Session and history data can persist through the configured backend store; the frontend itself does not store backend state.

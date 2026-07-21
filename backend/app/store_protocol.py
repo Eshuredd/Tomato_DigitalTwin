@@ -74,9 +74,13 @@ class TwinStateStore(Protocol):
         growth_state: GrowthStageResponse,
         water_state: WaterStateResponse,
         *,
+        water_update_id: str,
+        request_fingerprint: str,
         weather_payload: dict[str, object] | None = None,
         previous_root_zone_depletion_mm: float | None = None,
-        irrigation_event: LastIrrigationEvent | None = None,
+        reported_irrigation_event: LastIrrigationEvent | None = None,
+        effective_irrigation_mm: float = 0.0,
+        computed_at: datetime | None = None,
     ) -> WaterStateResponse: ...
 
     def cache_simulation(
@@ -149,10 +153,11 @@ class TwinStateStore(Protocol):
         irrigation_event: LastIrrigationEvent | None = None,
     ) -> bool: ...
 
-    def get_water_state_for_irrigation_event(
+    def get_water_state_for_update(
         self,
         state_id: str,
-        irrigation_event: LastIrrigationEvent,
+        water_update_id: str,
+        request_fingerprint: str,
     ) -> WaterStateResponse | None: ...
 
     def record_actual_action(

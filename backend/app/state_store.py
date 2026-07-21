@@ -4,6 +4,7 @@ import threading
 import uuid
 from datetime import date, datetime, timezone
 import hashlib
+import math
 
 from pydantic import BaseModel, Field
 
@@ -59,6 +60,35 @@ class DuplicateIrrigationEventApplicationError(Exception):
         super().__init__(
             f"Irrigation event '{irrigation_event_id}' has already been applied."
         )
+        self.irrigation_event_id = irrigation_event_id
+
+
+class WaterUpdatePayloadConflictError(Exception):
+    def __init__(
+        self,
+        state_id: str,
+        water_update_id: str,
+        *,
+        existing_fingerprint: str,
+        request_fingerprint: str,
+    ) -> None:
+        super().__init__(
+            f"Water update '{water_update_id}' for state '{state_id}' already "
+            "exists with different calculation inputs."
+        )
+        self.state_id = state_id
+        self.water_update_id = water_update_id
+        self.existing_fingerprint_prefix = existing_fingerprint[:12]
+        self.request_fingerprint_prefix = request_fingerprint[:12]
+
+
+class WaterUpdateConcurrencyConflictError(Exception):
+    def __init__(self, state_id: str, irrigation_event_id: str) -> None:
+        super().__init__(
+            "Another water update applied the reported irrigation event first; "
+            "retry the water calculation."
+        )
+        self.state_id = state_id
         self.irrigation_event_id = irrigation_event_id
 
 
@@ -210,6 +240,57 @@ def irrigation_event_payload_conflict_field(
     return None
 
 
+def _validate_water_update_id(water_update_id: str) -> str:
+    if not isinstance(water_update_id, str):
+        raise ValueError("water_update_id must be a string.")
+    normalized = water_update_id.strip()
+    if not normalized:
+        raise ValueError("water_update_id must be non-empty.")
+    if len(normalized) > 160:
+        raise ValueError("water_update_id must be at most 160 characters.")
+    return normalized
+
+
+def _validate_request_fingerprint(request_fingerprint: str) -> str:
+    if not isinstance(request_fingerprint, str) or not request_fingerprint.strip():
+        raise ValueError("request_fingerprint must be non-empty.")
+    normalized = request_fingerprint.strip()
+    if len(normalized) > 128:
+        raise ValueError("request_fingerprint must be at most 128 characters.")
+    return normalized
+
+
+def _validate_effective_irrigation_mm(value: float) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("effective_irrigation_mm must be a finite number.")
+    result = float(value)
+    if not math.isfinite(result):
+        raise ValueError("effective_irrigation_mm must be a finite number.")
+    if result < 0.0:
+        raise ValueError("effective_irrigation_mm must be >= 0.")
+    return result
+
+
+def _validate_effective_matches_event(
+    *,
+    state_id: str,
+    irrigation_event_id: str,
+    event_amount_mm: float,
+    effective_irrigation_mm: float,
+) -> None:
+    if not math.isclose(
+        float(event_amount_mm),
+        float(effective_irrigation_mm),
+        rel_tol=0.0,
+        abs_tol=1e-9,
+    ):
+        raise PersistenceIntegrityError(
+            "Water update effective irrigation does not match the current "
+            f"application state for irrigation event '{irrigation_event_id}' "
+            f"on state '{state_id}'."
+        )
+
+
 class InMemoryTwinStateStore:
     def __init__(self, max_history: int = 10) -> None:
         self._sessions: dict[str, TwinSessionRecord] = {}
@@ -218,6 +299,7 @@ class InMemoryTwinStateStore:
         self._actual_actions: dict[str, list[ActualActionResponse]] = {}
         self._irrigation_events: dict[str, tuple[str, LastIrrigationEvent]] = {}
         self._water_by_irrigation_event_id: dict[str, WaterStateResponse] = {}
+        self._water_by_update_id: dict[tuple[str, str], tuple[str, WaterStateResponse]] = {}
         self._recommendations_by_id: dict[str, tuple[str, RecommendationResponse]] = {}
         self._disease_history: dict[str, list[DiseasePredictionResponse]] = {}
         self._growth_history: dict[str, list[GrowthStageResponse]] = {}
@@ -226,6 +308,7 @@ class InMemoryTwinStateStore:
             list[tuple[datetime, ObservationTimeBasis, datetime]],
         ] = {}
         self._water_history: dict[str, list[WaterStateResponse]] = {}
+        self._water_observation_metadata: dict[str, list[dict[str, object]]] = {}
         self._max_history = max_history
         self._lock = threading.RLock()
 
@@ -438,7 +521,22 @@ class InMemoryTwinStateStore:
                     raise ValueError("irrigation_event_id is required.")
                 if event_id in self._water_by_irrigation_event_id:
                     raise DuplicateIrrigationEventApplicationError(event_id)
-            record.latest_water_state = water_state.model_copy(deep=True)
+            else:
+                event_id = None
+            applied_event_id = event_id
+            effective_irrigation_mm = (
+                0.0 if irrigation_event is None else float(irrigation_event.amount_mm)
+            )
+            canonical_water_state = water_state.model_copy(
+                update={
+                    "reported_irrigation_event_id": event_id,
+                    "applied_irrigation_event_id": applied_event_id,
+                    "effective_irrigation_mm": effective_irrigation_mm,
+                    "irrigation_event_already_accounted_for": False,
+                },
+                deep=True,
+            )
+            record.latest_water_state = canonical_water_state.model_copy(deep=True)
             self._water_history.setdefault(state_id, []).append(
                 record.latest_water_state.model_copy(deep=True)
             )
@@ -454,9 +552,13 @@ class InMemoryTwinStateStore:
         growth_state: GrowthStageResponse,
         water_state: WaterStateResponse,
         *,
+        water_update_id: str,
+        request_fingerprint: str,
         weather_payload: dict[str, object] | None = None,
         previous_root_zone_depletion_mm: float | None = None,
-        irrigation_event: LastIrrigationEvent | None = None,
+        reported_irrigation_event: LastIrrigationEvent | None = None,
+        effective_irrigation_mm: float = 0.0,
+        computed_at: datetime | None = None,
     ) -> WaterStateResponse:
         with self._lock:
             record = self._get_record_unlocked(state_id)
@@ -464,29 +566,93 @@ class InMemoryTwinStateStore:
                 raise ValueError("growth_state.state_id does not match state_id.")
             if water_state.state_id != state_id:
                 raise ValueError("water_state.state_id does not match state_id.")
+            water_update_id_value = _validate_water_update_id(water_update_id)
+            request_fingerprint_value = _validate_request_fingerprint(
+                request_fingerprint,
+            )
+            existing = self._water_by_update_id.get(
+                (state_id, water_update_id_value),
+            )
+            if existing is not None:
+                existing_fingerprint, existing_water = existing
+                if existing_fingerprint != request_fingerprint_value:
+                    raise WaterUpdatePayloadConflictError(
+                        state_id,
+                        water_update_id_value,
+                        existing_fingerprint=existing_fingerprint,
+                        request_fingerprint=request_fingerprint_value,
+                    )
+                return existing_water.model_copy(deep=True)
+
+            effective_irrigation_mm_value = _validate_effective_irrigation_mm(
+                effective_irrigation_mm,
+            )
             canonical_water_state = water_state.model_copy(
                 update={
                     "observed_at": ensure_utc_datetime(
                         water_state.observed_at,
                         field_name="observed_at",
                     ),
-                    "computed_at": utc_now(),
+                    "computed_at": (
+                        utc_now()
+                        if computed_at is None
+                        else ensure_utc_datetime(
+                            computed_at,
+                            field_name="computed_at",
+                        )
+                    ),
                 },
                 deep=True,
             )
 
-            event_id: str | None = None
-            if irrigation_event is not None:
+            reported_event_id: str | None = None
+            applied_event_id: str | None = None
+            already_accounted_for = False
+            if reported_irrigation_event is not None:
                 normalized_event = self._record_irrigation_event_unlocked(
                     state_id,
-                    irrigation_event,
+                    reported_irrigation_event,
                 )
-                event_id = normalized_event.irrigation_event_id
-                if event_id is None:
+                reported_event_id = normalized_event.irrigation_event_id
+                if reported_event_id is None:
                     raise ValueError("irrigation_event_id is required.")
-                existing_water = self._water_by_irrigation_event_id.get(event_id)
-                if existing_water is not None:
-                    return existing_water.model_copy(deep=True)
+                already_accounted_for = (
+                    reported_event_id in self._water_by_irrigation_event_id
+                )
+                if already_accounted_for:
+                    if effective_irrigation_mm_value != 0.0:
+                        raise WaterUpdateConcurrencyConflictError(
+                            state_id,
+                            reported_event_id,
+                        )
+                else:
+                    _validate_effective_matches_event(
+                        state_id=state_id,
+                        irrigation_event_id=reported_event_id,
+                        event_amount_mm=normalized_event.amount_mm,
+                        effective_irrigation_mm=effective_irrigation_mm_value,
+                    )
+                    applied_event_id = reported_event_id
+            elif effective_irrigation_mm_value != 0.0:
+                raise ValueError(
+                    "effective_irrigation_mm must be 0 when no irrigation event "
+                    "is reported."
+                )
+
+            canonical_water_state = canonical_water_state.model_copy(
+                update={
+                    "water_update_id": water_update_id_value,
+                    "reported_irrigation_event_id": reported_event_id,
+                    "applied_irrigation_event_id": applied_event_id,
+                    "effective_irrigation_mm": effective_irrigation_mm_value,
+                    "irrigation_event_already_accounted_for": (
+                        reported_event_id is not None
+                        and already_accounted_for
+                        and effective_irrigation_mm_value == 0.0
+                    ),
+                },
+                deep=True,
+            )
 
             record.latest_growth_state = growth_state.model_copy(deep=True)
             self._growth_history.setdefault(state_id, []).append(
@@ -504,8 +670,21 @@ class InMemoryTwinStateStore:
             self._water_history.setdefault(state_id, []).append(
                 record.latest_water_state.model_copy(deep=True)
             )
-            if event_id is not None:
-                self._water_by_irrigation_event_id[event_id] = (
+            self._water_by_update_id[(state_id, water_update_id_value)] = (
+                request_fingerprint_value,
+                record.latest_water_state.model_copy(deep=True),
+            )
+            self._water_observation_metadata.setdefault(state_id, []).append(
+                {
+                    "water_update_id": water_update_id_value,
+                    "request_fingerprint": request_fingerprint_value,
+                    "reported_irrigation_event_id": reported_event_id,
+                    "irrigation_event_id": applied_event_id,
+                    "effective_irrigation_mm": effective_irrigation_mm_value,
+                }
+            )
+            if applied_event_id is not None:
+                self._water_by_irrigation_event_id[applied_event_id] = (
                     record.latest_water_state.model_copy(deep=True)
                 )
             return record.latest_water_state.model_copy(deep=True)
@@ -812,22 +991,32 @@ class InMemoryTwinStateStore:
                 )
             return irrigation_event_id in self._water_by_irrigation_event_id
 
-    def get_water_state_for_irrigation_event(
+    def get_water_state_for_update(
         self,
         state_id: str,
-        irrigation_event: LastIrrigationEvent,
+        water_update_id: str,
+        request_fingerprint: str,
     ) -> WaterStateResponse | None:
         with self._lock:
             self._get_record_unlocked(state_id)
-            normalized_event = self._validate_irrigation_event_unlocked(
-                state_id,
-                irrigation_event,
+            water_update_id_value = _validate_water_update_id(water_update_id)
+            request_fingerprint_value = _validate_request_fingerprint(
+                request_fingerprint,
             )
-            event_id = normalized_event.irrigation_event_id
-            if event_id is None:
-                raise ValueError("irrigation_event_id is required.")
-            water_state = self._water_by_irrigation_event_id.get(event_id)
-            return water_state.model_copy(deep=True) if water_state is not None else None
+            existing = self._water_by_update_id.get(
+                (state_id, water_update_id_value),
+            )
+            if existing is None:
+                return None
+            existing_fingerprint, water_state = existing
+            if existing_fingerprint != request_fingerprint_value:
+                raise WaterUpdatePayloadConflictError(
+                    state_id,
+                    water_update_id_value,
+                    existing_fingerprint=existing_fingerprint,
+                    request_fingerprint=request_fingerprint_value,
+                )
+            return water_state.model_copy(deep=True)
 
     def record_actual_action(
         self,
@@ -895,11 +1084,13 @@ class InMemoryTwinStateStore:
             self._actual_actions.clear()
             self._irrigation_events.clear()
             self._water_by_irrigation_event_id.clear()
+            self._water_by_update_id.clear()
             self._recommendations_by_id.clear()
             self._disease_history.clear()
             self._growth_history.clear()
             self._growth_observation_metadata.clear()
             self._water_history.clear()
+            self._water_observation_metadata.clear()
 
     def count(self) -> int:
         with self._lock:

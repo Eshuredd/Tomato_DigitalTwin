@@ -28,6 +28,8 @@ from app.state_store import (
     StateNotFoundError,
     TwinSessionRecord,
     state_store,
+    WaterUpdateConcurrencyConflictError,
+    WaterUpdatePayloadConflictError,
 )
 from app.store_protocol import TwinStateStore
 
@@ -54,12 +56,18 @@ class TwinAPIException(Exception):
 
 def build_error_response(
     *,
+    status_code: int | None = None,
     code: str,
     message: str,
     details: dict[str, Any] | None = None,
 ) -> ErrorResponse:
     return ErrorResponse(
-        error=ErrorDetail(code=code, message=message, details=details or {}),
+        error=ErrorDetail(
+            status_code=status_code,
+            code=code,
+            message=message,
+            details=details or {},
+        ),
     )
 
 
@@ -68,6 +76,7 @@ async def twin_api_exception_handler(
     exc: TwinAPIException,
 ) -> JSONResponse:
     error_response = build_error_response(
+        status_code=exc.status_code,
         code=exc.code,
         message=exc.message,
         details=exc.details,
@@ -185,6 +194,30 @@ def raise_from_store_error(exc: Exception) -> NoReturn:
             code="IRRIGATION_EVENT_ALREADY_APPLIED",
             message=str(exc),
             details={"irrigation_event_id": exc.irrigation_event_id},
+        )
+
+    if isinstance(exc, WaterUpdatePayloadConflictError):
+        raise_api_error(
+            status_code=409,
+            code="WATER_UPDATE_CONFLICT",
+            message=str(exc),
+            details={
+                "state_id": exc.state_id,
+                "water_update_id": exc.water_update_id,
+                "existing_fingerprint_prefix": exc.existing_fingerprint_prefix,
+                "request_fingerprint_prefix": exc.request_fingerprint_prefix,
+            },
+        )
+
+    if isinstance(exc, WaterUpdateConcurrencyConflictError):
+        raise_api_error(
+            status_code=409,
+            code="IRRIGATION_EVENT_APPLICATION_CONFLICT",
+            message=str(exc),
+            details={
+                "state_id": exc.state_id,
+                "irrigation_event_id": exc.irrigation_event_id,
+            },
         )
 
     if isinstance(exc, IrrigationEventStateMismatchError):
