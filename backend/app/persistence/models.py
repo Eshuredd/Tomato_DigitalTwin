@@ -53,7 +53,11 @@ class PlotModel(Base):
 
 class CropCycleModel(Base):
     __tablename__ = "crop_cycles"
-    __table_args__ = (Index("ix_crop_cycles_plot_id", "plot_id"),)
+    __table_args__ = (
+        Index("ix_crop_cycles_plot_id", "plot_id"),
+        Index("ix_crop_cycles_latest_water_observation_id", "latest_water_observation_id"),
+        CheckConstraint("water_sequence >= 0", name="ck_crop_cycles_water_sequence_non_negative"),
+    )
 
     state_id: Mapped[str] = mapped_column(String(120), primary_key=True)
     plot_id: Mapped[str | None] = mapped_column(
@@ -76,6 +80,11 @@ class CropCycleModel(Base):
     )
     latest_computed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
+        nullable=True,
+    )
+    water_sequence: Mapped[int] = mapped_column(nullable=False, default=0, server_default="0")
+    latest_water_observation_id: Mapped[str | None] = mapped_column(
+        String(120),
         nullable=True,
     )
 
@@ -164,6 +173,19 @@ class WaterObservationModel(Base):
             "water_update_id",
             name="uq_water_observations_state_water_update_id",
         ),
+        UniqueConstraint(
+            "state_id",
+            "water_sequence",
+            name="uq_water_observations_state_water_sequence",
+        ),
+        CheckConstraint(
+            "water_sequence > 0",
+            name="ck_water_observations_water_sequence_positive",
+        ),
+        CheckConstraint(
+            "base_water_sequence >= 0",
+            name="ck_water_observations_base_water_sequence_non_negative",
+        ),
         CheckConstraint(
             "effective_irrigation_mm >= 0",
             name="ck_water_observations_effective_irrigation_mm_non_negative",
@@ -184,6 +206,11 @@ class WaterObservationModel(Base):
             "reported_irrigation_event_id",
             "observed_at",
         ),
+        Index(
+            "ix_water_observations_state_observed_at",
+            "state_id",
+            "observed_at",
+        ),
     )
 
     observation_id: Mapped[str] = mapped_column(String(120), primary_key=True)
@@ -195,6 +222,13 @@ class WaterObservationModel(Base):
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     observation_time_basis: Mapped[str] = mapped_column(String(40), nullable=False)
+    water_sequence: Mapped[int] = mapped_column(nullable=False)
+    base_water_observation_id: Mapped[str | None] = mapped_column(
+        String(120),
+        ForeignKey("water_observations.observation_id"),
+        nullable=True,
+    )
+    base_water_sequence: Mapped[int] = mapped_column(nullable=False)
     water_update_id: Mapped[str] = mapped_column(String(160), nullable=False)
     request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     weather_payload_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)

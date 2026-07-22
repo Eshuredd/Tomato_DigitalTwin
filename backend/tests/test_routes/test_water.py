@@ -364,13 +364,14 @@ def test_compute_water_state_concurrent_event_application_conflict_maps_409(
         eto_reference_feed=4.9,
     )
 
-    def payload(update_id: str) -> dict[str, Any]:
+    def payload(update_id: str, observed_at: datetime | None = None) -> dict[str, Any]:
         return ComputeWaterStateRequest(
             state_id=session.state_id,
             water_update_id=update_id,
             current_date=TARGET_DATE,
             weather=weather,
             last_irrigation_event=event,
+            observed_at=observed_at,
         ).model_dump(mode="json")
 
     def worker(update_id: str):
@@ -411,11 +412,14 @@ def test_compute_water_state_concurrent_event_application_conflict_maps_409(
     app.dependency_overrides[get_state_store] = override_get_state_store
     monkeypatch.setattr(water_routes, "compute_water_state_domain", original_compute)
     try:
-        with TestClient(app) as client:
-            retry = client.post(
-                f"/sessions/{session.state_id}/compute-water-state",
-                json=payload(conflict_update_id),
-            )
+            with TestClient(app) as client:
+                retry = client.post(
+                    f"/sessions/{session.state_id}/compute-water-state",
+                    json=payload(
+                        conflict_update_id,
+                        datetime(2026, 7, 10, 1, 0, tzinfo=timezone.utc),
+                    ),
+                )
     finally:
         if previous_override is None:
             app.dependency_overrides.pop(get_state_store, None)

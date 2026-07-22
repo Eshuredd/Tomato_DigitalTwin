@@ -546,6 +546,11 @@ def compute_water_state(
 
     return WaterStateResponse(
         state_id=state_id,
+        previous_root_zone_depletion_mm=(
+            0.0
+            if previous_root_zone_depletion_mm is None
+            else float(previous_root_zone_depletion_mm)
+        ),
         crop_type=crop_type,
         growth_stage=growth_stage,
         soil_texture=soil_texture,

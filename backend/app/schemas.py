@@ -391,6 +391,8 @@ class ComputeWaterStateRequest(BaseModel):
     weather: WeatherInput
     last_irrigation_event: LastIrrigationEvent | None = None
     observed_at: datetime | None = None
+    base_water_observation_id: str | None = None
+    base_water_sequence: Annotated[int | None, Field(ge=0)] = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -419,18 +421,45 @@ class ComputeWaterStateRequest(BaseModel):
         return _ensure_utc_aware(value, "observed_at")
 
     @model_validator(mode="after")
-    def _observed_at_matches_current_date(self) -> ComputeWaterStateRequest:
+    def _validate_water_request(self) -> ComputeWaterStateRequest:
         if self.observed_at is None:
-            return self
-        if self.observed_at.date() != self.current_date:
+            pass
+        elif self.observed_at.date() != self.current_date:
             raise ValueError(
                 "observed_at.date() must match current_date after UTC normalization."
             )
+        base_id_supplied = "base_water_observation_id" in self.model_fields_set
+        base_sequence_supplied = "base_water_sequence" in self.model_fields_set
+        if base_id_supplied != base_sequence_supplied:
+            raise ValueError(
+                "base_water_observation_id and base_water_sequence must be supplied "
+                "together or both omitted."
+            )
+        if self.base_water_sequence is not None and self.base_water_sequence > 0:
+            if self.base_water_observation_id is None:
+                raise ValueError(
+                    "base_water_observation_id is required when "
+                    "base_water_sequence is greater than 0."
+                )
+        if self.base_water_observation_id is not None:
+            stripped = self.base_water_observation_id.strip()
+            if not stripped:
+                raise ValueError("base_water_observation_id must be non-empty.")
+            self.base_water_observation_id = stripped
+            if self.base_water_sequence == 0:
+                raise ValueError(
+                    "base_water_observation_id must be null when base_water_sequence is 0."
+                )
         return self
 
 
 class WaterStateResponse(BaseModel):
     state_id: str
+    water_observation_id: str | None = None
+    water_sequence: Annotated[int, Field(ge=0)] = 0
+    base_water_observation_id: str | None = None
+    base_water_sequence: Annotated[int, Field(ge=0)] = 0
+    previous_root_zone_depletion_mm: Annotated[float, Field(ge=0.0)] = 0.0
     water_update_id: str | None = None
     reported_irrigation_event_id: str | None = None
     applied_irrigation_event_id: str | None = None

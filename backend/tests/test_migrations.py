@@ -338,6 +338,7 @@ def _insert_water_observation(
     water_update_id: str | None = None,
     reported_irrigation_event_id: str | None = None,
     effective_irrigation_mm: float = 0.0,
+    water_sequence: int = 1,
 ) -> None:
     if include_identity:
         connection.execute(
@@ -349,6 +350,8 @@ def _insert_water_observation(
                     observed_at,
                     computed_at,
                     observation_time_basis,
+                    water_sequence,
+                    base_water_sequence,
                     water_update_id,
                     request_fingerprint,
                     weather_payload_json,
@@ -368,6 +371,8 @@ def _insert_water_observation(
                     '2026-07-10T00:00:00+00:00',
                     '2026-07-10T00:01:00+00:00',
                     'DATE_ONLY_UTC_START',
+                    :water_sequence,
+                    0,
                     :water_update_id,
                     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
                     '{}',
@@ -389,6 +394,7 @@ def _insert_water_observation(
                 "water_update_id": water_update_id or f"update-{observation_id}",
                 "reported_irrigation_event_id": reported_irrigation_event_id,
                 "effective_irrigation_mm": effective_irrigation_mm,
+                "water_sequence": water_sequence,
             },
         )
         return

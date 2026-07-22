@@ -27,7 +27,7 @@ from app.schemas import (
 )
 
 if TYPE_CHECKING:
-    from app.state_store import TwinSessionRecord
+    from app.state_store import TwinSessionRecord, WaterBaseline
 
 
 class TwinStateStore(Protocol):
@@ -41,6 +41,11 @@ class TwinStateStore(Protocol):
     ) -> SessionResponse: ...
 
     def get_record(self, state_id: str) -> TwinSessionRecord: ...
+
+    def get_canonical_water_baseline(
+        self,
+        state_id: str,
+    ) -> WaterBaseline | None: ...
 
     def cache_disease_state(
         self,
@@ -78,6 +83,9 @@ class TwinStateStore(Protocol):
         request_fingerprint: str,
         weather_payload: dict[str, object] | None = None,
         previous_root_zone_depletion_mm: float | None = None,
+        expected_base_water_observation_id: str | None = None,
+        expected_base_water_sequence: int | None = None,
+        calculated_previous_root_zone_depletion_mm: float | None = None,
         reported_irrigation_event: LastIrrigationEvent | None = None,
         effective_irrigation_mm: float = 0.0,
         computed_at: datetime | None = None,

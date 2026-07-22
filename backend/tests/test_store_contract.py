@@ -43,8 +43,10 @@ from app.state_store import (
     RecommendationStateMismatchError,
     RelatedRecommendationNotFoundError,
     StateNotFoundError,
+    WaterBaselineMismatchError,
     WaterUpdateConcurrencyConflictError,
     WaterUpdatePayloadConflictError,
+    WaterObservationTimeConflictError,
     derive_irrigation_event_id,
     with_irrigation_event_id,
 )
@@ -715,27 +717,34 @@ def test_store_contract_atomic_water_update_is_idempotent_and_timestamped(
     assert growth_observed_at == first.observed_at
     assert growth_basis is ObservationTimeBasis.EXPLICIT
 
+    later_growth = resolve_growth_stage(
+        state_id=session.state_id,
+        crop_type=record.crop_type,
+        planting_date=record.planting_date,
+        current_date=date(2026, 7, 11),
+    )
     no_event_water = compute_water_state(
         state_id=session.state_id,
         crop_type=record.crop_type,
-        growth_stage=growth.growth_stage,
+        growth_stage=later_growth.growth_stage,
         soil_texture=record.soil_texture,
-        current_date=date(2026, 7, 10),
+        current_date=date(2026, 7, 11),
         weather=_weather(),
         latitude_deg=record.location.latitude,
         elevation_m=record.location.elevation_m or 0.0,
+        previous_root_zone_depletion_mm=first.root_zone_depletion_mm,
     )
     first_no_event = _cache_water_update(
         store,
         session.state_id,
-        growth,
+        later_growth,
         no_event_water,
         effective_irrigation_mm=0.0,
     )
     second_no_event = _cache_water_update(
         store,
         session.state_id,
-        growth,
+        later_growth,
         no_event_water,
         effective_irrigation_mm=0.0,
     )
@@ -813,16 +822,16 @@ def test_store_contract_water_update_identity_conflicts_and_derivation(
             water_update_id="same-update-id",
         )
 
-    explicit_second = _cache_water_update(
-        store,
-        session.state_id,
-        growth,
-        changed_water,
-        weather=changed_weather,
-        water_update_id="different-update-id",
-    )
-    assert explicit_second.water_update_id == "different-update-id"
-    assert _observation_counts(store, session.state_id) == (2, 2)
+    with pytest.raises((WaterBaselineMismatchError, WaterObservationTimeConflictError)):
+        _cache_water_update(
+            store,
+            session.state_id,
+            growth,
+            changed_water,
+            weather=changed_weather,
+            water_update_id="different-update-id",
+        )
+    assert _observation_counts(store, session.state_id) == (1, 1)
 
     derived = derive_water_update_id(
         state_id=session.state_id,
@@ -843,6 +852,87 @@ def test_store_contract_water_update_identity_conflicts_and_derivation(
         state_id="another-state",
         observed_at=observed_at,
         observation_time_basis=ObservationTimeBasis.EXPLICIT,
+    )
+
+
+def test_store_contract_canonical_water_baseline_can_advance_past_current_state(
+    store_factory: StoreFactory,
+) -> None:
+    store = store_factory()
+    session = store.create_session(_session_request(), state_id="state-water-chain")
+    record = store.get_record(session.state_id)
+    store.cache_disease_state(
+        session.state_id,
+        _disease(
+            session.state_id,
+            predicted_at=datetime(2026, 7, 10, 6, 0, tzinfo=timezone.utc),
+        ),
+    )
+    first_growth = resolve_growth_stage(
+        state_id=session.state_id,
+        crop_type=record.crop_type,
+        planting_date=record.planting_date,
+        current_date=date(2026, 7, 10),
+    )
+    first_water = compute_water_state(
+        state_id=session.state_id,
+        crop_type=record.crop_type,
+        growth_stage=first_growth.growth_stage,
+        soil_texture=record.soil_texture,
+        current_date=date(2026, 7, 10),
+        weather=_weather(rainfall_mm=0.0),
+        latitude_deg=record.location.latitude,
+        elevation_m=record.location.elevation_m or 0.0,
+    )
+    first = _cache_water_update(
+        store,
+        session.state_id,
+        first_growth,
+        first_water,
+        weather=_weather(rainfall_mm=0.0),
+        water_update_id="water-chain-1",
+    )
+    store.update_current_state(session.state_id)
+    committed = store.get_current_state(session.state_id)
+    assert committed.root_zone_depletion_mm == pytest.approx(
+        first.root_zone_depletion_mm
+    )
+
+    second_growth = resolve_growth_stage(
+        state_id=session.state_id,
+        crop_type=record.crop_type,
+        planting_date=record.planting_date,
+        current_date=date(2026, 7, 11),
+    )
+    second_water = compute_water_state(
+        state_id=session.state_id,
+        crop_type=record.crop_type,
+        growth_stage=second_growth.growth_stage,
+        soil_texture=record.soil_texture,
+        current_date=date(2026, 7, 11),
+        weather=_weather(rainfall_mm=0.0),
+        latitude_deg=record.location.latitude,
+        elevation_m=record.location.elevation_m or 0.0,
+        previous_root_zone_depletion_mm=first.root_zone_depletion_mm,
+    )
+    second = _cache_water_update(
+        store,
+        session.state_id,
+        second_growth,
+        second_water,
+        weather=_weather(rainfall_mm=0.0),
+        water_update_id="water-chain-2",
+    )
+
+    baseline = store.get_canonical_water_baseline(session.state_id)
+    assert baseline is not None
+    assert baseline.water_sequence == 2
+    assert baseline.water_observation_id == second.water_observation_id
+    assert baseline.root_zone_depletion_mm == pytest.approx(
+        second.root_zone_depletion_mm
+    )
+    assert store.get_current_state(session.state_id).root_zone_depletion_mm == pytest.approx(
+        first.root_zone_depletion_mm
     )
 
 
@@ -1181,7 +1271,12 @@ def test_sqlalchemy_concurrent_different_updates_racing_for_event_retry_succeeds
     )
     weather = _weather()
 
-    def water_for(observed_at: datetime, *, apply_event: bool):
+    def water_for(
+        observed_at: datetime,
+        *,
+        apply_event: bool,
+        previous_root_zone_depletion_mm: float | None = None,
+    ):
         return compute_water_state(
             state_id=session.state_id,
             crop_type=record.crop_type,
@@ -1192,6 +1287,7 @@ def test_sqlalchemy_concurrent_different_updates_racing_for_event_retry_succeeds
             latitude_deg=record.location.latitude,
             elevation_m=record.location.elevation_m or 0.0,
             last_irrigation_event=event if apply_event else None,
+            previous_root_zone_depletion_mm=previous_root_zone_depletion_mm,
             observed_at=observed_at,
             observation_time_basis=ObservationTimeBasis.EXPLICIT,
         )
@@ -1249,11 +1345,21 @@ def test_sqlalchemy_concurrent_different_updates_racing_for_event_retry_succeeds
         database_url=database_url,
         auto_create=False,
     )
+    winning_water = next(iter(successes.values()))
+    assert not isinstance(winning_water, Exception)
+    retry_observed_at = max(
+        losing_observed_at,
+        winning_water.observed_at + timedelta(minutes=1),
+    )
     retry = _cache_water_update(
         retry_store,
         session.state_id,
         growth,
-        water_for(losing_observed_at, apply_event=False),
+        water_for(
+            retry_observed_at,
+            apply_event=False,
+            previous_root_zone_depletion_mm=winning_water.root_zone_depletion_mm,
+        ),
         weather=weather,
         water_update_id=losing_update_id,
         reported_irrigation_event=event,

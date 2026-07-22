@@ -232,6 +232,8 @@ def compute_water_state_route(
         observation_time_basis=observation_time_basis,
         weather=request.weather,
         last_irrigation_event=reported_irrigation_event,
+        base_water_observation_id=request.base_water_observation_id,
+        base_water_sequence=request.base_water_sequence,
     )
 
     existing_water_state = call_store_or_raise(
@@ -243,11 +245,28 @@ def compute_water_state_route(
     if existing_water_state is not None:
         return existing_water_state
 
-    previous_current_state = record.current_state
+    canonical_baseline = call_store_or_raise(
+        store.get_canonical_water_baseline,
+        state_id,
+    )
+    expected_base_water_observation_id = (
+        request.base_water_observation_id
+        if request.base_water_sequence is not None
+        else (
+            None
+            if canonical_baseline is None
+            else canonical_baseline.water_observation_id
+        )
+    )
+    expected_base_water_sequence = (
+        request.base_water_sequence
+        if request.base_water_sequence is not None
+        else (0 if canonical_baseline is None else canonical_baseline.water_sequence)
+    )
     previous_root_zone_depletion_mm = (
-        None
-        if previous_current_state is None
-        else previous_current_state.root_zone_depletion
+        0.0
+        if canonical_baseline is None
+        else canonical_baseline.root_zone_depletion_mm
     )
 
     irrigation_event_already_applied = False
@@ -307,6 +326,9 @@ def compute_water_state_route(
                     reported_irrigation_event_id is not None
                     and irrigation_event_already_applied
                 ),
+                "base_water_observation_id": expected_base_water_observation_id,
+                "base_water_sequence": expected_base_water_sequence,
+                "previous_root_zone_depletion_mm": previous_root_zone_depletion_mm,
             },
             deep=True,
         )
@@ -327,6 +349,9 @@ def compute_water_state_route(
         request_fingerprint=request_fingerprint,
         weather_payload=request.weather.model_dump(mode="json"),
         previous_root_zone_depletion_mm=previous_root_zone_depletion_mm,
+        expected_base_water_observation_id=expected_base_water_observation_id,
+        expected_base_water_sequence=expected_base_water_sequence,
+        calculated_previous_root_zone_depletion_mm=previous_root_zone_depletion_mm,
         reported_irrigation_event=reported_irrigation_event,
         effective_irrigation_mm=effective_irrigation_mm,
         computed_at=computed_at,

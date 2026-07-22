@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import uuid
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 import hashlib
 import math
@@ -92,6 +93,81 @@ class WaterUpdateConcurrencyConflictError(Exception):
         self.irrigation_event_id = irrigation_event_id
 
 
+class StaleWaterBaselineError(Exception):
+    def __init__(
+        self,
+        state_id: str,
+        *,
+        supplied_base_water_observation_id: str | None,
+        supplied_base_water_sequence: int,
+        current_base_water_observation_id: str | None,
+        current_base_water_sequence: int,
+    ) -> None:
+        super().__init__(
+            "The submitted water baseline is no longer the canonical latest "
+            "water state; refresh and recalculate."
+        )
+        self.state_id = state_id
+        self.supplied_base_water_observation_id = supplied_base_water_observation_id
+        self.supplied_base_water_sequence = supplied_base_water_sequence
+        self.current_base_water_observation_id = current_base_water_observation_id
+        self.current_base_water_sequence = current_base_water_sequence
+
+
+class WaterBaselineMismatchError(Exception):
+    def __init__(self, message: str, **details: object) -> None:
+        super().__init__(message)
+        self.details = details
+
+
+class OutOfOrderWaterObservationError(Exception):
+    def __init__(
+        self,
+        state_id: str,
+        *,
+        supplied_observed_at: datetime,
+        current_observed_at: datetime,
+    ) -> None:
+        super().__init__(
+            "Water observations must be submitted after the canonical latest "
+            "water observation."
+        )
+        self.state_id = state_id
+        self.supplied_observed_at = supplied_observed_at
+        self.current_observed_at = current_observed_at
+
+
+class WaterObservationTimeConflictError(Exception):
+    def __init__(
+        self,
+        state_id: str,
+        *,
+        supplied_observed_at: datetime,
+        current_observed_at: datetime,
+        observation_time_basis: ObservationTimeBasis,
+    ) -> None:
+        message = "A different water observation already exists at this observed_at."
+        if observation_time_basis is ObservationTimeBasis.DATE_ONLY_UTC_START:
+            message = (
+                "A date-only water observation already exists for this date; "
+                "supply an explicit timezone-aware observed_at for multiple "
+                "updates on one date."
+            )
+        super().__init__(message)
+        self.state_id = state_id
+        self.supplied_observed_at = supplied_observed_at
+        self.current_observed_at = current_observed_at
+
+
+class WaterStateConcurrencyConflictError(Exception):
+    def __init__(self, state_id: str) -> None:
+        super().__init__(
+            "Another water update advanced the canonical baseline first; retry "
+            "the water calculation."
+        )
+        self.state_id = state_id
+
+
 class IrrigationEventStateMismatchError(Exception):
     def __init__(
         self,
@@ -168,6 +244,15 @@ class TwinSessionRecord(BaseModel):
     state_history: list[HistoryEvent] = Field(default_factory=list)
     latest_simulation: SimulateActionsResponse | None = None
     latest_recommendation: RecommendationResponse | None = None
+
+
+@dataclass(frozen=True)
+class WaterBaseline:
+    water_observation_id: str
+    water_sequence: int
+    observed_at: datetime
+    root_zone_depletion_mm: float
+    water_update_id: str
 
 
 def utc_now() -> datetime:
@@ -291,6 +376,25 @@ def _validate_effective_matches_event(
         )
 
 
+def _validate_base_sequence(value: int | None, *, field_name: str) -> int:
+    if value is None:
+        raise ValueError(f"{field_name} is required.")
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field_name} must be an integer.")
+    if value < 0:
+        raise ValueError(f"{field_name} must be >= 0.")
+    return value
+
+
+def _depletion_matches(expected: float, actual: float) -> bool:
+    return math.isclose(
+        float(expected),
+        float(actual),
+        rel_tol=0.0,
+        abs_tol=1e-9,
+    )
+
+
 class InMemoryTwinStateStore:
     def __init__(self, max_history: int = 10) -> None:
         self._sessions: dict[str, TwinSessionRecord] = {}
@@ -300,6 +404,9 @@ class InMemoryTwinStateStore:
         self._irrigation_events: dict[str, tuple[str, LastIrrigationEvent]] = {}
         self._water_by_irrigation_event_id: dict[str, WaterStateResponse] = {}
         self._water_by_update_id: dict[tuple[str, str], tuple[str, WaterStateResponse]] = {}
+        self._water_by_observation_id: dict[str, tuple[str, WaterStateResponse]] = {}
+        self._latest_water_observation_id: dict[str, str | None] = {}
+        self._water_sequence: dict[str, int] = {}
         self._recommendations_by_id: dict[str, tuple[str, RecommendationResponse]] = {}
         self._disease_history: dict[str, list[DiseasePredictionResponse]] = {}
         self._growth_history: dict[str, list[GrowthStageResponse]] = {}
@@ -419,6 +526,8 @@ class InMemoryTwinStateStore:
                 created_at=created_at,
             )
             self._sessions[state_id] = record
+            self._latest_water_observation_id[state_id] = None
+            self._water_sequence[state_id] = 0
             return SessionResponse(
                 state_id=record.state_id,
                 crop_type=record.crop_type,
@@ -432,6 +541,29 @@ class InMemoryTwinStateStore:
         with self._lock:
             record = self._get_record_unlocked(state_id)
             return record.model_copy(deep=True)
+
+    def get_canonical_water_baseline(
+        self,
+        state_id: str,
+    ) -> WaterBaseline | None:
+        with self._lock:
+            self._get_record_unlocked(state_id)
+            observation_id = self._latest_water_observation_id.get(state_id)
+            if observation_id is None:
+                return None
+            _row_state_id, water = self._water_by_observation_id[observation_id]
+            if water.water_observation_id is None:
+                raise PersistenceIntegrityError("Canonical water observation is missing an ID.")
+            return WaterBaseline(
+                water_observation_id=water.water_observation_id,
+                water_sequence=water.water_sequence,
+                observed_at=ensure_utc_datetime(
+                    water.observed_at,
+                    field_name="observed_at",
+                ),
+                root_zone_depletion_mm=water.root_zone_depletion_mm,
+                water_update_id=water.water_update_id or "",
+            )
 
     def cache_disease_state(
         self, state_id: str, disease_state: DiseasePredictionResponse
@@ -527,8 +659,21 @@ class InMemoryTwinStateStore:
             effective_irrigation_mm = (
                 0.0 if irrigation_event is None else float(irrigation_event.amount_mm)
             )
+            latest = self.get_canonical_water_baseline(state_id)
+            base_id = None if latest is None else latest.water_observation_id
+            base_sequence = 0 if latest is None else latest.water_sequence
+            next_sequence = base_sequence + 1
+            observation_id = f"water_obs_{uuid.uuid4().hex}"
+            previous_depletion = (
+                0.0 if latest is None else latest.root_zone_depletion_mm
+            )
             canonical_water_state = water_state.model_copy(
                 update={
+                    "water_observation_id": observation_id,
+                    "water_sequence": next_sequence,
+                    "base_water_observation_id": base_id,
+                    "base_water_sequence": base_sequence,
+                    "previous_root_zone_depletion_mm": previous_depletion,
                     "reported_irrigation_event_id": event_id,
                     "applied_irrigation_event_id": applied_event_id,
                     "effective_irrigation_mm": effective_irrigation_mm,
@@ -537,6 +682,12 @@ class InMemoryTwinStateStore:
                 deep=True,
             )
             record.latest_water_state = canonical_water_state.model_copy(deep=True)
+            self._latest_water_observation_id[state_id] = observation_id
+            self._water_sequence[state_id] = next_sequence
+            self._water_by_observation_id[observation_id] = (
+                state_id,
+                record.latest_water_state.model_copy(deep=True),
+            )
             self._water_history.setdefault(state_id, []).append(
                 record.latest_water_state.model_copy(deep=True)
             )
@@ -556,6 +707,9 @@ class InMemoryTwinStateStore:
         request_fingerprint: str,
         weather_payload: dict[str, object] | None = None,
         previous_root_zone_depletion_mm: float | None = None,
+        expected_base_water_observation_id: str | None = None,
+        expected_base_water_sequence: int | None = None,
+        calculated_previous_root_zone_depletion_mm: float | None = None,
         reported_irrigation_event: LastIrrigationEvent | None = None,
         effective_irrigation_mm: float = 0.0,
         computed_at: datetime | None = None,
@@ -584,15 +738,86 @@ class InMemoryTwinStateStore:
                     )
                 return existing_water.model_copy(deep=True)
 
+            current_baseline = self.get_canonical_water_baseline(state_id)
+            current_base_id = (
+                None
+                if current_baseline is None
+                else current_baseline.water_observation_id
+            )
+            current_base_sequence = (
+                0 if current_baseline is None else current_baseline.water_sequence
+            )
+            current_depletion = (
+                0.0
+                if current_baseline is None
+                else current_baseline.root_zone_depletion_mm
+            )
+            supplied_sequence = (
+                current_base_sequence
+                if expected_base_water_sequence is None
+                else _validate_base_sequence(
+                    expected_base_water_sequence,
+                    field_name="expected_base_water_sequence",
+                )
+            )
+            supplied_id = (
+                current_base_id
+                if expected_base_water_sequence is None
+                else expected_base_water_observation_id
+            )
+            self._validate_expected_water_baseline_unlocked(
+                state_id=state_id,
+                supplied_base_water_observation_id=supplied_id,
+                supplied_base_water_sequence=supplied_sequence,
+                current_base_water_observation_id=current_base_id,
+                current_base_water_sequence=current_base_sequence,
+            )
+            calculated_previous = (
+                water_state.previous_root_zone_depletion_mm
+                if calculated_previous_root_zone_depletion_mm is None
+                else float(calculated_previous_root_zone_depletion_mm)
+            )
+            if not _depletion_matches(calculated_previous, current_depletion):
+                raise WaterBaselineMismatchError(
+                    "Calculated previous_root_zone_depletion_mm does not match "
+                    "the canonical water baseline.",
+                    state_id=state_id,
+                    supplied_previous_root_zone_depletion_mm=calculated_previous,
+                    current_previous_root_zone_depletion_mm=current_depletion,
+                )
+
             effective_irrigation_mm_value = _validate_effective_irrigation_mm(
                 effective_irrigation_mm,
             )
+            observed_at_value = ensure_utc_datetime(
+                water_state.observed_at,
+                field_name="observed_at",
+            )
+            if current_baseline is not None:
+                if observed_at_value < current_baseline.observed_at:
+                    raise OutOfOrderWaterObservationError(
+                        state_id,
+                        supplied_observed_at=observed_at_value,
+                        current_observed_at=current_baseline.observed_at,
+                    )
+                if observed_at_value == current_baseline.observed_at:
+                    raise WaterObservationTimeConflictError(
+                        state_id,
+                        supplied_observed_at=observed_at_value,
+                        current_observed_at=current_baseline.observed_at,
+                        observation_time_basis=water_state.observation_time_basis,
+                    )
+
+            observation_id = f"water_obs_{uuid.uuid4().hex}"
+            next_sequence = current_base_sequence + 1
             canonical_water_state = water_state.model_copy(
                 update={
-                    "observed_at": ensure_utc_datetime(
-                        water_state.observed_at,
-                        field_name="observed_at",
-                    ),
+                    "water_observation_id": observation_id,
+                    "water_sequence": next_sequence,
+                    "base_water_observation_id": current_base_id,
+                    "base_water_sequence": current_base_sequence,
+                    "previous_root_zone_depletion_mm": current_depletion,
+                    "observed_at": observed_at_value,
                     "computed_at": (
                         utc_now()
                         if computed_at is None
@@ -667,6 +892,8 @@ class InMemoryTwinStateStore:
             )
 
             record.latest_water_state = canonical_water_state.model_copy(deep=True)
+            self._latest_water_observation_id[state_id] = observation_id
+            self._water_sequence[state_id] = next_sequence
             self._water_history.setdefault(state_id, []).append(
                 record.latest_water_state.model_copy(deep=True)
             )
@@ -674,8 +901,16 @@ class InMemoryTwinStateStore:
                 request_fingerprint_value,
                 record.latest_water_state.model_copy(deep=True),
             )
+            self._water_by_observation_id[observation_id] = (
+                state_id,
+                record.latest_water_state.model_copy(deep=True),
+            )
             self._water_observation_metadata.setdefault(state_id, []).append(
                 {
+                    "water_observation_id": observation_id,
+                    "water_sequence": next_sequence,
+                    "base_water_observation_id": current_base_id,
+                    "base_water_sequence": current_base_sequence,
                     "water_update_id": water_update_id_value,
                     "request_fingerprint": request_fingerprint_value,
                     "reported_irrigation_event_id": reported_event_id,
@@ -688,6 +923,64 @@ class InMemoryTwinStateStore:
                     record.latest_water_state.model_copy(deep=True)
                 )
             return record.latest_water_state.model_copy(deep=True)
+
+    def _validate_expected_water_baseline_unlocked(
+        self,
+        *,
+        state_id: str,
+        supplied_base_water_observation_id: str | None,
+        supplied_base_water_sequence: int,
+        current_base_water_observation_id: str | None,
+        current_base_water_sequence: int,
+    ) -> None:
+        if supplied_base_water_sequence == 0 and supplied_base_water_observation_id is not None:
+            raise WaterBaselineMismatchError(
+                "base_water_observation_id must be null for base sequence 0.",
+                state_id=state_id,
+                supplied_base_water_observation_id=supplied_base_water_observation_id,
+                supplied_base_water_sequence=supplied_base_water_sequence,
+            )
+        if supplied_base_water_sequence > 0 and supplied_base_water_observation_id is None:
+            raise WaterBaselineMismatchError(
+                "base_water_observation_id is required for non-zero base sequence.",
+                state_id=state_id,
+                supplied_base_water_sequence=supplied_base_water_sequence,
+            )
+        if supplied_base_water_observation_id is not None:
+            existing = self._water_by_observation_id.get(supplied_base_water_observation_id)
+            if existing is None:
+                raise WaterBaselineMismatchError(
+                    "Referenced base water observation was not found.",
+                    state_id=state_id,
+                    supplied_base_water_observation_id=supplied_base_water_observation_id,
+                    supplied_base_water_sequence=supplied_base_water_sequence,
+                )
+            existing_state_id, existing_water = existing
+            if existing_state_id != state_id:
+                raise WaterBaselineMismatchError(
+                    "Referenced base water observation belongs to another state.",
+                    state_id=state_id,
+                    supplied_base_water_observation_id=supplied_base_water_observation_id,
+                    supplied_base_water_sequence=supplied_base_water_sequence,
+                )
+            if existing_water.water_sequence != supplied_base_water_sequence:
+                raise WaterBaselineMismatchError(
+                    "Referenced base water observation sequence does not match.",
+                    state_id=state_id,
+                    supplied_base_water_observation_id=supplied_base_water_observation_id,
+                    supplied_base_water_sequence=supplied_base_water_sequence,
+                )
+        if (
+            supplied_base_water_observation_id != current_base_water_observation_id
+            or supplied_base_water_sequence != current_base_water_sequence
+        ):
+            raise StaleWaterBaselineError(
+                state_id,
+                supplied_base_water_observation_id=supplied_base_water_observation_id,
+                supplied_base_water_sequence=supplied_base_water_sequence,
+                current_base_water_observation_id=current_base_water_observation_id,
+                current_base_water_sequence=current_base_water_sequence,
+            )
 
     def cache_simulation(
         self, state_id: str, simulation: SimulateActionsResponse
@@ -951,6 +1244,8 @@ class InMemoryTwinStateStore:
                 created_at=timestamp,
             )
             self._sessions[state_id] = record
+            self._latest_water_observation_id[state_id] = None
+            self._water_sequence[state_id] = 0
             return SessionResponse(
                 state_id=record.state_id,
                 crop_type=record.crop_type,
@@ -1085,6 +1380,9 @@ class InMemoryTwinStateStore:
             self._irrigation_events.clear()
             self._water_by_irrigation_event_id.clear()
             self._water_by_update_id.clear()
+            self._water_by_observation_id.clear()
+            self._latest_water_observation_id.clear()
+            self._water_sequence.clear()
             self._recommendations_by_id.clear()
             self._disease_history.clear()
             self._growth_history.clear()

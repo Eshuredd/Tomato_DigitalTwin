@@ -149,6 +149,22 @@ Persistent entities include Farm, Plot, Crop Cycle / Session, disease observatio
 
 Water updates and irrigation events use different identities. `water_update_id` identifies one physical/source water observation and is scoped by `state_id`; exact retries use the same `water_update_id` plus a canonical SHA-256 request fingerprint. Reusing a `water_update_id` with changed calculation inputs returns a conflict. If old clients omit `water_update_id`, CropTwin derives `derived-water-update-*` from `state_id`, UTC `observed_at`, and `observation_time_basis`, so one crop cycle has one compatibility observation for one exact observed instant unless the caller provides a distinct ID.
 
+Water observations form a canonical chronological chain per crop cycle. The latest successfully persisted water observation, not the latest committed `TwinCurrentState` snapshot, is the baseline for the next water calculation. `/update-twin-state` is separate: it creates an immutable current-state snapshot from the latest canonical water observation plus the latest disease and growth evidence, but it is not required to preserve water progression. A `TwinCurrentState` snapshot may therefore lag behind the water-observation chain.
+
+Each accepted water observation has a monotonic `water_sequence`, records its `base_water_observation_id` and `base_water_sequence`, and persists the exact `previous_root_zone_depletion_mm` copied from that base. For a crop cycle with no prior water observation, the first calculation starts from 0 mm, has `water_sequence = 1`, `base_water_observation_id = null`, and `base_water_sequence = 0`.
+
+`observed_at` is the physical ordering key. `computed_at` is only processing time and is not used to decide which water state comes next. New canonical observations must be later than the current canonical observation. Historical insertion into the canonical chain is not supported yet, and a date-only request resolves to 00:00 UTC, so multiple same-date updates need explicit timezone-aware `observed_at` values. Stale bases are rejected instead of silently rebasing; concurrent updates cannot both advance from the same base. Exact retries still return their original stored response, even if newer observations have since advanced the canonical sequence.
+
+Example water chain:
+
+| Sequence | `observed_at` | Base sequence | Previous depletion | Resulting depletion |
+|---:|---|---:|---:|---:|
+| 1 | July 10 | 0 | 0 mm | 3 mm |
+| 2 | July 11 | 1 | 3 mm | 6 mm |
+| 3 | July 12 | 2 | 6 mm | depends on July 12 inputs |
+
+This task does not add automatic time advancement, scheduled weather ingestion, recurring jobs, sensors, or background water-state updates.
+
 Irrigation-event IDs identify physical irrigation events. An event ID cannot be reused for a different crop cycle or for a different timestamp, amount, or source. `water_observations.irrigation_event_id` is the authoritative application link, is unique when present, and links one irrigation event to the water observation that first applied it. Later water observations may report the same historical event; CropTwin stores that provenance in `reported_irrigation_event_id`, sets `effective_irrigation_mm` to `0`, leaves `irrigation_event_id` null for the later row, and still computes the new weather and ETc. Database uniqueness guards exact retries and prevents one irrigation event from being applied twice. If two different updates race to apply the same event, the losing request receives a conflict and should retry.
 
 Actual actions record what physically happened. They remain separate from recommendations, do not automatically modify water state in this task, and may reference only recommendations from the same crop cycle. Historical recommendations from the same crop cycle can still be referenced.

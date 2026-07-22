@@ -22,11 +22,16 @@ from app.state_store import (
     IrrigationEventPayloadConflictError,
     IrrigationEventStateMismatchError,
     MissingCachedOutputError,
+    OutOfOrderWaterObservationError,
     PersistenceIntegrityError,
     RecommendationStateMismatchError,
     RelatedRecommendationNotFoundError,
     StateNotFoundError,
+    StaleWaterBaselineError,
     TwinSessionRecord,
+    WaterBaselineMismatchError,
+    WaterObservationTimeConflictError,
+    WaterStateConcurrencyConflictError,
     state_store,
     WaterUpdateConcurrencyConflictError,
     WaterUpdatePayloadConflictError,
@@ -218,6 +223,64 @@ def raise_from_store_error(exc: Exception) -> NoReturn:
                 "state_id": exc.state_id,
                 "irrigation_event_id": exc.irrigation_event_id,
             },
+        )
+
+    if isinstance(exc, StaleWaterBaselineError):
+        raise_api_error(
+            status_code=409,
+            code="STALE_WATER_BASELINE",
+            message=str(exc),
+            details={
+                "state_id": exc.state_id,
+                "supplied_base_water_observation_id": (
+                    exc.supplied_base_water_observation_id
+                ),
+                "supplied_base_water_sequence": exc.supplied_base_water_sequence,
+                "current_base_water_observation_id": (
+                    exc.current_base_water_observation_id
+                ),
+                "current_base_water_sequence": exc.current_base_water_sequence,
+            },
+        )
+
+    if isinstance(exc, WaterBaselineMismatchError):
+        raise_api_error(
+            status_code=409,
+            code="WATER_BASELINE_MISMATCH",
+            message=str(exc),
+            details=dict(exc.details),
+        )
+
+    if isinstance(exc, OutOfOrderWaterObservationError):
+        raise_api_error(
+            status_code=409,
+            code="OUT_OF_ORDER_WATER_OBSERVATION",
+            message=str(exc),
+            details={
+                "state_id": exc.state_id,
+                "supplied_observed_at": exc.supplied_observed_at.isoformat(),
+                "current_observed_at": exc.current_observed_at.isoformat(),
+            },
+        )
+
+    if isinstance(exc, WaterObservationTimeConflictError):
+        raise_api_error(
+            status_code=409,
+            code="WATER_OBSERVATION_TIME_CONFLICT",
+            message=str(exc),
+            details={
+                "state_id": exc.state_id,
+                "supplied_observed_at": exc.supplied_observed_at.isoformat(),
+                "current_observed_at": exc.current_observed_at.isoformat(),
+            },
+        )
+
+    if isinstance(exc, WaterStateConcurrencyConflictError):
+        raise_api_error(
+            status_code=409,
+            code="WATER_STATE_CONCURRENCY_CONFLICT",
+            message=str(exc),
+            details={"state_id": exc.state_id},
         )
 
     if isinstance(exc, IrrigationEventStateMismatchError):

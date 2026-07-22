@@ -70,6 +70,10 @@ SESSION_KEYS = {
     "weather_manual_overrides": None,
     "water_update_id": None,
     "water_update_signature": None,
+    "latest_water_observation_id": None,
+    "latest_water_sequence": 0,
+    "pending_water_base_observation_id": None,
+    "pending_water_base_sequence": 0,
     "water_current_date": date.today(),
     "weather_tmin_c": 22.0,
     "weather_tmax_c": 32.0,
@@ -835,6 +839,7 @@ def _render_water_tab(client: CropTwinAPIClient) -> None:
             )
         if new_observation:
             _reset_water_update_id()
+            _set_pending_water_base_from_latest()
             st.session_state.water_response = None
             _clear_downstream("water")
             st.rerun()
@@ -850,6 +855,7 @@ def _render_water_tab(client: CropTwinAPIClient) -> None:
             }
             if irrigation_event is not None:
                 payload["last_irrigation_event"] = irrigation_event
+            _apply_pending_water_base(payload)
             payload["water_update_id"] = _water_update_id_for_payload(payload)
 
             result = _call_api(
@@ -859,6 +865,7 @@ def _render_water_tab(client: CropTwinAPIClient) -> None:
             if result:
                 _clear_downstream("water")
                 st.session_state.water_response = result
+                _remember_latest_water_base(result)
                 st.rerun()
 
     _render_water_summary(st.session_state.water_response)
@@ -1126,6 +1133,12 @@ def _water_update_id_for_payload(payload: dict[str, Any]) -> str:
         not retained_id
         or st.session_state.water_update_signature != signature
     ):
+        _set_pending_water_base_from_latest()
+        _apply_pending_water_base(payload)
+        signature = water_update_payload_signature(
+            state_id=st.session_state.active_state_id,
+            payload=payload,
+        )
         retained_id = generate_water_update_id()
         st.session_state.water_update_id = retained_id
         st.session_state.water_update_signature = signature
@@ -1135,6 +1148,44 @@ def _water_update_id_for_payload(payload: dict[str, Any]) -> str:
 def _reset_water_update_id() -> None:
     st.session_state.water_update_id = None
     st.session_state.water_update_signature = None
+
+
+def _set_pending_water_base_from_latest() -> None:
+    st.session_state.pending_water_base_observation_id = (
+        st.session_state.latest_water_observation_id
+    )
+    st.session_state.pending_water_base_sequence = int(
+        st.session_state.latest_water_sequence or 0
+    )
+
+
+def _apply_pending_water_base(payload: dict[str, Any]) -> None:
+    sequence = int(st.session_state.pending_water_base_sequence or 0)
+    observation_id = st.session_state.pending_water_base_observation_id
+    payload.pop("base_water_observation_id", None)
+    payload.pop("base_water_sequence", None)
+    if sequence > 0 and observation_id:
+        payload["base_water_observation_id"] = observation_id
+        payload["base_water_sequence"] = sequence
+
+
+def _remember_latest_water_base(response: dict[str, Any]) -> None:
+    sequence = int(response.get("water_sequence") or 0)
+    observation_id = response.get("water_observation_id")
+    if sequence > 0 and observation_id:
+        st.session_state.latest_water_observation_id = observation_id
+        st.session_state.latest_water_sequence = sequence
+
+
+def _use_latest_water_base_from_error(details: dict[str, Any]) -> None:
+    st.session_state.latest_water_observation_id = details.get(
+        "current_base_water_observation_id"
+    )
+    st.session_state.latest_water_sequence = int(
+        details.get("current_base_water_sequence") or 0
+    )
+    _reset_water_update_id()
+    _set_pending_water_base_from_latest()
 
 
 def _render_water_summary(response: dict[str, Any] | None) -> None:
@@ -1215,6 +1266,21 @@ def _render_water_summary(response: dict[str, Any] | None) -> None:
             st.info(
                 "The reported irrigation event was already included in an earlier "
                 "water balance, so 0 mm from that event was applied to this update."
+            )
+        with st.expander("Technical water lineage", expanded=False):
+            st.json(
+                {
+                    "water_observation_id": response.get("water_observation_id"),
+                    "water_sequence": response.get("water_sequence"),
+                    "base_water_observation_id": response.get(
+                        "base_water_observation_id"
+                    ),
+                    "base_water_sequence": response.get("base_water_sequence"),
+                    "previous_root_zone_depletion_mm": response.get(
+                        "previous_root_zone_depletion_mm"
+                    ),
+                    "water_update_id": response.get("water_update_id"),
+                }
             )
         _show_response("Water response", response)
 
@@ -1413,7 +1479,23 @@ def _call_api(
         try:
             result = func()
         except CropTwinAPIError as exc:
-            st.error(f"{exc.code}: {exc.message}")
+            if exc.code == "STALE_WATER_BASELINE":
+                st.error(
+                    "The crop's water state changed before this update was saved. "
+                    "Refresh the latest state and recalculate this observation."
+                )
+                if st.button("Use latest water state", key="use_latest_water_state"):
+                    _use_latest_water_base_from_error(exc.details)
+                    st.session_state.water_response = None
+                    st.rerun()
+            elif exc.code == "OUT_OF_ORDER_WATER_OBSERVATION":
+                st.error(
+                    "This observation is earlier than the latest stored water state. "
+                    "Historical observations cannot currently be inserted into the "
+                    "canonical timeline."
+                )
+            else:
+                st.error(f"{exc.code}: {exc.message}")
             if exc.status_code:
                 st.caption(f"HTTP {exc.status_code}")
             if exc.details:

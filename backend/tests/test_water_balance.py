@@ -226,6 +226,43 @@ def test_compute_water_request_validates_water_update_id() -> None:
         )
 
 
+def test_compute_water_request_validates_base_water_lineage() -> None:
+    first_base = ComputeWaterStateRequest(
+        state_id="state-1",
+        current_date=date(2026, 7, 10),
+        weather=_weather(),
+        base_water_observation_id=None,
+        base_water_sequence=0,
+    )
+    assert first_base.base_water_observation_id is None
+    assert first_base.base_water_sequence == 0
+
+    with pytest.raises(ValidationError):
+        ComputeWaterStateRequest(
+            state_id="state-1",
+            current_date=date(2026, 7, 10),
+            weather=_weather(),
+            base_water_sequence=1,
+        )
+
+    with pytest.raises(ValidationError):
+        ComputeWaterStateRequest(
+            state_id="state-1",
+            current_date=date(2026, 7, 10),
+            weather=_weather(),
+            base_water_observation_id="water-1",
+        )
+
+    with pytest.raises(ValidationError):
+        ComputeWaterStateRequest(
+            state_id="state-1",
+            current_date=date(2026, 7, 10),
+            weather=_weather(),
+            base_water_observation_id="   ",
+            base_water_sequence=1,
+        )
+
+
 def test_water_update_identity_helpers_are_stable_and_canonical() -> None:
     observed_at = datetime(2026, 7, 10, 7, 30, tzinfo=timezone.utc)
     event = LastIrrigationEvent(

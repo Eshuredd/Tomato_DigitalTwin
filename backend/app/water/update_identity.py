@@ -45,6 +45,8 @@ def compute_water_update_fingerprint(
     observation_time_basis: ObservationTimeBasis,
     weather: WeatherInput,
     last_irrigation_event: LastIrrigationEvent | None,
+    base_water_observation_id: str | None = None,
+    base_water_sequence: int | None = None,
 ) -> str:
     payload = {
         "state_id": _non_empty_string("state_id", state_id),
@@ -56,6 +58,8 @@ def compute_water_update_fingerprint(
         "last_irrigation_event": _canonical_irrigation_event(
             last_irrigation_event,
         ),
+        "base_water_observation_id": base_water_observation_id,
+        "base_water_sequence": base_water_sequence,
     }
     return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
 

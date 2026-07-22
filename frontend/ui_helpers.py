@@ -75,6 +75,10 @@ DOWNSTREAM_KEYS_BY_STEP = {
         "weather_manual_overrides",
         "water_update_id",
         "water_update_signature",
+        "latest_water_observation_id",
+        "latest_water_sequence",
+        "pending_water_base_observation_id",
+        "pending_water_base_sequence",
     ),
     "disease": (
         "twin_response",
@@ -85,6 +89,8 @@ DOWNSTREAM_KEYS_BY_STEP = {
         "history_response",
         "water_update_id",
         "water_update_signature",
+        "pending_water_base_observation_id",
+        "pending_water_base_sequence",
     ),
     "water": (
         "twin_response",

@@ -64,11 +64,17 @@ from app.state_store import (
     IrrigationEventPayloadConflictError,
     IrrigationEventStateMismatchError,
     MissingCachedOutputError,
+    OutOfOrderWaterObservationError,
     PersistenceIntegrityError,
     RecommendationStateMismatchError,
     RelatedRecommendationNotFoundError,
     StateNotFoundError,
     TwinSessionRecord,
+    StaleWaterBaselineError,
+    WaterBaseline,
+    WaterBaselineMismatchError,
+    WaterObservationTimeConflictError,
+    WaterStateConcurrencyConflictError,
     WaterUpdateConcurrencyConflictError,
     WaterUpdatePayloadConflictError,
     ensure_utc_datetime,
@@ -162,11 +168,11 @@ class SQLAlchemyTwinStateStore:
                 state_id,
                 GrowthStageResponse,
             )
-            water = self._latest_payload(
-                session,
-                WaterObservationModel,
-                state_id,
-                WaterStateResponse,
+            water_row = self._canonical_water_row(session, cycle)
+            water = (
+                self._water_state_from_row(water_row)
+                if water_row is not None
+                else None
             )
             snapshot = self._latest_snapshot(session, state_id)
             current_state = (
@@ -207,6 +213,23 @@ class SQLAlchemyTwinStateStore:
                 state_history=history,
                 latest_simulation=latest_simulation,
                 latest_recommendation=latest_recommendation,
+            )
+
+    def get_canonical_water_baseline(
+        self,
+        state_id: str,
+    ) -> WaterBaseline | None:
+        with self._session_factory() as session:
+            cycle = self._get_cycle_or_raise(session, state_id)
+            row = self._canonical_water_row(session, cycle)
+            if row is None:
+                return None
+            return WaterBaseline(
+                water_observation_id=row.observation_id,
+                water_sequence=row.water_sequence,
+                observed_at=self._as_utc(row.observed_at),
+                root_zone_depletion_mm=row.root_zone_depletion_mm,
+                water_update_id=row.water_update_id,
             )
 
     def cache_disease_state(
@@ -334,6 +357,15 @@ class SQLAlchemyTwinStateStore:
             with self._session_factory() as session:
                 with session.begin():
                     cycle = self._get_cycle_or_raise(session, state_id)
+                    base_row = self._canonical_water_row(session, cycle)
+                    base_id = None if base_row is None else base_row.observation_id
+                    base_sequence = 0 if base_row is None else base_row.water_sequence
+                    previous_depletion = (
+                        0.0
+                        if base_row is None
+                        else float(base_row.root_zone_depletion_mm)
+                    )
+                    next_sequence = base_sequence + 1
                     if normalized_event is not None and event_id is not None:
                         self._get_or_create_irrigation_event(
                             session,
@@ -356,10 +388,13 @@ class SQLAlchemyTwinStateStore:
                         observation_time_basis=(
                             canonical_water_state.observation_time_basis.value
                         ),
+                        water_sequence=next_sequence,
+                        base_water_observation_id=base_id,
+                        base_water_sequence=base_sequence,
                         water_update_id=water_update_id,
                         request_fingerprint=request_fingerprint,
                         weather_payload_json=weather_payload,
-                        previous_root_zone_depletion_mm=previous_root_zone_depletion_mm,
+                        previous_root_zone_depletion_mm=previous_depletion,
                         raw_root_zone_depletion_mm=(
                             canonical_water_state.raw_root_zone_depletion_mm
                         ),
@@ -376,6 +411,19 @@ class SQLAlchemyTwinStateStore:
                         payload_json=self._dump(canonical_water_state),
                     )
                     session.add(water_row)
+                    canonical_water_state = canonical_water_state.model_copy(
+                        update={
+                            "water_observation_id": observation_id,
+                            "water_sequence": next_sequence,
+                            "base_water_observation_id": base_id,
+                            "base_water_sequence": base_sequence,
+                            "previous_root_zone_depletion_mm": previous_depletion,
+                        },
+                        deep=True,
+                    )
+                    water_row.payload_json = self._dump(canonical_water_state)
+                    cycle.water_sequence = next_sequence
+                    cycle.latest_water_observation_id = observation_id
                     cycle.latest_observed_at = self._as_utc(
                         canonical_water_state.observed_at,
                     )
@@ -402,6 +450,9 @@ class SQLAlchemyTwinStateStore:
         request_fingerprint: str,
         weather_payload: dict[str, object] | None = None,
         previous_root_zone_depletion_mm: float | None = None,
+        expected_base_water_observation_id: str | None = None,
+        expected_base_water_sequence: int | None = None,
+        calculated_previous_root_zone_depletion_mm: float | None = None,
         reported_irrigation_event: LastIrrigationEvent | None = None,
         effective_irrigation_mm: float = 0.0,
         computed_at: datetime | None = None,
@@ -458,6 +509,69 @@ class SQLAlchemyTwinStateStore:
                             request_fingerprint=request_fingerprint_value,
                         )
 
+                    base_row = self._canonical_water_row(session, cycle)
+                    current_base_id = None if base_row is None else base_row.observation_id
+                    current_base_sequence = 0 if base_row is None else base_row.water_sequence
+                    current_depletion = (
+                        0.0 if base_row is None else float(base_row.root_zone_depletion_mm)
+                    )
+                    supplied_sequence = (
+                        current_base_sequence
+                        if expected_base_water_sequence is None
+                        else self._validate_base_sequence(
+                            expected_base_water_sequence,
+                            field_name="expected_base_water_sequence",
+                        )
+                    )
+                    supplied_id = (
+                        current_base_id
+                        if expected_base_water_sequence is None
+                        else expected_base_water_observation_id
+                    )
+                    self._validate_expected_water_baseline(
+                        session,
+                        state_id=state_id,
+                        supplied_base_water_observation_id=supplied_id,
+                        supplied_base_water_sequence=supplied_sequence,
+                        current_base_water_observation_id=current_base_id,
+                        current_base_water_sequence=current_base_sequence,
+                    )
+                    calculated_previous = (
+                        water_state.previous_root_zone_depletion_mm
+                        if calculated_previous_root_zone_depletion_mm is None
+                        else float(calculated_previous_root_zone_depletion_mm)
+                    )
+                    if not math.isclose(
+                        calculated_previous,
+                        current_depletion,
+                        rel_tol=0.0,
+                        abs_tol=1e-9,
+                    ):
+                        raise WaterBaselineMismatchError(
+                            "Calculated previous_root_zone_depletion_mm does not "
+                            "match the canonical water baseline.",
+                            state_id=state_id,
+                            supplied_previous_root_zone_depletion_mm=calculated_previous,
+                            current_previous_root_zone_depletion_mm=current_depletion,
+                        )
+                    if base_row is not None:
+                        base_observed_at = self._as_utc(base_row.observed_at)
+                        if observed_at < base_observed_at:
+                            raise OutOfOrderWaterObservationError(
+                                state_id,
+                                supplied_observed_at=observed_at,
+                                current_observed_at=base_observed_at,
+                            )
+                        if observed_at == base_observed_at:
+                            raise WaterObservationTimeConflictError(
+                                state_id,
+                                supplied_observed_at=observed_at,
+                                current_observed_at=base_observed_at,
+                                observation_time_basis=(
+                                    canonical_water_state.observation_time_basis
+                                ),
+                            )
+
                     applied_event_id: str | None = None
                     already_accounted_for = False
                     if normalized_event is not None and reported_event_id is not None:
@@ -511,6 +625,18 @@ class SQLAlchemyTwinStateStore:
                         },
                         deep=True,
                     )
+                    observation_id = self._new_id("water_obs")
+                    next_sequence = current_base_sequence + 1
+                    canonical_water_state = canonical_water_state.model_copy(
+                        update={
+                            "water_observation_id": observation_id,
+                            "water_sequence": next_sequence,
+                            "base_water_observation_id": current_base_id,
+                            "base_water_sequence": current_base_sequence,
+                            "previous_root_zone_depletion_mm": current_depletion,
+                        },
+                        deep=True,
+                    )
 
                     session.add(
                         GrowthObservationModel(
@@ -530,18 +656,21 @@ class SQLAlchemyTwinStateStore:
                     )
                     session.add(
                         WaterObservationModel(
-                            observation_id=self._new_id("water_obs"),
+                            observation_id=observation_id,
                             state_id=state_id,
                             observed_at=observed_at,
                             computed_at=computed_at_value,
                             observation_time_basis=(
                                 canonical_water_state.observation_time_basis.value
                             ),
+                            water_sequence=next_sequence,
+                            base_water_observation_id=current_base_id,
+                            base_water_sequence=current_base_sequence,
                             water_update_id=water_update_id_value,
                             request_fingerprint=request_fingerprint_value,
                             weather_payload_json=weather_payload,
                             previous_root_zone_depletion_mm=(
-                                previous_root_zone_depletion_mm
+                                current_depletion
                             ),
                             raw_root_zone_depletion_mm=(
                                 canonical_water_state.raw_root_zone_depletion_mm
@@ -561,6 +690,22 @@ class SQLAlchemyTwinStateStore:
                             payload_json=self._dump(canonical_water_state),
                         )
                     )
+                    session.flush()
+                    updated = session.execute(
+                        update(CropCycleModel)
+                        .where(
+                            CropCycleModel.state_id == state_id,
+                            CropCycleModel.water_sequence == current_base_sequence,
+                        )
+                        .values(
+                            water_sequence=next_sequence,
+                            latest_water_observation_id=observation_id,
+                            latest_observed_at=observed_at,
+                            latest_computed_at=computed_at_value,
+                        )
+                    )
+                    if updated.rowcount != 1:
+                        raise WaterStateConcurrencyConflictError(state_id)
                     cycle.latest_observed_at = observed_at
                     cycle.latest_computed_at = computed_at_value
         except IntegrityError as exc:
@@ -646,7 +791,7 @@ class SQLAlchemyTwinStateStore:
                 cycle = self._get_cycle_or_raise(session, state_id)
                 disease_row = self._latest_row(session, DiseaseObservationModel, state_id)
                 growth_row = self._latest_row(session, GrowthObservationModel, state_id)
-                water_row = self._latest_row(session, WaterObservationModel, state_id)
+                water_row = self._canonical_water_row(session, cycle)
 
                 missing: list[str] = []
                 if disease_row is None:
@@ -660,7 +805,7 @@ class SQLAlchemyTwinStateStore:
 
                 disease = self._payload_as(disease_row, DiseasePredictionResponse)
                 growth = self._payload_as(growth_row, GrowthStageResponse)
-                water = self._payload_as(water_row, WaterStateResponse)
+                water = self._water_state_from_row(water_row)
                 computed_at = utc_now()
                 current_state = TwinCurrentState(
                     crop_type=CropType(cycle.crop_type),
@@ -1228,7 +1373,65 @@ class SQLAlchemyTwinStateStore:
                 existing_fingerprint=row.request_fingerprint,
                 request_fingerprint=request_fingerprint,
             )
-        return self._payload_as(row, WaterStateResponse).model_copy(deep=True)
+        return self._water_state_from_row(row).model_copy(deep=True)
+
+    def _validate_expected_water_baseline(
+        self,
+        session: Session,
+        *,
+        state_id: str,
+        supplied_base_water_observation_id: str | None,
+        supplied_base_water_sequence: int,
+        current_base_water_observation_id: str | None,
+        current_base_water_sequence: int,
+    ) -> None:
+        if supplied_base_water_sequence == 0 and supplied_base_water_observation_id is not None:
+            raise WaterBaselineMismatchError(
+                "base_water_observation_id must be null for base sequence 0.",
+                state_id=state_id,
+                supplied_base_water_observation_id=supplied_base_water_observation_id,
+                supplied_base_water_sequence=supplied_base_water_sequence,
+            )
+        if supplied_base_water_sequence > 0 and supplied_base_water_observation_id is None:
+            raise WaterBaselineMismatchError(
+                "base_water_observation_id is required for non-zero base sequence.",
+                state_id=state_id,
+                supplied_base_water_sequence=supplied_base_water_sequence,
+            )
+        if supplied_base_water_observation_id is not None:
+            row = session.get(WaterObservationModel, supplied_base_water_observation_id)
+            if row is None:
+                raise WaterBaselineMismatchError(
+                    "Referenced base water observation was not found.",
+                    state_id=state_id,
+                    supplied_base_water_observation_id=supplied_base_water_observation_id,
+                    supplied_base_water_sequence=supplied_base_water_sequence,
+                )
+            if row.state_id != state_id:
+                raise WaterBaselineMismatchError(
+                    "Referenced base water observation belongs to another state.",
+                    state_id=state_id,
+                    supplied_base_water_observation_id=supplied_base_water_observation_id,
+                    supplied_base_water_sequence=supplied_base_water_sequence,
+                )
+            if row.water_sequence != supplied_base_water_sequence:
+                raise WaterBaselineMismatchError(
+                    "Referenced base water observation sequence does not match.",
+                    state_id=state_id,
+                    supplied_base_water_observation_id=supplied_base_water_observation_id,
+                    supplied_base_water_sequence=supplied_base_water_sequence,
+                )
+        if (
+            supplied_base_water_observation_id != current_base_water_observation_id
+            or supplied_base_water_sequence != current_base_water_sequence
+        ):
+            raise StaleWaterBaselineError(
+                state_id,
+                supplied_base_water_observation_id=supplied_base_water_observation_id,
+                supplied_base_water_sequence=supplied_base_water_sequence,
+                current_base_water_observation_id=current_base_water_observation_id,
+                current_base_water_sequence=current_base_water_sequence,
+            )
 
     def _handle_water_update_integrity_error(
         self,
@@ -1280,7 +1483,7 @@ class SQLAlchemyTwinStateStore:
                             event_id,
                         ) from original_error
 
-        raise PersistenceIntegrityError() from original_error
+        raise WaterStateConcurrencyConflictError(state_id) from original_error
 
     def _existing_water_after_irrigation_integrity_error(
         self,
@@ -1309,7 +1512,7 @@ class SQLAlchemyTwinStateStore:
             )
             if water is None:
                 raise PersistenceIntegrityError()
-            return self._payload_as(water, WaterStateResponse).model_copy(deep=True)
+            return self._water_state_from_row(water).model_copy(deep=True)
 
     def _validate_related_recommendation(
         self,
@@ -1367,6 +1570,16 @@ class SQLAlchemyTwinStateStore:
         if result < 0.0:
             raise ValueError("effective_irrigation_mm must be >= 0.")
         return result
+
+    @staticmethod
+    def _validate_base_sequence(value: int | None, *, field_name: str) -> int:
+        if value is None:
+            raise ValueError(f"{field_name} is required.")
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"{field_name} must be an integer.")
+        if value < 0:
+            raise ValueError(f"{field_name} must be >= 0.")
+        return value
 
     @staticmethod
     def _validate_effective_matches_event(
@@ -1435,6 +1648,34 @@ class SQLAlchemyTwinStateStore:
         payload = getattr(row, "payload_json")
         return schema.model_validate(payload)
 
+    def _water_state_from_row(self, row: WaterObservationModel) -> WaterStateResponse:
+        payload = self._payload_as(row, WaterStateResponse)
+        return payload.model_copy(
+            update={
+                "water_observation_id": row.observation_id,
+                "water_sequence": row.water_sequence,
+                "base_water_observation_id": row.base_water_observation_id,
+                "base_water_sequence": row.base_water_sequence,
+                "previous_root_zone_depletion_mm": (
+                    0.0
+                    if row.previous_root_zone_depletion_mm is None
+                    else row.previous_root_zone_depletion_mm
+                ),
+                "water_update_id": row.water_update_id,
+                "reported_irrigation_event_id": row.reported_irrigation_event_id,
+                "applied_irrigation_event_id": row.irrigation_event_id,
+                "effective_irrigation_mm": row.effective_irrigation_mm,
+                "irrigation_event_already_accounted_for": (
+                    row.reported_irrigation_event_id is not None
+                    and row.irrigation_event_id is None
+                    and row.effective_irrigation_mm == 0.0
+                ),
+                "observed_at": self._as_utc(row.observed_at),
+                "computed_at": self._as_utc(row.computed_at),
+            },
+            deep=True,
+        )
+
     @staticmethod
     def _cycle_location(cycle: CropCycleModel) -> Location:
         return Location(
@@ -1472,6 +1713,38 @@ class SQLAlchemyTwinStateStore:
     ) -> _ModelT | None:
         row = self._latest_row(session, model, state_id)
         return self._payload_as(row, schema) if row is not None else None
+
+    def _canonical_water_row(
+        self,
+        session: Session,
+        cycle: CropCycleModel,
+    ) -> WaterObservationModel | None:
+        if cycle.water_sequence == 0:
+            return None
+        row: WaterObservationModel | None = None
+        if cycle.latest_water_observation_id is not None:
+            row = session.get(
+                WaterObservationModel,
+                cycle.latest_water_observation_id,
+            )
+        if row is None:
+            row = session.scalars(
+                select(WaterObservationModel)
+                .where(
+                    WaterObservationModel.state_id == cycle.state_id,
+                    WaterObservationModel.water_sequence == cycle.water_sequence,
+                )
+                .limit(1)
+            ).first()
+        if row is None:
+            raise PersistenceIntegrityError(
+                "Crop cycle canonical water pointer references a missing observation."
+            )
+        if row.state_id != cycle.state_id or row.water_sequence != cycle.water_sequence:
+            raise PersistenceIntegrityError(
+                "Crop cycle canonical water pointer does not match its sequence."
+            )
+        return row
 
     def _latest_snapshot(
         self,
