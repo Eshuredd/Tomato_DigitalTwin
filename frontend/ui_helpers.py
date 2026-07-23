@@ -150,15 +150,6 @@ def should_clear_downstream_after_twin_update(
     return response.get("snapshot_created", True) is not False
 
 
-def twin_update_state_patch(
-    response: dict[str, object],
-) -> dict[str, object | None]:
-    patch: dict[str, object | None] = {"twin_response": response}
-    if should_clear_downstream_after_twin_update(response):
-        patch.update({key: None for key in keys_to_clear_after("twin")})
-    return patch
-
-
 def sanitize_error_details(value: Any) -> Any:
     if isinstance(value, dict):
         return {

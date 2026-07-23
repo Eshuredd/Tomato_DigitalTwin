@@ -177,7 +177,7 @@ Irrigation-event IDs identify physical irrigation events. An event ID cannot be 
 
 Actual actions record what physically happened. They remain separate from recommendations, do not automatically modify water state in this task, and may reference only recommendations from the same crop cycle. Historical recommendations from the same crop cycle can still be referenced.
 
-Alembic migrations are covered by real upgrade/downgrade smoke tests against temporary SQLite databases. The tests also verify the authoritative irrigation-event link, water-update uniqueness, reported-event provenance, canonical water sequence constraints, growth-water pairing backfill, snapshot source-fingerprint backfill, foreign-key enforcement, and duplicate-link protection. Constraint tests isolate unrelated values such as `water_sequence`, `water_update_id`, and irrigation-event IDs so each expected failure proves the intended constraint.
+Alembic migrations are covered by real upgrade/downgrade smoke tests against temporary SQLite databases. The tests also verify the authoritative irrigation-event link, water-update uniqueness, reported-event provenance, legacy canonical water ordering by `observed_at`, `computed_at`, and `observation_id`, canonical water sequence constraints, growth-water pairing backfill, snapshot source-fingerprint backfill, foreign-key enforcement, and duplicate-link protection. Constraint tests isolate unrelated values such as `water_sequence`, `water_update_id`, and irrigation-event IDs so each expected failure proves the intended constraint.
 
 The disease model is a locally stored Torchvision/PyTorch artifact. CropTwin does not use Hugging Face and does not download model weights at runtime.
 

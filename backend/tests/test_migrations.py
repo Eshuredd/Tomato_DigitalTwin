@@ -345,6 +345,26 @@ def test_canonical_water_progression_migration_backfills_chain_and_reupgrades(
             "reported_irrigation_event_id": None,
             "effective_irrigation_mm": 0.0,
         },
+        "water-e": {
+            "observed_at": "2026-07-11T09:00:00+00:00",
+            "computed_at": "2026-07-11T09:05:00+00:00",
+            "water_update_id": "legacy-update-e",
+            "request_fingerprint": "e" * 64,
+            "marker": "E",
+            "irrigation_event_id": None,
+            "reported_irrigation_event_id": None,
+            "effective_irrigation_mm": 0.0,
+        },
+        "water-f": {
+            "observed_at": "2026-07-11T09:00:00+00:00",
+            "computed_at": "2026-07-11T09:05:00+00:00",
+            "water_update_id": "legacy-update-f",
+            "request_fingerprint": "f" * 64,
+            "marker": "F",
+            "irrigation_event_id": None,
+            "reported_irrigation_event_id": None,
+            "effective_irrigation_mm": 0.0,
+        },
         "water-d": {
             "observed_at": "2026-07-12T08:00:00+00:00",
             "computed_at": "2026-07-12T08:01:00+00:00",
@@ -385,6 +405,13 @@ def test_canonical_water_progression_migration_backfills_chain_and_reupgrades(
         )
         _insert_legacy_growth_observation(
             connection,
+            observation_id="growth-jul11-0904",
+            observed_at="2026-07-11T09:00:00+00:00",
+            computed_at="2026-07-11T09:04:00+00:00",
+            current_date="2026-07-11",
+        )
+        _insert_legacy_growth_observation(
+            connection,
             observation_id="growth-other-state",
             state_id="state-other",
             observed_at="2026-07-12T08:00:00+00:00",
@@ -392,7 +419,14 @@ def test_canonical_water_progression_migration_backfills_chain_and_reupgrades(
             current_date="2026-07-12",
         )
         _insert_legacy_disease_observation(connection)
-        for observation_id in ("water-b", "water-d", "water-c", "water-a"):
+        for observation_id in (
+            "water-b",
+            "water-d",
+            "water-f",
+            "water-e",
+            "water-c",
+            "water-a",
+        ):
             _insert_water_observation_202607200003(
                 connection,
                 observation_id=observation_id,
@@ -460,13 +494,17 @@ def test_canonical_water_progression_migration_backfills_chain_and_reupgrades(
         "water-a",
         "water-c",
         "water-b",
+        "water-e",
+        "water-f",
         "water-d",
     ]
     expected_lineage = {
         "water-a": (1, None, 0),
         "water-c": (2, "water-a", 1),
         "water-b": (3, "water-c", 2),
-        "water-d": (4, "water-b", 3),
+        "water-e": (4, "water-b", 3),
+        "water-f": (5, "water-e", 4),
+        "water-d": (6, "water-f", 5),
     }
     for row in water_rows:
         expected = expected_legacy[row["observation_id"]]
@@ -488,8 +526,8 @@ def test_canonical_water_progression_migration_backfills_chain_and_reupgrades(
         assert row["effective_irrigation_mm"] == pytest.approx(
             expected["effective_irrigation_mm"]
         )
-    assert [row["water_sequence"] for row in water_rows] == [1, 2, 3, 4]
-    assert crop_pointer["water_sequence"] == 4
+    assert [row["water_sequence"] for row in water_rows] == [1, 2, 3, 4, 5, 6]
+    assert crop_pointer["water_sequence"] == 6
     assert crop_pointer["latest_water_observation_id"] == "water-d"
     assert latest_water["state_id"] == "state-migration"
     assert latest_water["water_sequence"] == crop_pointer["water_sequence"]
@@ -534,7 +572,7 @@ def test_canonical_water_progression_migration_backfills_chain_and_reupgrades(
             )
         ).mappings().all()
 
-    assert len(downgraded_rows) == 4
+    assert len(downgraded_rows) == 6
     for row in downgraded_rows:
         expected = expected_legacy[row["observation_id"]]
         assert row["state_id"] == "state-migration"
@@ -597,12 +635,23 @@ def test_canonical_water_progression_migration_backfills_chain_and_reupgrades(
         "water-a": "growth-jul10",
         "water-c": "growth-jul11-early",
         "water-b": "growth-jul11-late",
-        "water-d": "growth-jul11-late",
+        "water-e": "growth-jul11-0904",
+        "water-f": "growth-jul11-0904",
+        "water-d": "growth-jul11-0904",
     }
     assert all(row["growth_state_id"] == "state-migration" for row in final_water_rows)
-    assert final_pointer["water_sequence"] == 4
+    assert [row["observation_id"] for row in final_water_rows] == [
+        "water-a",
+        "water-c",
+        "water-b",
+        "water-e",
+        "water-f",
+        "water-d",
+    ]
+    assert final_pointer["water_sequence"] == 6
     assert final_pointer["latest_water_observation_id"] == "water-d"
-    assert len(final_water_rows) == 4
+    assert [row["water_sequence"] for row in final_water_rows] == [1, 2, 3, 4, 5, 6]
+    assert len(final_water_rows) == 6
     assert len(snapshots) == 2
     assert {row["water_sequence"] for row in snapshots} == {2}
     assert all(row["source_fingerprint"] for row in snapshots)
