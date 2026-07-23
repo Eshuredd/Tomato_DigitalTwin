@@ -80,6 +80,7 @@ from app.state_store import (
     ensure_utc_datetime,
     irrigation_event_payload_conflict_field,
     normalize_irrigation_event,
+    snapshot_source_fingerprint,
     utc_now,
 )
 
@@ -324,121 +325,10 @@ class SQLAlchemyTwinStateStore:
         previous_root_zone_depletion_mm: float | None = None,
         irrigation_event: LastIrrigationEvent | None = None,
     ) -> WaterStateResponse:
-        if water_state.state_id != state_id:
-            raise ValueError("water_state.state_id does not match state_id.")
-        normalized_event = (
-            normalize_irrigation_event(state_id, irrigation_event)
-            if irrigation_event is not None
-            else None
+        raise RuntimeError(
+            "cache_water_state is deprecated and cannot advance the canonical "
+            "water chain; use cache_water_update with paired growth state."
         )
-        event_id = normalized_event.irrigation_event_id if normalized_event else None
-        observation_id = self._new_id("water_obs")
-        water_update_id = f"legacy-cache-water-state-{observation_id}"
-        effective_irrigation_mm = (
-            0.0
-            if normalized_event is None
-            else self._validate_effective_irrigation_mm(normalized_event.amount_mm)
-        )
-        canonical_water_state = water_state.model_copy(
-            update={
-                "reported_irrigation_event_id": event_id,
-                "applied_irrigation_event_id": event_id,
-                "effective_irrigation_mm": effective_irrigation_mm,
-                "irrigation_event_already_accounted_for": False,
-            },
-            deep=True,
-        )
-        request_fingerprint = self._legacy_water_state_fingerprint(
-            state_id=state_id,
-            water_update_id=water_update_id,
-            water_state=canonical_water_state,
-        )
-        try:
-            with self._session_factory() as session:
-                with session.begin():
-                    cycle = self._get_cycle_or_raise(session, state_id)
-                    base_row = self._canonical_water_row(session, cycle)
-                    base_id = None if base_row is None else base_row.observation_id
-                    base_sequence = 0 if base_row is None else base_row.water_sequence
-                    previous_depletion = (
-                        0.0
-                        if base_row is None
-                        else float(base_row.root_zone_depletion_mm)
-                    )
-                    next_sequence = base_sequence + 1
-                    if normalized_event is not None and event_id is not None:
-                        self._get_or_create_irrigation_event(
-                            session,
-                            state_id=state_id,
-                            event=normalized_event,
-                            recorded_at=utc_now(),
-                        )
-                        if self._water_for_irrigation_event(
-                            session,
-                            state_id=state_id,
-                            event_id=event_id,
-                        ) is not None:
-                            raise DuplicateIrrigationEventApplicationError(event_id)
-
-                    water_row = WaterObservationModel(
-                        observation_id=observation_id,
-                        state_id=state_id,
-                        observed_at=self._as_utc(canonical_water_state.observed_at),
-                        computed_at=self._as_utc(canonical_water_state.computed_at),
-                        observation_time_basis=(
-                            canonical_water_state.observation_time_basis.value
-                        ),
-                        water_sequence=next_sequence,
-                        base_water_observation_id=base_id,
-                        base_water_sequence=base_sequence,
-                        water_update_id=water_update_id,
-                        request_fingerprint=request_fingerprint,
-                        weather_payload_json=weather_payload,
-                        previous_root_zone_depletion_mm=previous_depletion,
-                        raw_root_zone_depletion_mm=(
-                            canonical_water_state.raw_root_zone_depletion_mm
-                        ),
-                        root_zone_depletion_mm=(
-                            canonical_water_state.root_zone_depletion_mm
-                        ),
-                        water_surplus_mm=canonical_water_state.water_surplus_mm,
-                        depletion_beyond_taw_mm=(
-                            canonical_water_state.depletion_beyond_taw_mm
-                        ),
-                        irrigation_event_id=event_id,
-                        reported_irrigation_event_id=event_id,
-                        effective_irrigation_mm=effective_irrigation_mm,
-                        payload_json=self._dump(canonical_water_state),
-                    )
-                    session.add(water_row)
-                    canonical_water_state = canonical_water_state.model_copy(
-                        update={
-                            "water_observation_id": observation_id,
-                            "water_sequence": next_sequence,
-                            "base_water_observation_id": base_id,
-                            "base_water_sequence": base_sequence,
-                            "previous_root_zone_depletion_mm": previous_depletion,
-                        },
-                        deep=True,
-                    )
-                    water_row.payload_json = self._dump(canonical_water_state)
-                    cycle.water_sequence = next_sequence
-                    cycle.latest_water_observation_id = observation_id
-                    cycle.latest_observed_at = self._as_utc(
-                        canonical_water_state.observed_at,
-                    )
-                    cycle.latest_computed_at = self._as_utc(
-                        canonical_water_state.computed_at,
-                    )
-        except IntegrityError as exc:
-            if normalized_event is not None and event_id is not None:
-                self._existing_water_after_irrigation_integrity_error(
-                    state_id=state_id,
-                    event=normalized_event,
-                )
-                raise DuplicateIrrigationEventApplicationError(event_id) from exc
-            raise PersistenceIntegrityError() from exc
-        return canonical_water_state.model_copy(deep=True)
 
     def cache_water_update(
         self,
@@ -626,6 +516,7 @@ class SQLAlchemyTwinStateStore:
                         deep=True,
                     )
                     observation_id = self._new_id("water_obs")
+                    growth_observation_id = self._new_id("growth_obs")
                     next_sequence = current_base_sequence + 1
                     canonical_water_state = canonical_water_state.model_copy(
                         update={
@@ -640,7 +531,7 @@ class SQLAlchemyTwinStateStore:
 
                     session.add(
                         GrowthObservationModel(
-                            observation_id=self._new_id("growth_obs"),
+                            observation_id=growth_observation_id,
                             state_id=state_id,
                             observed_at=observed_at,
                             computed_at=computed_at_value,
@@ -663,6 +554,7 @@ class SQLAlchemyTwinStateStore:
                             observation_time_basis=(
                                 canonical_water_state.observation_time_basis.value
                             ),
+                            growth_observation_id=growth_observation_id,
                             water_sequence=next_sequence,
                             base_water_observation_id=current_base_id,
                             base_water_sequence=current_base_sequence,
@@ -786,96 +678,156 @@ class SQLAlchemyTwinStateStore:
         return payload.model_copy(deep=True)
 
     def update_current_state(self, state_id: str) -> UpdateTwinStateResponse:
-        with self._session_factory() as session:
-            with session.begin():
-                cycle = self._get_cycle_or_raise(session, state_id)
-                disease_row = self._latest_row(session, DiseaseObservationModel, state_id)
-                growth_row = self._latest_row(session, GrowthObservationModel, state_id)
-                water_row = self._canonical_water_row(session, cycle)
+        source_fingerprint: str | None = None
+        try:
+            with self._session_factory() as session:
+                with session.begin():
+                    cycle = self._get_cycle_or_raise(session, state_id)
+                    disease_row = self._latest_row(
+                        session,
+                        DiseaseObservationModel,
+                        state_id,
+                    )
+                    water_row = self._canonical_water_row(session, cycle)
+                    growth_row = (
+                        None
+                        if water_row is None
+                        else session.get(
+                            GrowthObservationModel,
+                            water_row.growth_observation_id,
+                        )
+                    )
 
-                missing: list[str] = []
-                if disease_row is None:
-                    missing.append("latest_disease_state")
-                if growth_row is None:
-                    missing.append("latest_growth_state")
-                if water_row is None:
-                    missing.append("latest_water_state")
-                if missing:
-                    raise IncompleteStateError(missing)
+                    missing: list[str] = []
+                    if disease_row is None:
+                        missing.append("latest_disease_state")
+                    if growth_row is None:
+                        missing.append("latest_growth_state")
+                    if water_row is None:
+                        missing.append("latest_water_state")
+                    if missing:
+                        raise IncompleteStateError(missing)
+                    if growth_row is None or growth_row.state_id != state_id:
+                        raise PersistenceIntegrityError(
+                            "Canonical water observation is missing its paired "
+                            "growth observation."
+                        )
 
-                disease = self._payload_as(disease_row, DiseasePredictionResponse)
-                growth = self._payload_as(growth_row, GrowthStageResponse)
-                water = self._water_state_from_row(water_row)
-                computed_at = utc_now()
-                current_state = TwinCurrentState(
-                    crop_type=CropType(cycle.crop_type),
-                    growth_stage=growth.growth_stage,
-                    days_since_planting=growth.days_since_planting,
-                    predicted_label=disease.predicted_label,
-                    disease_category=disease.disease_category,
-                    confidence_calibrated=disease.confidence_calibrated,
-                    uncertainty_score=disease.uncertainty_score,
-                    uncertainty_band=disease.uncertainty_band,
-                    eto_computed=water.eto_computed,
-                    eto_method=water.eto_method,
-                    kc=water.kc,
-                    etc=water.etc,
-                    taw=water.taw,
-                    raw_threshold=water.raw_threshold,
-                    raw_root_zone_depletion_mm=water.raw_root_zone_depletion_mm,
-                    root_zone_depletion_mm=water.root_zone_depletion_mm,
-                    root_zone_depletion=water.root_zone_depletion,
-                    water_surplus_mm=water.water_surplus_mm,
-                    depletion_beyond_taw_mm=water.depletion_beyond_taw_mm,
-                    estimated_moisture_state=water.estimated_moisture_state,
-                    stress_band=water.stress_band,
-                    observed_at=water.observed_at,
-                    computed_at=computed_at,
-                    observation_time_basis=water.observation_time_basis,
-                    last_update_time=computed_at,
-                )
-                snapshot = TwinStateSnapshotModel(
-                    snapshot_id=self._new_id("snapshot"),
+                    source_fingerprint = snapshot_source_fingerprint(
+                        state_id=state_id,
+                        disease_observation_id=disease_row.observation_id,
+                        growth_observation_id=growth_row.observation_id,
+                        water_observation_id=water_row.observation_id,
+                    )
+                    existing_snapshot = self._snapshot_for_source_fingerprint(
+                        session,
+                        state_id=state_id,
+                        source_fingerprint=source_fingerprint,
+                    )
+                    if existing_snapshot is not None:
+                        return self._snapshot_update_response(
+                            session,
+                            state_id=state_id,
+                            snapshot=existing_snapshot,
+                            snapshot_created=False,
+                        )
+
+                    disease = self._payload_as(disease_row, DiseasePredictionResponse)
+                    growth = self._payload_as(growth_row, GrowthStageResponse)
+                    water = self._water_state_from_row(water_row)
+                    computed_at = utc_now()
+                    current_state = TwinCurrentState(
+                        crop_type=CropType(cycle.crop_type),
+                        growth_stage=growth.growth_stage,
+                        days_since_planting=growth.days_since_planting,
+                        predicted_label=disease.predicted_label,
+                        disease_category=disease.disease_category,
+                        confidence_calibrated=disease.confidence_calibrated,
+                        uncertainty_score=disease.uncertainty_score,
+                        uncertainty_band=disease.uncertainty_band,
+                        eto_computed=water.eto_computed,
+                        eto_method=water.eto_method,
+                        kc=water.kc,
+                        etc=water.etc,
+                        taw=water.taw,
+                        raw_threshold=water.raw_threshold,
+                        raw_root_zone_depletion_mm=water.raw_root_zone_depletion_mm,
+                        root_zone_depletion_mm=water.root_zone_depletion_mm,
+                        root_zone_depletion=water.root_zone_depletion,
+                        water_surplus_mm=water.water_surplus_mm,
+                        depletion_beyond_taw_mm=water.depletion_beyond_taw_mm,
+                        estimated_moisture_state=water.estimated_moisture_state,
+                        stress_band=water.stress_band,
+                        observed_at=water.observed_at,
+                        computed_at=computed_at,
+                        observation_time_basis=water.observation_time_basis,
+                        last_update_time=computed_at,
+                    )
+                    snapshot = TwinStateSnapshotModel(
+                        snapshot_id=self._new_id("snapshot"),
+                        state_id=state_id,
+                        observed_at=self._as_utc(water.observed_at),
+                        computed_at=computed_at,
+                        observation_time_basis=water.observation_time_basis.value,
+                        source_fingerprint=source_fingerprint,
+                        disease_observation_id=disease_row.observation_id,
+                        growth_observation_id=growth_row.observation_id,
+                        water_observation_id=water_row.observation_id,
+                        water_sequence=water_row.water_sequence,
+                        crop_type=current_state.crop_type.value,
+                        growth_stage=current_state.growth_stage.value,
+                        days_since_planting=current_state.days_since_planting,
+                        predicted_label=current_state.predicted_label,
+                        disease_category=current_state.disease_category.value,
+                        confidence_calibrated=current_state.confidence_calibrated,
+                        uncertainty_score=current_state.uncertainty_score,
+                        uncertainty_band=current_state.uncertainty_band.value,
+                        eto_computed=current_state.eto_computed,
+                        eto_method=current_state.eto_method.value,
+                        kc=current_state.kc,
+                        etc=current_state.etc,
+                        taw=current_state.taw,
+                        raw_threshold=current_state.raw_threshold,
+                        raw_root_zone_depletion_mm=(
+                            current_state.raw_root_zone_depletion_mm
+                        ),
+                        root_zone_depletion_mm=current_state.root_zone_depletion_mm,
+                        water_surplus_mm=current_state.water_surplus_mm,
+                        depletion_beyond_taw_mm=current_state.depletion_beyond_taw_mm,
+                        estimated_moisture_state=(
+                            current_state.estimated_moisture_state.value
+                        ),
+                        stress_band=current_state.stress_band.value,
+                        payload_json=self._dump(current_state),
+                    )
+                    session.add(snapshot)
+                    cycle.latest_observed_at = self._as_utc(water.observed_at)
+                    cycle.latest_computed_at = computed_at
+                    session.flush()
+                    return self._snapshot_update_response(
+                        session,
+                        state_id=state_id,
+                        snapshot=snapshot,
+                        snapshot_created=True,
+                    )
+        except IntegrityError as exc:
+            if source_fingerprint is None:
+                raise PersistenceIntegrityError() from exc
+            with self._session_factory() as session:
+                self._get_cycle_or_raise(session, state_id)
+                existing_snapshot = self._snapshot_for_source_fingerprint(
+                    session,
                     state_id=state_id,
-                    observed_at=self._as_utc(water.observed_at),
-                    computed_at=computed_at,
-                    observation_time_basis=water.observation_time_basis.value,
-                    disease_observation_id=disease_row.observation_id,
-                    growth_observation_id=growth_row.observation_id,
-                    water_observation_id=water_row.observation_id,
-                    crop_type=current_state.crop_type.value,
-                    growth_stage=current_state.growth_stage.value,
-                    days_since_planting=current_state.days_since_planting,
-                    predicted_label=current_state.predicted_label,
-                    disease_category=current_state.disease_category.value,
-                    confidence_calibrated=current_state.confidence_calibrated,
-                    uncertainty_score=current_state.uncertainty_score,
-                    uncertainty_band=current_state.uncertainty_band.value,
-                    eto_computed=current_state.eto_computed,
-                    eto_method=current_state.eto_method.value,
-                    kc=current_state.kc,
-                    etc=current_state.etc,
-                    taw=current_state.taw,
-                    raw_threshold=current_state.raw_threshold,
-                    raw_root_zone_depletion_mm=current_state.raw_root_zone_depletion_mm,
-                    root_zone_depletion_mm=current_state.root_zone_depletion_mm,
-                    water_surplus_mm=current_state.water_surplus_mm,
-                    depletion_beyond_taw_mm=current_state.depletion_beyond_taw_mm,
-                    estimated_moisture_state=current_state.estimated_moisture_state.value,
-                    stress_band=current_state.stress_band.value,
-                    payload_json=self._dump(current_state),
+                    source_fingerprint=source_fingerprint,
                 )
-                session.add(snapshot)
-                cycle.latest_observed_at = self._as_utc(water.observed_at)
-                cycle.latest_computed_at = computed_at
-                session.flush()
-                snapshot_count = self._snapshot_count(session, state_id)
-
-        return UpdateTwinStateResponse(
-            state_id=state_id,
-            current_state=current_state.model_copy(deep=True),
-            state_history_count=snapshot_count,
-        )
+                if existing_snapshot is not None:
+                    return self._snapshot_update_response(
+                        session,
+                        state_id=state_id,
+                        snapshot=existing_snapshot,
+                        snapshot_created=False,
+                    )
+            raise WaterStateConcurrencyConflictError(state_id) from exc
 
     def get_current_state(self, state_id: str) -> TwinCurrentState:
         with self._session_factory() as session:
@@ -1757,6 +1709,40 @@ class SQLAlchemyTwinStateStore:
             .order_by(desc(TwinStateSnapshotModel.computed_at))
             .limit(1)
         ).first()
+
+    def _snapshot_for_source_fingerprint(
+        self,
+        session: Session,
+        *,
+        state_id: str,
+        source_fingerprint: str,
+    ) -> TwinStateSnapshotModel | None:
+        return session.scalars(
+            select(TwinStateSnapshotModel)
+            .where(
+                TwinStateSnapshotModel.state_id == state_id,
+                TwinStateSnapshotModel.source_fingerprint == source_fingerprint,
+            )
+            .limit(1)
+        ).first()
+
+    def _snapshot_update_response(
+        self,
+        session: Session,
+        *,
+        state_id: str,
+        snapshot: TwinStateSnapshotModel,
+        snapshot_created: bool,
+    ) -> UpdateTwinStateResponse:
+        return UpdateTwinStateResponse(
+            state_id=state_id,
+            current_state=self._payload_as(snapshot, TwinCurrentState).model_copy(
+                deep=True,
+            ),
+            state_history_count=self._snapshot_count(session, state_id),
+            snapshot_id=snapshot.snapshot_id,
+            snapshot_created=snapshot_created,
+        )
 
     def _latest_valid_simulation_row(
         self,

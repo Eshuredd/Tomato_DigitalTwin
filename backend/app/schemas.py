@@ -557,6 +557,8 @@ class UpdateTwinStateResponse(BaseModel):
     state_id: str
     current_state: TwinCurrentState
     state_history_count: int
+    snapshot_id: str | None = None
+    snapshot_created: bool = True
 
 
 class SessionStateResponse(BaseModel):

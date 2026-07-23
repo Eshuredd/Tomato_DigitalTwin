@@ -393,6 +393,38 @@ def test_registered_routes_match_accepted_contract() -> None:
         assert registered_routes[expected_route] == 1
 
 
+def test_update_twin_state_is_http_idempotent_and_preserves_current_decisions(
+    client_and_store: tuple[TestClient, InMemoryTwinStateStore],
+    elevation_call_count: list[int],
+) -> None:
+    client, _store = client_and_store
+    state_id = _create_session(
+        client,
+        elevation_call_count,
+        expected_elevation_calls=1,
+    )
+    _predict_disease(client, state_id)
+    _compute_water_state(client, state_id)
+    first = _update_twin_state(client, state_id)
+    simulation = _simulate_actions(client, state_id, [ActionEnum.IRRIGATE_NOW])
+    recommendation = _recommend(client, state_id)
+    narration = _narrate(client, state_id)
+
+    second = _update_twin_state(client, state_id)
+    still_recommendation = _recommend(client, state_id)
+    still_narration = _narrate(client, state_id)
+
+    assert first.snapshot_id is not None
+    assert first.snapshot_created is True
+    assert second.snapshot_id == first.snapshot_id
+    assert second.snapshot_created is False
+    assert second.state_history_count == first.state_history_count
+    assert second.current_state == first.current_state
+    assert simulation.state_id == state_id
+    assert still_recommendation.state_id == recommendation.state_id
+    assert still_narration.state_id == narration.state_id
+
+
 def test_health_and_system_information(
     client_and_store: tuple[TestClient, InMemoryTwinStateStore],
 ) -> None:

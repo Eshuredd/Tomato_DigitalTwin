@@ -63,16 +63,6 @@ class TwinStateStore(Protocol):
         computed_at: datetime | None = None,
     ) -> GrowthStageResponse: ...
 
-    def cache_water_state(
-        self,
-        state_id: str,
-        water_state: WaterStateResponse,
-        *,
-        weather_payload: dict[str, object] | None = None,
-        previous_root_zone_depletion_mm: float | None = None,
-        irrigation_event: LastIrrigationEvent | None = None,
-    ) -> WaterStateResponse: ...
-
     def cache_water_update(
         self,
         state_id: str,

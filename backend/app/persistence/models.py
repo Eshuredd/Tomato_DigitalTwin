@@ -211,6 +211,10 @@ class WaterObservationModel(Base):
             "state_id",
             "observed_at",
         ),
+        Index(
+            "ix_water_observations_growth_observation_id",
+            "growth_observation_id",
+        ),
     )
 
     observation_id: Mapped[str] = mapped_column(String(120), primary_key=True)
@@ -222,6 +226,11 @@ class WaterObservationModel(Base):
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     observation_time_basis: Mapped[str] = mapped_column(String(40), nullable=False)
+    growth_observation_id: Mapped[str] = mapped_column(
+        String(120),
+        ForeignKey("growth_observations.observation_id"),
+        nullable=False,
+    )
     water_sequence: Mapped[int] = mapped_column(nullable=False)
     base_water_observation_id: Mapped[str | None] = mapped_column(
         String(120),
@@ -254,6 +263,11 @@ class WaterObservationModel(Base):
 class TwinStateSnapshotModel(Base):
     __tablename__ = "twin_state_snapshots"
     __table_args__ = (
+        UniqueConstraint(
+            "state_id",
+            "source_fingerprint",
+            name="uq_twin_state_snapshots_state_source_fingerprint",
+        ),
         Index(
             "ix_twin_state_snapshots_state_computed_at",
             "state_id",
@@ -270,6 +284,7 @@ class TwinStateSnapshotModel(Base):
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     observation_time_basis: Mapped[str] = mapped_column(String(40), nullable=False)
+    source_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     disease_observation_id: Mapped[str] = mapped_column(
         String(120),
         ForeignKey("disease_observations.observation_id"),
@@ -285,6 +300,7 @@ class TwinStateSnapshotModel(Base):
         ForeignKey("water_observations.observation_id"),
         nullable=False,
     )
+    water_sequence: Mapped[int] = mapped_column(nullable=False)
     crop_type: Mapped[str] = mapped_column(String(40), nullable=False)
     growth_stage: Mapped[str] = mapped_column(String(40), nullable=False)
     days_since_planting: Mapped[int] = mapped_column(nullable=False)

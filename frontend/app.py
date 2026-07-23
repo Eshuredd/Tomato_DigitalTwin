@@ -1294,7 +1294,10 @@ def _render_twin_state_card(client: CropTwinAPIClient) -> None:
                 lambda: client.update_twin_state(st.session_state.active_state_id),
             )
             if result:
-                _clear_downstream("twin")
+                if result.get("snapshot_created", True):
+                    _clear_downstream("twin")
+                else:
+                    st.info("The twin state already reflects the latest observations.")
                 st.session_state.twin_response = result
                 st.rerun()
         if not can_update:
@@ -1305,6 +1308,8 @@ def _render_twin_state_card(client: CropTwinAPIClient) -> None:
             col_a.metric("Growth stage", current["growth_stage"])
             col_b.metric("Current root-zone deficit", f"{current['root_zone_depletion']:.2f} mm")
             col_c.metric("History count", st.session_state.twin_response["state_history_count"])
+            if st.session_state.twin_response.get("snapshot_created") is False:
+                st.caption("The twin state already reflects the latest observations.")
             _show_response("Twin response", st.session_state.twin_response)
 
 

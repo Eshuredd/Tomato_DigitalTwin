@@ -5,6 +5,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 import hashlib
+import json
 import math
 
 from pydantic import BaseModel, Field
@@ -255,6 +256,36 @@ class WaterBaseline:
     water_update_id: str
 
 
+@dataclass(frozen=True)
+class SnapshotSourceIdentity:
+    state_id: str
+    disease_observation_id: str
+    growth_observation_id: str
+    water_observation_id: str
+
+
+def snapshot_source_fingerprint(
+    *,
+    state_id: str,
+    disease_observation_id: str,
+    growth_observation_id: str,
+    water_observation_id: str,
+) -> str:
+    payload = {
+        "state_id": state_id,
+        "disease_observation_id": disease_observation_id,
+        "growth_observation_id": growth_observation_id,
+        "water_observation_id": water_observation_id,
+    }
+    canonical = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -405,8 +436,15 @@ class InMemoryTwinStateStore:
         self._water_by_irrigation_event_id: dict[str, WaterStateResponse] = {}
         self._water_by_update_id: dict[tuple[str, str], tuple[str, WaterStateResponse]] = {}
         self._water_by_observation_id: dict[str, tuple[str, WaterStateResponse]] = {}
+        self._water_growth_observation_id: dict[str, str] = {}
         self._latest_water_observation_id: dict[str, str | None] = {}
         self._water_sequence: dict[str, int] = {}
+        self._latest_disease_observation_id: dict[str, str] = {}
+        self._latest_growth_observation_id: dict[str, str] = {}
+        self._disease_by_observation_id: dict[str, tuple[str, DiseasePredictionResponse]] = {}
+        self._growth_by_observation_id: dict[str, tuple[str, GrowthStageResponse]] = {}
+        self._snapshot_by_fingerprint: dict[tuple[str, str], tuple[str, TwinCurrentState, str]] = {}
+        self._snapshot_sources: dict[str, SnapshotSourceIdentity] = {}
         self._recommendations_by_id: dict[str, tuple[str, RecommendationResponse]] = {}
         self._disease_history: dict[str, list[DiseasePredictionResponse]] = {}
         self._growth_history: dict[str, list[GrowthStageResponse]] = {}
@@ -572,7 +610,13 @@ class InMemoryTwinStateStore:
             record = self._get_record_unlocked(state_id)
             if disease_state.state_id != state_id:
                 raise ValueError("disease_state.state_id does not match state_id.")
+            observation_id = f"disease_obs_{uuid.uuid4().hex}"
             record.latest_disease_state = disease_state.model_copy(deep=True)
+            self._latest_disease_observation_id[state_id] = observation_id
+            self._disease_by_observation_id[observation_id] = (
+                state_id,
+                record.latest_disease_state.model_copy(deep=True),
+            )
             self._disease_history.setdefault(state_id, []).append(
                 record.latest_disease_state.model_copy(deep=True)
             )
@@ -621,7 +665,13 @@ class InMemoryTwinStateStore:
                 if observation_time_basis is None
                 else observation_time_basis
             )
+            observation_id = f"growth_obs_{uuid.uuid4().hex}"
             record.latest_growth_state = growth_state.model_copy(deep=True)
+            self._latest_growth_observation_id[state_id] = observation_id
+            self._growth_by_observation_id[observation_id] = (
+                state_id,
+                record.latest_growth_state.model_copy(deep=True),
+            )
             self._growth_history.setdefault(state_id, []).append(
                 record.latest_growth_state.model_copy(deep=True)
             )
@@ -639,63 +689,10 @@ class InMemoryTwinStateStore:
         previous_root_zone_depletion_mm: float | None = None,
         irrigation_event: LastIrrigationEvent | None = None,
     ) -> WaterStateResponse:
-        with self._lock:
-            record = self._get_record_unlocked(state_id)
-            if water_state.state_id != state_id:
-                raise ValueError("water_state.state_id does not match state_id.")
-            if irrigation_event is not None:
-                normalized_event = self._record_irrigation_event_unlocked(
-                    state_id,
-                    irrigation_event,
-                )
-                event_id = normalized_event.irrigation_event_id
-                if event_id is None:
-                    raise ValueError("irrigation_event_id is required.")
-                if event_id in self._water_by_irrigation_event_id:
-                    raise DuplicateIrrigationEventApplicationError(event_id)
-            else:
-                event_id = None
-            applied_event_id = event_id
-            effective_irrigation_mm = (
-                0.0 if irrigation_event is None else float(irrigation_event.amount_mm)
-            )
-            latest = self.get_canonical_water_baseline(state_id)
-            base_id = None if latest is None else latest.water_observation_id
-            base_sequence = 0 if latest is None else latest.water_sequence
-            next_sequence = base_sequence + 1
-            observation_id = f"water_obs_{uuid.uuid4().hex}"
-            previous_depletion = (
-                0.0 if latest is None else latest.root_zone_depletion_mm
-            )
-            canonical_water_state = water_state.model_copy(
-                update={
-                    "water_observation_id": observation_id,
-                    "water_sequence": next_sequence,
-                    "base_water_observation_id": base_id,
-                    "base_water_sequence": base_sequence,
-                    "previous_root_zone_depletion_mm": previous_depletion,
-                    "reported_irrigation_event_id": event_id,
-                    "applied_irrigation_event_id": applied_event_id,
-                    "effective_irrigation_mm": effective_irrigation_mm,
-                    "irrigation_event_already_accounted_for": False,
-                },
-                deep=True,
-            )
-            record.latest_water_state = canonical_water_state.model_copy(deep=True)
-            self._latest_water_observation_id[state_id] = observation_id
-            self._water_sequence[state_id] = next_sequence
-            self._water_by_observation_id[observation_id] = (
-                state_id,
-                record.latest_water_state.model_copy(deep=True),
-            )
-            self._water_history.setdefault(state_id, []).append(
-                record.latest_water_state.model_copy(deep=True)
-            )
-            if irrigation_event is not None and event_id is not None:
-                self._water_by_irrigation_event_id[event_id] = (
-                    record.latest_water_state.model_copy(deep=True)
-                )
-            return record.latest_water_state.model_copy(deep=True)
+        raise RuntimeError(
+            "cache_water_state is deprecated and cannot advance the canonical "
+            "water chain; use cache_water_update with paired growth state."
+        )
 
     def cache_water_update(
         self,
@@ -809,6 +806,7 @@ class InMemoryTwinStateStore:
                     )
 
             observation_id = f"water_obs_{uuid.uuid4().hex}"
+            growth_observation_id = f"growth_obs_{uuid.uuid4().hex}"
             next_sequence = current_base_sequence + 1
             canonical_water_state = water_state.model_copy(
                 update={
@@ -880,6 +878,11 @@ class InMemoryTwinStateStore:
             )
 
             record.latest_growth_state = growth_state.model_copy(deep=True)
+            self._latest_growth_observation_id[state_id] = growth_observation_id
+            self._growth_by_observation_id[growth_observation_id] = (
+                state_id,
+                record.latest_growth_state.model_copy(deep=True),
+            )
             self._growth_history.setdefault(state_id, []).append(
                 record.latest_growth_state.model_copy(deep=True)
             )
@@ -905,9 +908,11 @@ class InMemoryTwinStateStore:
                 state_id,
                 record.latest_water_state.model_copy(deep=True),
             )
+            self._water_growth_observation_id[observation_id] = growth_observation_id
             self._water_observation_metadata.setdefault(state_id, []).append(
                 {
                     "water_observation_id": observation_id,
+                    "growth_observation_id": growth_observation_id,
                     "water_sequence": next_sequence,
                     "base_water_observation_id": current_base_id,
                     "base_water_sequence": current_base_sequence,
@@ -1031,8 +1036,46 @@ class InMemoryTwinStateStore:
             if missing:
                 raise IncompleteStateError(missing)
 
+            disease_observation_id = self._latest_disease_observation_id.get(state_id)
+            water_observation_id = self._latest_water_observation_id.get(state_id)
+            if disease_observation_id is None:
+                missing.append("latest_disease_state")
+            if water_observation_id is None:
+                missing.append("latest_water_state")
+            if missing:
+                raise IncompleteStateError(missing)
+            growth_observation_id = self._water_growth_observation_id.get(
+                water_observation_id,
+            )
+            if growth_observation_id is None:
+                raise PersistenceIntegrityError(
+                    "Canonical water observation is missing paired growth observation."
+                )
+            growth_entry = self._growth_by_observation_id.get(growth_observation_id)
+            if growth_entry is None or growth_entry[0] != state_id:
+                raise PersistenceIntegrityError(
+                    "Paired growth observation was not found for this state."
+                )
+            fingerprint = snapshot_source_fingerprint(
+                state_id=state_id,
+                disease_observation_id=disease_observation_id,
+                growth_observation_id=growth_observation_id,
+                water_observation_id=water_observation_id,
+            )
+            existing = self._snapshot_by_fingerprint.get((state_id, fingerprint))
+            if existing is not None:
+                snapshot_id, current_state, _fingerprint = existing
+                record.current_state = current_state.model_copy(deep=True)
+                return UpdateTwinStateResponse(
+                    state_id=state_id,
+                    current_state=current_state.model_copy(deep=True),
+                    state_history_count=len(record.state_history),
+                    snapshot_id=snapshot_id,
+                    snapshot_created=False,
+                )
+
             disease = record.latest_disease_state
-            growth = record.latest_growth_state
+            growth = growth_entry[1]
             water = record.latest_water_state
 
             now = utc_now()
@@ -1066,6 +1109,7 @@ class InMemoryTwinStateStore:
             record.current_state = current_state.model_copy(deep=True)
             record.latest_simulation = None
             record.latest_recommendation = None
+            snapshot_id = f"snapshot_{uuid.uuid4().hex}"
 
             history_event = HistoryEvent(
                 timestamp=now,
@@ -1076,11 +1120,24 @@ class InMemoryTwinStateStore:
             )
             record.state_history.append(history_event)
             record.state_history = record.state_history[-self._max_history :]
+            self._snapshot_by_fingerprint[(state_id, fingerprint)] = (
+                snapshot_id,
+                record.current_state.model_copy(deep=True),
+                fingerprint,
+            )
+            self._snapshot_sources[snapshot_id] = SnapshotSourceIdentity(
+                state_id=state_id,
+                disease_observation_id=disease_observation_id,
+                growth_observation_id=growth_observation_id,
+                water_observation_id=water_observation_id,
+            )
 
             return UpdateTwinStateResponse(
                 state_id=state_id,
                 current_state=record.current_state.model_copy(deep=True),
                 state_history_count=len(record.state_history),
+                snapshot_id=snapshot_id,
+                snapshot_created=True,
             )
 
     def get_current_state(self, state_id: str) -> TwinCurrentState:
@@ -1381,8 +1438,15 @@ class InMemoryTwinStateStore:
             self._water_by_irrigation_event_id.clear()
             self._water_by_update_id.clear()
             self._water_by_observation_id.clear()
+            self._water_growth_observation_id.clear()
             self._latest_water_observation_id.clear()
             self._water_sequence.clear()
+            self._latest_disease_observation_id.clear()
+            self._latest_growth_observation_id.clear()
+            self._disease_by_observation_id.clear()
+            self._growth_by_observation_id.clear()
+            self._snapshot_by_fingerprint.clear()
+            self._snapshot_sources.clear()
             self._recommendations_by_id.clear()
             self._disease_history.clear()
             self._growth_history.clear()

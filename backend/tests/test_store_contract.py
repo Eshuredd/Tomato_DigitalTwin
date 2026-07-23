@@ -10,7 +10,11 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 
 from app.growth_stage.resolver import resolve_growth_stage
-from app.persistence.models import GrowthObservationModel, WaterObservationModel
+from app.persistence.models import (
+    GrowthObservationModel,
+    TwinStateSnapshotModel,
+    WaterObservationModel,
+)
 from app.persistence.sqlalchemy_store import SQLAlchemyTwinStateStore
 from app.recommendation.engine import recommend_action
 from app.schemas import (
@@ -35,7 +39,6 @@ from app.schemas import (
 from app.simulation.simulator import simulate_actions
 from app.state_store import (
     DuplicateActualActionError,
-    DuplicateIrrigationEventApplicationError,
     InMemoryTwinStateStore,
     IrrigationEventPayloadConflictError,
     IrrigationEventStateMismatchError,
@@ -152,16 +155,12 @@ def _cache_prerequisites(
         ),
         observed_at=observed_at,
     )
-    store.cache_growth_state(state_id, growth)
-    store.cache_water_state(
+    _cache_water_update(
+        store,
         state_id,
+        growth,
         water,
-        weather_payload=_weather(rainfall_mm=rainfall_mm).model_dump(mode="json"),
-        previous_root_zone_depletion_mm=(
-            record.current_state.root_zone_depletion
-            if record.current_state is not None
-            else None
-        ),
+        weather=_weather(rainfall_mm=rainfall_mm),
     )
 
 
@@ -223,6 +222,20 @@ def _observation_counts(store: TwinStateStore, state_id: str) -> tuple[int, int]
             .where(WaterObservationModel.state_id == state_id)
         )
     return int(growth_count or 0), int(water_count or 0)
+
+
+def _snapshot_count_for_store(store: TwinStateStore, state_id: str) -> int:
+    if isinstance(store, InMemoryTwinStateStore):
+        return len(store.get_history_response(state_id).history)
+
+    assert isinstance(store, SQLAlchemyTwinStateStore)
+    with store._session_factory() as session:  # noqa: SLF001
+        snapshot_count = session.scalar(
+            select(func.count())
+            .select_from(TwinStateSnapshotModel)
+            .where(TwinStateSnapshotModel.state_id == state_id)
+        )
+    return int(snapshot_count or 0)
 
 
 def _water_observation_metadata(
@@ -441,6 +454,102 @@ def test_store_contract_simulation_and_recommendation_invalidation(
         store.get_latest_simulation(session.state_id)
 
 
+def test_store_contract_update_current_state_is_idempotent_for_same_sources(
+    store_factory: StoreFactory,
+) -> None:
+    store = store_factory()
+    session = store.create_session(_session_request(), state_id="state-snapshot-idem")
+    store.cache_disease_state(
+        session.state_id,
+        _disease(
+            session.state_id,
+            predicted_at=datetime(2026, 7, 10, 6, 0, tzinfo=timezone.utc),
+        ),
+    )
+    _cache_prerequisites(store, session.state_id)
+    first = store.update_current_state(session.state_id)
+    simulation = store.cache_simulation(
+        session.state_id,
+        simulate_actions(
+            state_id=session.state_id,
+            current_state=first.current_state,
+            actions=[ActionEnum.IRRIGATE_NOW],
+        ),
+    )
+    recommendation = store.cache_recommendation(
+        session.state_id,
+        recommend_action(
+            state_id=session.state_id,
+            current_state=first.current_state,
+            simulation=simulation,
+        ),
+    )
+
+    second = store.update_current_state(session.state_id)
+
+    assert first.snapshot_id is not None
+    assert second.snapshot_id == first.snapshot_id
+    assert first.snapshot_created is True
+    assert second.snapshot_created is False
+    assert second.current_state == first.current_state
+    assert second.state_history_count == first.state_history_count
+    assert store.get_latest_simulation(session.state_id) == simulation
+    assert store.get_latest_recommendation(session.state_id) == recommendation
+
+
+def test_store_contract_changed_disease_creates_one_new_snapshot_and_invalidates(
+    store_factory: StoreFactory,
+) -> None:
+    store = store_factory()
+    session = store.create_session(_session_request(), state_id="state-snapshot-change")
+    store.cache_disease_state(
+        session.state_id,
+        _disease(
+            session.state_id,
+            predicted_at=datetime(2026, 7, 10, 6, 0, tzinfo=timezone.utc),
+        ),
+    )
+    _cache_prerequisites(store, session.state_id)
+    first = store.update_current_state(session.state_id)
+    simulation = store.cache_simulation(
+        session.state_id,
+        simulate_actions(
+            state_id=session.state_id,
+            current_state=first.current_state,
+            actions=[ActionEnum.IRRIGATE_NOW],
+        ),
+    )
+    store.cache_recommendation(
+        session.state_id,
+        recommend_action(
+            state_id=session.state_id,
+            current_state=first.current_state,
+            simulation=simulation,
+        ),
+    )
+
+    store.cache_disease_state(
+        session.state_id,
+        _disease(
+            session.state_id,
+            predicted_at=datetime(2026, 7, 11, 6, 0, tzinfo=timezone.utc),
+        ).model_copy(update={"predicted_label": "Tomato___Late_blight"}),
+    )
+    second = store.update_current_state(session.state_id)
+    repeated = store.update_current_state(session.state_id)
+
+    assert second.snapshot_created is True
+    assert second.snapshot_id != first.snapshot_id
+    assert second.state_history_count == first.state_history_count + 1
+    assert repeated.snapshot_id == second.snapshot_id
+    assert repeated.snapshot_created is False
+    assert repeated.state_history_count == second.state_history_count
+    with pytest.raises(MissingCachedOutputError):
+        store.get_latest_simulation(session.state_id)
+    with pytest.raises(MissingCachedOutputError):
+        store.get_latest_recommendation(session.state_id)
+
+
 def test_store_contract_farms_plots_crop_cycles_and_actual_actions(
     store_factory: StoreFactory,
 ) -> None:
@@ -629,16 +738,19 @@ def test_store_contract_irrigation_idempotency(
         elevation_m=record.location.elevation_m or 0.0,
         last_irrigation_event=normalized,
     )
-    store.cache_growth_state(session.state_id, growth)
-    store.cache_water_state(
+    first = _cache_water_update(
+        store,
         session.state_id,
+        growth,
         water,
-        irrigation_event=normalized,
+        reported_irrigation_event=normalized,
+        effective_irrigation_mm=normalized.amount_mm,
     )
 
     assert store.has_applied_irrigation_event(session.state_id, expected_id)
-    with pytest.raises(DuplicateIrrigationEventApplicationError):
-        store.cache_water_state(
+    assert first.applied_irrigation_event_id == expected_id
+    with pytest.raises(RuntimeError):
+        store.cache_water_state(  # type: ignore[attr-defined]
             session.state_id,
             water,
             irrigation_event=normalized,
@@ -933,6 +1045,59 @@ def test_store_contract_canonical_water_baseline_can_advance_past_current_state(
     )
     assert store.get_current_state(session.state_id).root_zone_depletion_mm == pytest.approx(
         first.root_zone_depletion_mm
+    )
+
+
+def test_store_contract_update_current_state_uses_paired_growth_observation(
+    store_factory: StoreFactory,
+) -> None:
+    store = store_factory()
+    session = store.create_session(_session_request(), state_id="state-paired-growth")
+    record = store.get_record(session.state_id)
+    store.cache_disease_state(
+        session.state_id,
+        _disease(
+            session.state_id,
+            predicted_at=datetime(2026, 7, 10, 6, 0, tzinfo=timezone.utc),
+        ),
+    )
+    paired_growth = resolve_growth_stage(
+        state_id=session.state_id,
+        crop_type=record.crop_type,
+        planting_date=record.planting_date,
+        current_date=date(2026, 7, 10),
+    )
+    water = compute_water_state(
+        state_id=session.state_id,
+        crop_type=record.crop_type,
+        growth_stage=paired_growth.growth_stage,
+        soil_texture=record.soil_texture,
+        current_date=date(2026, 7, 10),
+        weather=_weather(),
+        latitude_deg=record.location.latitude,
+        elevation_m=record.location.elevation_m or 0.0,
+    )
+    _cache_water_update(
+        store,
+        session.state_id,
+        paired_growth,
+        water,
+        water_update_id="paired-growth-water",
+    )
+    unrelated_growth = resolve_growth_stage(
+        state_id=session.state_id,
+        crop_type=record.crop_type,
+        planting_date=record.planting_date,
+        current_date=date(2026, 7, 20),
+    )
+    store.cache_growth_state(session.state_id, unrelated_growth)
+
+    snapshot = store.update_current_state(session.state_id)
+
+    assert snapshot.current_state.days_since_planting == paired_growth.days_since_planting
+    assert snapshot.current_state.growth_stage == paired_growth.growth_stage
+    assert snapshot.current_state.days_since_planting != (
+        unrelated_growth.days_since_planting
     )
 
 
@@ -1374,6 +1539,45 @@ def test_sqlalchemy_concurrent_different_updates_racing_for_event_retry_succeeds
     assert _observation_counts(setup_store, session.state_id) == (2, 2)
     metadata = _water_observation_metadata(setup_store, session.state_id)
     assert [row["irrigation_event_id"] for row in metadata].count("manual-race") == 1
+
+
+def test_sqlalchemy_concurrent_update_current_state_reuses_source_snapshot(
+    tmp_path,
+) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'snapshot-race.db'}"
+    setup_store = SQLAlchemyTwinStateStore(database_url=database_url, auto_create=True)
+    session = setup_store.create_session(
+        _session_request(),
+        state_id="state-snapshot-race",
+    )
+    setup_store.cache_disease_state(
+        session.state_id,
+        _disease(
+            session.state_id,
+            predicted_at=datetime(2026, 7, 10, 6, 0, tzinfo=timezone.utc),
+        ),
+    )
+    _cache_prerequisites(setup_store, session.state_id)
+    barrier = threading.Barrier(2)
+
+    def worker() -> object:
+        store = SQLAlchemyTwinStateStore(
+            database_url=database_url,
+            auto_create=False,
+        )
+        barrier.wait(timeout=10)
+        try:
+            return store.update_current_state(session.state_id)
+        except Exception as exc:  # noqa: BLE001
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _index: worker(), range(2)))
+
+    assert all(not isinstance(result, Exception) for result in results)
+    assert {result.snapshot_id for result in results} == {results[0].snapshot_id}
+    assert _snapshot_count_for_store(setup_store, session.state_id) == 1
+    assert sorted(result.snapshot_created for result in results) == [False, True]
 
 
 def test_sqlalchemy_store_persists_across_instances_and_rolls_back(tmp_path) -> None:

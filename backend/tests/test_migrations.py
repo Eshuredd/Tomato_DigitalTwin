@@ -39,6 +39,8 @@ REQUIRED_INDEXES = {
     "ix_irrigation_events_state_occurred_at",
     "ix_actual_actions_state_performed_at",
     "ix_water_observations_state_reported_irrigation_observed",
+    "ix_water_observations_state_observed_at",
+    "ix_water_observations_growth_observation_id",
 }
 
 
@@ -85,7 +87,13 @@ def test_alembic_upgrade_downgrade_recreates_integrity_schema(tmp_path) -> None:
     assert "request_fingerprint" in water_columns
     assert "reported_irrigation_event_id" in water_columns
     assert "effective_irrigation_mm" in water_columns
+    assert "growth_observation_id" in water_columns
     assert "applied_to_water_observation_id" not in irrigation_columns
+    snapshot_columns = {
+        column["name"] for column in inspector.get_columns("twin_state_snapshots")
+    }
+    assert "source_fingerprint" in snapshot_columns
+    assert "water_sequence" in snapshot_columns
 
     water_indexes = {
         index["name"]: index for index in inspector.get_indexes("water_observations")
@@ -104,6 +112,20 @@ def test_alembic_upgrade_downgrade_recreates_integrity_schema(tmp_path) -> None:
         and fk["constrained_columns"] == ["reported_irrigation_event_id"]
         for fk in foreign_keys
     )
+    assert any(
+        fk["referred_table"] == "growth_observations"
+        and fk["constrained_columns"] == ["growth_observation_id"]
+        for fk in foreign_keys
+    )
+    snapshot_unique_constraints = {
+        constraint["name"]: constraint
+        for constraint in inspector.get_unique_constraints("twin_state_snapshots")
+    }
+    assert set(
+        snapshot_unique_constraints[
+            "uq_twin_state_snapshots_state_source_fingerprint"
+        ]["column_names"]
+    ) == {"state_id", "source_fingerprint"}
     engine.dispose()
 
     assert REQUIRED_INDEXES.issubset(_index_names(database_url))
@@ -148,6 +170,7 @@ def test_migrated_sqlite_enforces_irrigation_event_fk_and_unique_link(tmp_path) 
                 water_update_id="update-migration-2",
                 reported_irrigation_event_id="event-migration",
                 effective_irrigation_mm=8.0,
+                water_sequence=2,
             )
 
     with pytest.raises(IntegrityError):
@@ -159,6 +182,7 @@ def test_migrated_sqlite_enforces_irrigation_event_fk_and_unique_link(tmp_path) 
                 water_update_id="update-migration-3",
                 reported_irrigation_event_id="missing-event",
                 effective_irrigation_mm=8.0,
+                water_sequence=3,
             )
 
     with pytest.raises(IntegrityError):
@@ -170,6 +194,19 @@ def test_migrated_sqlite_enforces_irrigation_event_fk_and_unique_link(tmp_path) 
                 water_update_id="update-migration-1",
                 reported_irrigation_event_id=None,
                 effective_irrigation_mm=0.0,
+                water_sequence=4,
+            )
+
+    with pytest.raises(IntegrityError):
+        with engine.begin() as connection:
+            _insert_water_observation(
+                connection,
+                observation_id="water-duplicate-sequence",
+                irrigation_event_id=None,
+                water_update_id="update-migration-5",
+                reported_irrigation_event_id=None,
+                effective_irrigation_mm=0.0,
+                water_sequence=1,
             )
 
     engine.dispose()
@@ -270,6 +307,85 @@ def test_water_update_identity_migration_backfills_legacy_rows(tmp_path) -> None
     engine.dispose()
 
 
+def test_snapshot_lineage_migration_backfills_growth_links_and_fingerprints(
+    tmp_path,
+) -> None:
+    database_url = _database_url(tmp_path, "snapshot-lineage-backfill.db")
+    config = _config(database_url)
+    command.upgrade(config, "202607220004")
+
+    engine = create_database_engine(database_url)
+    with engine.begin() as connection:
+        _insert_crop_cycle_and_irrigation_event(connection)
+        _insert_disease_observation(connection)
+        _insert_water_observation_202607220004(
+            connection,
+            observation_id="legacy-water-a",
+            water_sequence=1,
+            observed_at="2026-07-10T00:00:00+00:00",
+            computed_at="2026-07-10T00:02:00+00:00",
+            water_update_id="legacy-update-a",
+        )
+        _insert_snapshot_202607220004(
+            connection,
+            snapshot_id="snapshot-a",
+            water_observation_id="legacy-water-a",
+        )
+        _insert_snapshot_202607220004(
+            connection,
+            snapshot_id="snapshot-a-duplicate",
+            water_observation_id="legacy-water-a",
+        )
+
+    command.upgrade(config, "head")
+
+    with engine.connect() as connection:
+        water = connection.execute(
+            text(
+                """
+                SELECT observation_id, growth_observation_id
+                FROM water_observations
+                WHERE observation_id = 'legacy-water-a'
+                """
+            )
+        ).mappings().one()
+        snapshots = connection.execute(
+            text(
+                """
+                SELECT snapshot_id, source_fingerprint, water_sequence
+                FROM twin_state_snapshots
+                ORDER BY snapshot_id
+                """
+            )
+        ).mappings().all()
+
+    assert water["growth_observation_id"] == "growth-migration"
+    assert len(snapshots) == 2
+    assert all(len(row["source_fingerprint"]) == 64 for row in snapshots)
+    assert len({row["source_fingerprint"] for row in snapshots}) == 2
+    assert any(
+        row["source_fingerprint"].startswith("legacy-")
+        for row in snapshots
+        if row["snapshot_id"] == "snapshot-a-duplicate"
+    )
+    assert {row["water_sequence"] for row in snapshots} == {1}
+
+    command.downgrade(config, "202607220004")
+    inspector = inspect(engine)
+    water_columns = {
+        column["name"] for column in inspector.get_columns("water_observations")
+    }
+    snapshot_columns = {
+        column["name"] for column in inspector.get_columns("twin_state_snapshots")
+    }
+    assert "growth_observation_id" not in water_columns
+    assert "source_fingerprint" not in snapshot_columns
+    assert "water_sequence" not in snapshot_columns
+
+    command.upgrade(config, "head")
+    engine.dispose()
+
+
 def _insert_crop_cycle_and_irrigation_event(connection) -> None:
     connection.execute(
         text(
@@ -306,6 +422,36 @@ def _insert_crop_cycle_and_irrigation_event(connection) -> None:
     connection.execute(
         text(
             """
+            INSERT INTO growth_observations (
+                observation_id,
+                state_id,
+                observed_at,
+                computed_at,
+                observation_time_basis,
+                current_date,
+                days_since_planting,
+                growth_stage,
+                stage_progress,
+                payload_json
+            )
+            VALUES (
+                'growth-migration',
+                'state-migration',
+                '2026-07-10T00:00:00+00:00',
+                '2026-07-10T00:00:30+00:00',
+                'DATE_ONLY_UTC_START',
+                '2026-07-10',
+                39,
+                'development',
+                0.2,
+                '{}'
+            )
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
             INSERT INTO irrigation_events (
                 irrigation_event_id,
                 state_id,
@@ -326,6 +472,187 @@ def _insert_crop_cycle_and_irrigation_event(connection) -> None:
             )
             """
         )
+    )
+
+
+def _insert_disease_observation(connection) -> None:
+    connection.execute(
+        text(
+            """
+            INSERT INTO disease_observations (
+                observation_id,
+                state_id,
+                observed_at,
+                computed_at,
+                observation_time_basis,
+                predicted_label,
+                disease_category,
+                confidence_calibrated,
+                uncertainty_score,
+                uncertainty_band,
+                payload_json
+            )
+            VALUES (
+                'disease-migration',
+                'state-migration',
+                '2026-07-10T00:00:00+00:00',
+                '2026-07-10T00:00:20+00:00',
+                'SERVER_RECEIVED',
+                'Tomato___healthy',
+                'none',
+                0.95,
+                0.05,
+                'low',
+                '{}'
+            )
+            """
+        )
+    )
+
+
+def _insert_water_observation_202607220004(
+    connection,
+    *,
+    observation_id: str,
+    water_sequence: int,
+    observed_at: str,
+    computed_at: str,
+    water_update_id: str,
+) -> None:
+    connection.execute(
+        text(
+            """
+            INSERT INTO water_observations (
+                observation_id,
+                state_id,
+                observed_at,
+                computed_at,
+                observation_time_basis,
+                water_sequence,
+                base_water_sequence,
+                water_update_id,
+                request_fingerprint,
+                weather_payload_json,
+                previous_root_zone_depletion_mm,
+                raw_root_zone_depletion_mm,
+                root_zone_depletion_mm,
+                water_surplus_mm,
+                depletion_beyond_taw_mm,
+                irrigation_event_id,
+                reported_irrigation_event_id,
+                effective_irrigation_mm,
+                payload_json
+            )
+            VALUES (
+                :observation_id,
+                'state-migration',
+                :observed_at,
+                :computed_at,
+                'DATE_ONLY_UTC_START',
+                :water_sequence,
+                0,
+                :water_update_id,
+                'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+                '{}',
+                0.0,
+                1.0,
+                1.0,
+                0.0,
+                0.0,
+                NULL,
+                NULL,
+                0.0,
+                '{}'
+            )
+            """
+        ),
+        {
+            "observation_id": observation_id,
+            "observed_at": observed_at,
+            "computed_at": computed_at,
+            "water_sequence": water_sequence,
+            "water_update_id": water_update_id,
+        },
+    )
+
+
+def _insert_snapshot_202607220004(
+    connection,
+    *,
+    snapshot_id: str,
+    water_observation_id: str,
+) -> None:
+    connection.execute(
+        text(
+            """
+            INSERT INTO twin_state_snapshots (
+                snapshot_id,
+                state_id,
+                observed_at,
+                computed_at,
+                observation_time_basis,
+                disease_observation_id,
+                growth_observation_id,
+                water_observation_id,
+                crop_type,
+                growth_stage,
+                days_since_planting,
+                predicted_label,
+                disease_category,
+                confidence_calibrated,
+                uncertainty_score,
+                uncertainty_band,
+                eto_computed,
+                eto_method,
+                kc,
+                etc,
+                taw,
+                raw_threshold,
+                raw_root_zone_depletion_mm,
+                root_zone_depletion_mm,
+                water_surplus_mm,
+                depletion_beyond_taw_mm,
+                estimated_moisture_state,
+                stress_band,
+                payload_json
+            )
+            VALUES (
+                :snapshot_id,
+                'state-migration',
+                '2026-07-10T00:00:00+00:00',
+                '2026-07-10T00:03:00+00:00',
+                'DATE_ONLY_UTC_START',
+                'disease-migration',
+                'growth-migration',
+                :water_observation_id,
+                'tomato',
+                'development',
+                39,
+                'Tomato___healthy',
+                'none',
+                0.95,
+                0.05,
+                'low',
+                4.0,
+                'penman_monteith',
+                0.8,
+                3.2,
+                48.0,
+                24.0,
+                1.0,
+                1.0,
+                0.0,
+                0.0,
+                'adequate',
+                'low',
+                '{}'
+            )
+            """
+        ),
+        {
+            "snapshot_id": snapshot_id,
+            "water_observation_id": water_observation_id,
+        },
     )
 
 
@@ -350,6 +677,7 @@ def _insert_water_observation(
                     observed_at,
                     computed_at,
                     observation_time_basis,
+                    growth_observation_id,
                     water_sequence,
                     base_water_sequence,
                     water_update_id,
@@ -371,6 +699,7 @@ def _insert_water_observation(
                     '2026-07-10T00:00:00+00:00',
                     '2026-07-10T00:01:00+00:00',
                     'DATE_ONLY_UTC_START',
+                    'growth-migration',
                     :water_sequence,
                     0,
                     :water_update_id,
