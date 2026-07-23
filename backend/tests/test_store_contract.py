@@ -550,6 +550,63 @@ def test_store_contract_changed_disease_creates_one_new_snapshot_and_invalidates
         store.get_latest_recommendation(session.state_id)
 
 
+def test_store_contract_changed_canonical_water_creates_one_new_snapshot(
+    store_factory: StoreFactory,
+) -> None:
+    store = store_factory()
+    session = store.create_session(_session_request(), state_id="state-water-change")
+    store.cache_disease_state(
+        session.state_id,
+        _disease(
+            session.state_id,
+            predicted_at=datetime(2026, 7, 10, 6, 0, tzinfo=timezone.utc),
+        ),
+    )
+    _cache_prerequisites(
+        store,
+        session.state_id,
+        observed_at=datetime(2026, 7, 10, 7, 0, tzinfo=timezone.utc),
+    )
+    first = store.update_current_state(session.state_id)
+    simulation = store.cache_simulation(
+        session.state_id,
+        simulate_actions(
+            state_id=session.state_id,
+            current_state=first.current_state,
+            actions=[ActionEnum.IRRIGATE_NOW],
+        ),
+    )
+    store.cache_recommendation(
+        session.state_id,
+        recommend_action(
+            state_id=session.state_id,
+            current_state=first.current_state,
+            simulation=simulation,
+        ),
+    )
+
+    _cache_prerequisites(
+        store,
+        session.state_id,
+        current_date=date(2026, 7, 11),
+        rainfall_mm=0.0,
+        observed_at=datetime(2026, 7, 11, 7, 0, tzinfo=timezone.utc),
+    )
+    second = store.update_current_state(session.state_id)
+    repeated = store.update_current_state(session.state_id)
+
+    assert second.snapshot_created is True
+    assert second.snapshot_id != first.snapshot_id
+    assert second.state_history_count == first.state_history_count + 1
+    assert repeated.snapshot_id == second.snapshot_id
+    assert repeated.snapshot_created is False
+    assert repeated.state_history_count == second.state_history_count
+    with pytest.raises(MissingCachedOutputError):
+        store.get_latest_simulation(session.state_id)
+    with pytest.raises(MissingCachedOutputError):
+        store.get_latest_recommendation(session.state_id)
+
+
 def test_store_contract_farms_plots_crop_cycles_and_actual_actions(
     store_factory: StoreFactory,
 ) -> None:

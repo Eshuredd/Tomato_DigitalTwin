@@ -325,6 +325,7 @@ class SQLAlchemyTwinStateStore:
         previous_root_zone_depletion_mm: float | None = None,
         irrigation_event: LastIrrigationEvent | None = None,
     ) -> WaterStateResponse:
+        """Deprecated compatibility shim; canonical writes require cache_water_update."""
         raise RuntimeError(
             "cache_water_state is deprecated and cannot advance the canonical "
             "water chain; use cache_water_update with paired growth state."

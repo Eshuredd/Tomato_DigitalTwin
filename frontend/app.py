@@ -35,6 +35,7 @@ from frontend.ui_helpers import (  # noqa: E402
     humanize_disease_label,
     irrigation_depth_from_litres_area,
     keys_to_clear_after,
+    should_clear_downstream_after_twin_update,
     top_class_probabilities,
     water_update_payload_signature,
     weather_values_from_snapshot,
@@ -1294,7 +1295,7 @@ def _render_twin_state_card(client: CropTwinAPIClient) -> None:
                 lambda: client.update_twin_state(st.session_state.active_state_id),
             )
             if result:
-                if result.get("snapshot_created", True):
+                if should_clear_downstream_after_twin_update(result):
                     _clear_downstream("twin")
                 else:
                     st.info("The twin state already reflects the latest observations.")

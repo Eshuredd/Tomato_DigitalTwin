@@ -24,7 +24,9 @@ from frontend.ui_helpers import (
     irrigation_depth_from_litres_area,
     keys_to_clear_after,
     sanitize_error_details,
+    should_clear_downstream_after_twin_update,
     top_class_probabilities,
+    twin_update_state_patch,
     water_update_payload_signature,
     weather_values_from_snapshot,
     workflow_progress_states,
@@ -68,6 +70,46 @@ def test_keys_to_clear_after_returns_downstream_keys() -> None:
     assert "recommendation_response" in keys_to_clear_after("simulation")
     assert "disease_response" not in keys_to_clear_after("simulation")
     assert keys_to_clear_after("unknown") == ()
+
+
+def test_twin_update_clear_decision_uses_explicit_snapshot_created_false() -> None:
+    assert should_clear_downstream_after_twin_update({"snapshot_created": True}) is True
+    assert should_clear_downstream_after_twin_update({"snapshot_created": False}) is False
+    assert should_clear_downstream_after_twin_update({}) is True
+    assert (
+        should_clear_downstream_after_twin_update({"snapshot_created": "true"}) is True
+    )
+
+
+def test_twin_update_clear_decision_does_not_mutate_response() -> None:
+    response = {"snapshot_id": "snapshot-1", "snapshot_created": False}
+
+    should_clear_downstream_after_twin_update(response)
+
+    assert response == {"snapshot_id": "snapshot-1", "snapshot_created": False}
+
+
+def test_twin_update_state_patch_clears_only_for_new_snapshots() -> None:
+    existing = {
+        "twin_response": {"snapshot_id": "old-snapshot"},
+        "simulation_response": {"simulation_id": "sim-1"},
+        "recommendation_response": {"recommendation_id": "rec-1"},
+        "narration_response": {"narration_id": "nar-1"},
+    }
+    new_snapshot = {"snapshot_id": "new-snapshot", "snapshot_created": True}
+    reused_snapshot = {"snapshot_id": "new-snapshot", "snapshot_created": False}
+
+    cleared = {**existing, **twin_update_state_patch(new_snapshot)}
+    preserved = {**existing, **twin_update_state_patch(reused_snapshot)}
+
+    assert cleared["twin_response"] == new_snapshot
+    assert cleared["simulation_response"] is None
+    assert cleared["recommendation_response"] is None
+    assert cleared["narration_response"] is None
+    assert preserved["twin_response"] == reused_snapshot
+    assert preserved["simulation_response"] == {"simulation_id": "sim-1"}
+    assert preserved["recommendation_response"] == {"recommendation_id": "rec-1"}
+    assert preserved["narration_response"] == {"narration_id": "nar-1"}
 
 
 def test_sanitize_error_details_redacts_nested_base64() -> None:

@@ -409,8 +409,19 @@ def test_update_twin_state_is_http_idempotent_and_preserves_current_decisions(
     simulation = _simulate_actions(client, state_id, [ActionEnum.IRRIGATE_NOW])
     recommendation = _recommend(client, state_id)
     narration = _narrate(client, state_id)
+    first_history_response = client.get(f"/sessions/{state_id}/history")
+    assert first_history_response.status_code == 200
+    first_history = SessionHistoryResponse.model_validate(
+        first_history_response.json(),
+    )
 
     second = _update_twin_state(client, state_id)
+    second_history_response = client.get(f"/sessions/{state_id}/history")
+    assert second_history_response.status_code == 200
+    second_history = SessionHistoryResponse.model_validate(
+        second_history_response.json(),
+    )
+    still_simulation = _simulate_actions(client, state_id, [ActionEnum.IRRIGATE_NOW])
     still_recommendation = _recommend(client, state_id)
     still_narration = _narrate(client, state_id)
 
@@ -420,9 +431,35 @@ def test_update_twin_state_is_http_idempotent_and_preserves_current_decisions(
     assert second.snapshot_created is False
     assert second.state_history_count == first.state_history_count
     assert second.current_state == first.current_state
+    assert len(second_history.history) == len(first_history.history)
     assert simulation.state_id == state_id
+    assert still_simulation.state_id == simulation.state_id
     assert still_recommendation.state_id == recommendation.state_id
     assert still_narration.state_id == narration.state_id
+
+    _predict_disease(client, state_id)
+    third = _update_twin_state(client, state_id)
+    third_history_response = client.get(f"/sessions/{state_id}/history")
+    assert third_history_response.status_code == 200
+    third_history = SessionHistoryResponse.model_validate(
+        third_history_response.json(),
+    )
+
+    assert third.snapshot_created is True
+    assert third.snapshot_id != second.snapshot_id
+    assert third.state_history_count == second.state_history_count + 1
+    assert len(third_history.history) == len(second_history.history) + 1
+
+    stale_recommendation_response = client.post(f"/sessions/{state_id}/recommend")
+    assert stale_recommendation_response.status_code == 409
+    stale_recommendation_error = _assert_error_envelope(stale_recommendation_response)
+    assert stale_recommendation_error["code"] == "MISSING_CACHED_OUTPUT"
+
+    _simulate_actions(client, state_id, [ActionEnum.IRRIGATE_NOW])
+    stale_narration_response = client.post(f"/sessions/{state_id}/narrate")
+    assert stale_narration_response.status_code == 409
+    stale_narration_error = _assert_error_envelope(stale_narration_response)
+    assert stale_narration_error["code"] == "MISSING_CACHED_OUTPUT"
 
 
 def test_health_and_system_information(
