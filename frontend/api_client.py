@@ -2,10 +2,15 @@ from __future__ import annotations
 
 from datetime import date
 import os
+from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
 import httpx
 
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(dotenv_path=REPOSITORY_ROOT / ".env", override=False)
 
 DEFAULT_API_BASE_URL = os.getenv("CROPTWIN_API_BASE_URL", "http://127.0.0.1:8000")
 DEFAULT_TIMEOUT_SECONDS = 30.0

@@ -17,6 +17,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from PIL import Image, UnidentifiedImageError
 
+from app.env import load_project_dotenv
 from app.disease.classes import (
     TOMATO_DISEASE_CLASS_NAMES,
     get_disease_category,
@@ -28,6 +29,8 @@ from app.disease.uncertainty import (
 )
 from app.schemas import DiseaseCategory, UncertaintyBand
 
+
+load_project_dotenv()
 
 DEFAULT_DISEASE_MODEL_NAME = "croptwin_tomato_mobilenet_v3_small"
 DEFAULT_DISEASE_MODEL_VERSION = "1.0"

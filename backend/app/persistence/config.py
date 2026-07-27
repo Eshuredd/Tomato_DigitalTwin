@@ -6,6 +6,11 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
+from app.env import load_project_dotenv
+
+
+load_project_dotenv()
+
 
 DEFAULT_DATABASE_URL = "sqlite+pysqlite:///./data/croptwin.db"
 
