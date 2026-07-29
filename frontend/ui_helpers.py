@@ -81,6 +81,9 @@ DOWNSTREAM_KEYS_BY_STEP = {
         "latest_water_sequence",
         "pending_water_base_observation_id",
         "pending_water_base_sequence",
+        "pending_water_current_date",
+        "daily_advancement_notice",
+        "daily_advancement_retry_response",
     ),
     "disease": (
         "twin_response",

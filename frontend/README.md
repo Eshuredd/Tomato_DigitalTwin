@@ -2,6 +2,11 @@
 
 This folder contains the optional Streamlit interface for the CropTwin FastAPI backend. The frontend is only an HTTP client: it does not recompute agronomy, disease confidence, simulation outcomes, recommendations, or narration.
 
+`frontend/app.py` remains the Streamlit entrypoint. The page coordinator lives in
+`frontend.views.app_main`, shared styling lives in `frontend.views.style`, and
+pure session-state decisions such as pending widget dates, flash notices, and
+canonical water-sequence replacement live in `frontend.workflow_state`.
+
 ## Design
 
 The interface uses a compact dark agriculture dashboard style. The sidebar keeps connection status, load/reset controls, and technical settings visible without duplicating the main workflow tabs.
@@ -66,7 +71,7 @@ For each unchanged water-state submission, the frontend generates one standard-l
 
 Water-state results now display observed time, CropTwin computation time, current root-zone deficit, unallocated excess water, and deficit beyond assumed total available water. The Streamlit workflow continues to submit date-only water observations unless extended by a caller, so the API marks those observations as `DATE_ONLY_UTC_START`.
 
-The manual daily advancement section appears after a canonical water result exists. It shows the latest canonical water date, derives the required next date, and sends the weather values currently visible in the form; it does not fetch Open-Meteo automatically and does not schedule future runs. The frontend retains one `advancement_id` for an unchanged target date, weather payload, and irrigation payload so exact retries return the original water observation and snapshot. When the payload changes, a new `advancement_id` is generated. A new snapshot clears current simulations, recommendations, and narration; an exact retry preserves those downstream outputs.
+The manual daily advancement section appears after a canonical water result exists. It shows the latest canonical water date, derives the required next date, and sends the weather values currently visible in the form; it does not fetch Open-Meteo automatically and does not schedule future runs. The frontend retains one `advancement_id` for an unchanged target date, weather payload, and irrigation payload so exact retries return the original water observation and snapshot. When the payload changes, a new `advancement_id` is generated. A new snapshot clears current simulations, recommendations, and narration; an exact retry preserves those downstream outputs. Historical exact retries are shown as reused results without replacing a newer local canonical water sequence.
 
 If the API reports that a submitted irrigation event was already accounted for, the frontend shows an informational note that 0 mm from that event was applied to the current update.
 

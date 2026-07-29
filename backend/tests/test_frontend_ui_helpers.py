@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import math
 import uuid
+from datetime import date
 
 import pytest
 
@@ -31,6 +32,12 @@ from frontend.ui_helpers import (
     water_update_payload_signature,
     weather_values_from_snapshot,
     workflow_progress_states,
+)
+from frontend.workflow_state import (
+    apply_pending_water_current_date,
+    pop_flash_notice,
+    set_flash_notice,
+    should_replace_local_canonical_water,
 )
 
 
@@ -94,6 +101,75 @@ def test_twin_update_clear_decision_does_not_mutate_response() -> None:
     should_clear_downstream_after_twin_update(response)
 
     assert response == {"snapshot_id": "snapshot-1", "snapshot_created": False}
+
+
+def test_pending_water_current_date_is_applied_once_before_widget_creation() -> None:
+    state = {
+        "water_current_date": date(2026, 7, 11),
+        "pending_water_current_date": date(2026, 7, 12),
+    }
+
+    applied = apply_pending_water_current_date(state)
+
+    assert applied == date(2026, 7, 12)
+    assert state["water_current_date"] == date(2026, 7, 12)
+    assert state["pending_water_current_date"] is None
+    assert apply_pending_water_current_date(state) is None
+    assert state["water_current_date"] == date(2026, 7, 12)
+
+
+def test_invalid_pending_water_current_date_is_cleared_without_mutating_current() -> None:
+    state = {
+        "water_current_date": date(2026, 7, 11),
+        "pending_water_current_date": "2026-07-12",
+    }
+
+    assert apply_pending_water_current_date(state) is None
+    assert state["water_current_date"] == date(2026, 7, 11)
+    assert state["pending_water_current_date"] is None
+
+
+def test_flash_notice_survives_one_logical_rerun_and_is_removed() -> None:
+    state: dict[str, object] = {}
+
+    set_flash_notice(
+        state,
+        "This daily advancement was already completed; reused the original result.",
+    )
+
+    assert (
+        pop_flash_notice(state)
+        == "This daily advancement was already completed; reused the original result."
+    )
+    assert state["daily_advancement_notice"] is None
+    assert pop_flash_notice(state) is None
+
+
+@pytest.mark.parametrize(
+    ("current_sequence", "returned_sequence", "expected"),
+    [
+        (1, 2, True),
+        (2, 2, True),
+        (3, 2, False),
+        (0, 1, True),
+        (3, "malformed", False),
+        (None, 1, True),
+        (None, 0, True),
+        (2, None, False),
+    ],
+)
+def test_should_replace_local_canonical_water_uses_sequences(
+    current_sequence: int | None,
+    returned_sequence: object,
+    expected: bool,
+) -> None:
+    assert (
+        should_replace_local_canonical_water(
+            current_sequence=current_sequence,
+            returned_sequence=returned_sequence,
+        )
+        is expected
+    )
 
 
 def test_sanitize_error_details_redacts_nested_base64() -> None:

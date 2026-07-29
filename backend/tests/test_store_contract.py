@@ -594,6 +594,179 @@ def test_store_contract_daily_advancement_is_idempotent_and_lineaged(
             assert row.snapshot_id == first.twin_state.snapshot_id
 
 
+def test_in_memory_daily_advancement_rolls_back_late_snapshot_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = InMemoryTwinStateStore()
+    session = store.create_session(
+        _session_request(),
+        state_id="state-daily-atomic",
+    )
+    _cache_current_state_and_recommendation(store, session.state_id)
+    baseline = store.get_canonical_water_baseline(session.state_id)
+    assert baseline is not None
+    record = store.get_record(session.state_id)
+    target_date = date(2026, 7, 11)
+    computed_at = datetime.combine(
+        target_date,
+        datetime.min.time(),
+        tzinfo=timezone.utc,
+    )
+    reported_event = with_irrigation_event_id(
+        session.state_id,
+        LastIrrigationEvent(
+            timestamp=datetime(2026, 7, 10, 18, 0, tzinfo=timezone.utc),
+            amount_mm=2.0,
+            source=IrrigationEventSource.MANUAL,
+        ),
+    )
+    assert reported_event.irrigation_event_id is not None
+    weather = _weather(rainfall_mm=0.0)
+    advancement_id = "advance-atomic"
+    fingerprint = compute_daily_advancement_fingerprint(
+        state_id=session.state_id,
+        advancement_id=advancement_id,
+        target_date=target_date,
+        weather=weather,
+        last_irrigation_event=reported_event,
+    )
+    growth = resolve_growth_stage(
+        state_id=session.state_id,
+        crop_type=record.crop_type,
+        planting_date=record.planting_date,
+        current_date=target_date,
+    )
+    water = compute_water_state(
+        state_id=session.state_id,
+        crop_type=record.crop_type,
+        growth_stage=growth.growth_stage,
+        soil_texture=record.soil_texture,
+        current_date=target_date,
+        weather=weather,
+        latitude_deg=record.location.latitude,
+        elevation_m=record.location.elevation_m or 0.0,
+        previous_root_zone_depletion_mm=baseline.root_zone_depletion_mm,
+        last_irrigation_event=reported_event,
+        observed_at=computed_at,
+        observation_time_basis=ObservationTimeBasis.DATE_ONLY_UTC_START,
+        computed_at=computed_at,
+    )
+    water_update_id = derive_daily_advancement_water_update_id(
+        state_id=session.state_id,
+        advancement_id=advancement_id,
+    )
+    water = water.model_copy(
+        update={
+            "water_update_id": water_update_id,
+            "reported_irrigation_event_id": reported_event.irrigation_event_id,
+            "applied_irrigation_event_id": reported_event.irrigation_event_id,
+            "effective_irrigation_mm": reported_event.amount_mm,
+            "base_water_observation_id": baseline.water_observation_id,
+            "base_water_sequence": baseline.water_sequence,
+            "previous_root_zone_depletion_mm": baseline.root_zone_depletion_mm,
+        },
+        deep=True,
+    )
+
+    counts_before = _observation_counts(store, session.state_id)
+    history_before = store.get_history_response(session.state_id).history
+    current_before = store.get_current_state(session.state_id)
+    simulation_before = store.get_latest_simulation(session.state_id)
+    recommendation_before = store.get_latest_recommendation(session.state_id)
+    latest_water_observation_id_before = store._latest_water_observation_id[  # noqa: SLF001
+        session.state_id
+    ]
+    latest_water_sequence_before = store._water_sequence[session.state_id]  # noqa: SLF001
+    latest_growth_before = store.get_record(session.state_id).latest_growth_state
+    latest_water_before = store.get_record(session.state_id).latest_water_state
+
+    def fail_snapshot(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise RuntimeError("forced snapshot failure")
+
+    monkeypatch.setattr(store, "_create_or_reuse_snapshot_unlocked", fail_snapshot)
+
+    with pytest.raises(RuntimeError, match="forced snapshot failure"):
+        store.cache_daily_advancement(
+            state_id=session.state_id,
+            advancement_id=advancement_id,
+            request_fingerprint=fingerprint,
+            target_date=target_date,
+            growth_state=growth,
+            water_state=water,
+            water_update_id=water_update_id,
+            weather_payload=weather.model_dump(mode="json"),
+            expected_base_water_observation_id=baseline.water_observation_id,
+            expected_base_water_sequence=baseline.water_sequence,
+            calculated_previous_root_zone_depletion_mm=(
+                baseline.root_zone_depletion_mm
+            ),
+            reported_irrigation_event=reported_event,
+            effective_irrigation_mm=reported_event.amount_mm,
+            computed_at=computed_at,
+        )
+
+    assert _observation_counts(store, session.state_id) == counts_before
+    assert store._water_sequence[session.state_id] == latest_water_sequence_before  # noqa: SLF001
+    assert store._latest_water_observation_id[session.state_id] == (  # noqa: SLF001
+        latest_water_observation_id_before
+    )
+    restored_record = store.get_record(session.state_id)
+    assert restored_record.latest_growth_state == latest_growth_before
+    assert restored_record.latest_water_state == latest_water_before
+    assert store.get_current_state(session.state_id) == current_before
+    assert store.get_history_response(session.state_id).history == history_before
+    assert store.get_latest_simulation(session.state_id) == simulation_before
+    assert store.get_latest_recommendation(session.state_id) == recommendation_before
+    assert (session.state_id, advancement_id) not in store._daily_advancements  # noqa: SLF001
+    assert (session.state_id, target_date) not in store._daily_advancement_by_target_date  # noqa: SLF001
+    assert reported_event.irrigation_event_id not in store._water_by_irrigation_event_id  # noqa: SLF001
+
+    monkeypatch.undo()
+    result = store.cache_daily_advancement(
+        state_id=session.state_id,
+        advancement_id=advancement_id,
+        request_fingerprint=fingerprint,
+        target_date=target_date,
+        growth_state=growth,
+        water_state=water,
+        water_update_id=water_update_id,
+        weather_payload=weather.model_dump(mode="json"),
+        expected_base_water_observation_id=baseline.water_observation_id,
+        expected_base_water_sequence=baseline.water_sequence,
+        calculated_previous_root_zone_depletion_mm=baseline.root_zone_depletion_mm,
+        reported_irrigation_event=reported_event,
+        effective_irrigation_mm=reported_event.amount_mm,
+        computed_at=computed_at,
+    )
+
+    assert result.advancement_created is True
+    assert _observation_counts(store, session.state_id) == (
+        counts_before[0] + 1,
+        counts_before[1] + 1,
+    )
+    retry = store.cache_daily_advancement(
+        state_id=session.state_id,
+        advancement_id=advancement_id,
+        request_fingerprint=fingerprint,
+        target_date=target_date,
+        growth_state=growth,
+        water_state=water,
+        water_update_id=water_update_id,
+        weather_payload=weather.model_dump(mode="json"),
+        expected_base_water_observation_id=baseline.water_observation_id,
+        expected_base_water_sequence=baseline.water_sequence,
+        calculated_previous_root_zone_depletion_mm=baseline.root_zone_depletion_mm,
+        reported_irrigation_event=reported_event,
+        effective_irrigation_mm=reported_event.amount_mm,
+        computed_at=computed_at,
+    )
+    assert retry.advancement_created is False
+    assert _observation_counts(store, session.state_id) == (
+        counts_before[0] + 1,
+        counts_before[1] + 1,
+    )
+
+
 def test_store_contract_simulation_and_recommendation_invalidation(
     store_factory: StoreFactory,
 ) -> None:

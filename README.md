@@ -83,6 +83,16 @@ flowchart TD
 
 The disease model does not compute water balance, run simulations, or choose the irrigation action. The narrator explains a cached recommendation; it does not recompute water balance, rerun simulation, or override the deterministic recommendation.
 
+Public store imports remain stable through facades. `app.state_store` re-exports
+the in-memory implementation from `app.store.in_memory`, domain exceptions from
+`app.store.errors`, record dataclasses from `app.store.types`, and deterministic
+identity helpers from `app.store.identity`. `app.persistence.sqlalchemy_store`
+continues to expose `SQLAlchemyTwinStateStore`; its implementation now lives
+under `app.persistence.store`. The Streamlit entrypoint remains
+`frontend/app.py`, with the coordinated view implementation under
+`frontend.views.app_main`, styling under `frontend.views.style`, and pure
+session workflow decisions under `frontend.workflow_state`.
+
 ## End-to-End Workflow
 
 1. Create or load a tomato session.
