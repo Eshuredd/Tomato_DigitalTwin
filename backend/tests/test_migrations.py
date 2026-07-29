@@ -26,6 +26,7 @@ REQUIRED_TABLES = {
     "simulation_runs",
     "recommendation_runs",
     "actual_actions",
+    "daily_advancements",
 }
 
 REQUIRED_INDEXES = {
@@ -38,6 +39,8 @@ REQUIRED_INDEXES = {
     "ix_recommendation_runs_state_snapshot_simulation_computed_at",
     "ix_irrigation_events_state_occurred_at",
     "ix_actual_actions_state_performed_at",
+    "ix_daily_advancements_state_target_date",
+    "ix_daily_advancements_state_advancement",
     "ix_water_observations_state_reported_irrigation_observed",
     "ix_water_observations_state_observed_at",
     "ix_water_observations_growth_observation_id",
@@ -94,6 +97,24 @@ def test_alembic_upgrade_downgrade_recreates_integrity_schema(tmp_path) -> None:
     }
     assert "source_fingerprint" in snapshot_columns
     assert "water_sequence" in snapshot_columns
+    daily_columns = {
+        column["name"] for column in inspector.get_columns("daily_advancements")
+    }
+    assert {
+        "daily_advancement_record_id",
+        "state_id",
+        "advancement_id",
+        "request_fingerprint",
+        "target_date",
+        "base_water_observation_id",
+        "base_water_sequence",
+        "disease_observation_id",
+        "growth_observation_id",
+        "water_observation_id",
+        "snapshot_id",
+        "water_sequence",
+        "created_at",
+    }.issubset(daily_columns)
 
     water_indexes = {
         index["name"]: index for index in inspector.get_indexes("water_observations")
@@ -126,6 +147,34 @@ def test_alembic_upgrade_downgrade_recreates_integrity_schema(tmp_path) -> None:
             "uq_twin_state_snapshots_state_source_fingerprint"
         ]["column_names"]
     ) == {"state_id", "source_fingerprint"}
+    daily_unique_constraints = {
+        constraint["name"]: constraint
+        for constraint in inspector.get_unique_constraints("daily_advancements")
+    }
+    assert set(
+        daily_unique_constraints["uq_daily_advancements_state_advancement"][
+            "column_names"
+        ]
+    ) == {"state_id", "advancement_id"}
+    assert set(
+        daily_unique_constraints["uq_daily_advancements_state_target_date"][
+            "column_names"
+        ]
+    ) == {"state_id", "target_date"}
+    assert daily_unique_constraints[
+        "uq_daily_advancements_water_observation_id"
+    ]["column_names"] == ["water_observation_id"]
+    daily_foreign_keys = inspector.get_foreign_keys("daily_advancements")
+    assert any(
+        fk["referred_table"] == "water_observations"
+        and fk["constrained_columns"] == ["water_observation_id"]
+        for fk in daily_foreign_keys
+    )
+    assert any(
+        fk["referred_table"] == "twin_state_snapshots"
+        and fk["constrained_columns"] == ["snapshot_id"]
+        for fk in daily_foreign_keys
+    )
     engine.dispose()
 
     assert REQUIRED_INDEXES.issubset(_index_names(database_url))
@@ -207,6 +256,134 @@ def test_migrated_sqlite_enforces_irrigation_event_fk_and_unique_link(tmp_path) 
                 reported_irrigation_event_id=None,
                 effective_irrigation_mm=0.0,
                 water_sequence=1,
+            )
+
+    engine.dispose()
+
+
+def test_migrated_sqlite_enforces_daily_advancement_constraints(tmp_path) -> None:
+    database_url = _database_url(tmp_path, "daily-advancements.db")
+    command.upgrade(_config(database_url), "head")
+
+    engine = create_database_engine(database_url)
+    with engine.begin() as connection:
+        _insert_daily_advancement_prerequisites(connection, state_id="state-a")
+        _insert_daily_advancement_prerequisites(connection, state_id="state-b")
+        _insert_daily_advancement(
+            connection,
+            state_id="state-a",
+            record_id="daily-a-1",
+            advancement_id="advance-1",
+            target_date="2026-07-11",
+            base_water_observation_id="state-a-water-base",
+            disease_observation_id="state-a-disease",
+            growth_observation_id="state-a-growth-1",
+            water_observation_id="state-a-water-1",
+            snapshot_id="state-a-snapshot-1",
+        )
+        _insert_daily_advancement(
+            connection,
+            state_id="state-b",
+            record_id="daily-b-1",
+            advancement_id="advance-1",
+            target_date="2026-07-11",
+            base_water_observation_id="state-b-water-base",
+            disease_observation_id="state-b-disease",
+            growth_observation_id="state-b-growth-1",
+            water_observation_id="state-b-water-1",
+            snapshot_id="state-b-snapshot-1",
+        )
+
+    with pytest.raises(IntegrityError):
+        with engine.begin() as connection:
+            _insert_daily_advancement(
+                connection,
+                state_id="state-a",
+                record_id="daily-a-duplicate-id",
+                advancement_id="advance-1",
+                target_date="2026-07-12",
+                base_water_observation_id="state-a-water-base",
+                disease_observation_id="state-a-disease",
+                growth_observation_id="state-a-growth-2",
+                water_observation_id="state-a-water-2",
+                snapshot_id="state-a-snapshot-2",
+            )
+
+    with pytest.raises(IntegrityError):
+        with engine.begin() as connection:
+            _insert_daily_advancement(
+                connection,
+                state_id="state-a",
+                record_id="daily-a-duplicate-date",
+                advancement_id="advance-2",
+                target_date="2026-07-11",
+                base_water_observation_id="state-a-water-base",
+                disease_observation_id="state-a-disease",
+                growth_observation_id="state-a-growth-2",
+                water_observation_id="state-a-water-2",
+                snapshot_id="state-a-snapshot-2",
+            )
+
+    with pytest.raises(IntegrityError):
+        with engine.begin() as connection:
+            _insert_daily_advancement(
+                connection,
+                state_id="state-a",
+                record_id="daily-a-duplicate-water",
+                advancement_id="advance-3",
+                target_date="2026-07-12",
+                base_water_observation_id="state-a-water-base",
+                disease_observation_id="state-a-disease",
+                growth_observation_id="state-a-growth-1",
+                water_observation_id="state-a-water-1",
+                snapshot_id="state-a-snapshot-1",
+            )
+
+    with pytest.raises(IntegrityError):
+        with engine.begin() as connection:
+            _insert_daily_advancement(
+                connection,
+                state_id="state-a",
+                record_id="daily-a-missing-water",
+                advancement_id="advance-4",
+                target_date="2026-07-12",
+                base_water_observation_id="state-a-water-base",
+                disease_observation_id="state-a-disease",
+                growth_observation_id="state-a-growth-2",
+                water_observation_id="missing-water",
+                snapshot_id="state-a-snapshot-2",
+            )
+
+    with pytest.raises(IntegrityError):
+        with engine.begin() as connection:
+            _insert_daily_advancement(
+                connection,
+                state_id="state-a",
+                record_id="daily-a-missing-snapshot",
+                advancement_id="advance-5",
+                target_date="2026-07-12",
+                base_water_observation_id="state-a-water-base",
+                disease_observation_id="state-a-disease",
+                growth_observation_id="state-a-growth-2",
+                water_observation_id="state-a-water-2",
+                snapshot_id="missing-snapshot",
+            )
+
+    with pytest.raises(IntegrityError):
+        with engine.begin() as connection:
+            _insert_daily_advancement(
+                connection,
+                state_id="state-a",
+                record_id="daily-a-invalid-sequence",
+                advancement_id="advance-6",
+                target_date="2026-07-12",
+                base_water_observation_id="state-a-water-base",
+                base_water_sequence=1,
+                disease_observation_id="state-a-disease",
+                growth_observation_id="state-a-growth-2",
+                water_observation_id="state-a-water-2",
+                snapshot_id="state-a-snapshot-2",
+                water_sequence=3,
             )
 
     engine.dispose()
@@ -1660,5 +1837,209 @@ def _insert_water_observation(
         {
             "observation_id": observation_id,
             "irrigation_event_id": irrigation_event_id,
+        },
+    )
+
+
+def _insert_daily_advancement_prerequisites(connection, *, state_id: str) -> None:
+    connection.execute(
+        text(
+            """
+            INSERT INTO crop_cycles (
+                state_id, plot_id, crop_type, planting_date,
+                standalone_location_name, standalone_latitude,
+                standalone_longitude, standalone_elevation_m,
+                standalone_soil_texture, created_at, status, water_sequence,
+                latest_water_observation_id
+            )
+            VALUES (
+                :state_id, NULL, 'tomato', '2026-06-01',
+                'Daily Farm', 17.385, 78.4867, 542.0, 'sandy_loam',
+                '2026-07-10T00:00:00+00:00', 'active', 1,
+                :base_water_observation_id
+            )
+            """
+        ),
+        {
+            "state_id": state_id,
+            "base_water_observation_id": f"{state_id}-water-base",
+        },
+    )
+    connection.execute(
+        text(
+            """
+            INSERT INTO disease_observations (
+                observation_id, state_id, observed_at, computed_at,
+                observation_time_basis, predicted_label, disease_category,
+                confidence_calibrated, uncertainty_score, uncertainty_band,
+                payload_json
+            )
+            VALUES (
+                :observation_id, :state_id, '2026-07-10T00:00:00+00:00',
+                '2026-07-10T00:00:10+00:00', 'SERVER_RECEIVED',
+                'Tomato___healthy', 'none', 0.95, 0.05, 'low', '{}'
+            )
+            """
+        ),
+        {"observation_id": f"{state_id}-disease", "state_id": state_id},
+    )
+    for index, current_date, sequence, base_id, base_sequence in (
+        ("base", "2026-07-10", 1, None, 0),
+        ("1", "2026-07-11", 2, f"{state_id}-water-base", 1),
+        ("2", "2026-07-12", 3, f"{state_id}-water-1", 2),
+    ):
+        growth_id = f"{state_id}-growth-{index}"
+        water_id = f"{state_id}-water-{index}"
+        if index == "base":
+            growth_id = f"{state_id}-growth-base"
+            water_id = f"{state_id}-water-base"
+        connection.execute(
+            text(
+                """
+                INSERT INTO growth_observations (
+                    observation_id, state_id, observed_at, computed_at,
+                    observation_time_basis, current_date, days_since_planting,
+                    growth_stage, stage_progress, payload_json
+                )
+                VALUES (
+                    :observation_id, :state_id, :observed_at, :computed_at,
+                    'DATE_ONLY_UTC_START', :current_date, 39,
+                    'development', 0.2, '{}'
+                )
+                """
+            ),
+            {
+                "observation_id": growth_id,
+                "state_id": state_id,
+                "current_date": current_date,
+                "observed_at": f"{current_date}T00:00:00+00:00",
+                "computed_at": f"{current_date}T00:00:20+00:00",
+            },
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO water_observations (
+                    observation_id, state_id, observed_at, computed_at,
+                    observation_time_basis, growth_observation_id,
+                    water_sequence, base_water_observation_id,
+                    base_water_sequence, water_update_id, request_fingerprint,
+                    weather_payload_json, previous_root_zone_depletion_mm,
+                    raw_root_zone_depletion_mm, root_zone_depletion_mm,
+                    water_surplus_mm, depletion_beyond_taw_mm,
+                    irrigation_event_id, reported_irrigation_event_id,
+                    effective_irrigation_mm, payload_json
+                )
+                VALUES (
+                    :observation_id, :state_id, :observed_at, :computed_at,
+                    'DATE_ONLY_UTC_START', :growth_observation_id,
+                    :water_sequence, :base_water_observation_id,
+                    :base_water_sequence, :water_update_id,
+                    :request_fingerprint, '{}', 0.0, 1.0, 1.0, 0.0, 0.0,
+                    NULL, NULL, 0.0, '{}'
+                )
+                """
+            ),
+            {
+                "observation_id": water_id,
+                "state_id": state_id,
+                "observed_at": f"{current_date}T00:00:00+00:00",
+                "computed_at": f"{current_date}T00:00:30+00:00",
+                "growth_observation_id": growth_id,
+                "water_sequence": sequence,
+                "base_water_observation_id": base_id,
+                "base_water_sequence": base_sequence,
+                "water_update_id": f"{state_id}-update-{index}",
+                "request_fingerprint": f"{sequence}" * 64,
+            },
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO twin_state_snapshots (
+                    snapshot_id, state_id, observed_at, computed_at,
+                    observation_time_basis, source_fingerprint,
+                    disease_observation_id, growth_observation_id,
+                    water_observation_id, water_sequence, crop_type,
+                    growth_stage, days_since_planting, predicted_label,
+                    disease_category, confidence_calibrated, uncertainty_score,
+                    uncertainty_band, eto_computed, eto_method, kc, etc, taw,
+                    raw_threshold, raw_root_zone_depletion_mm,
+                    root_zone_depletion_mm, water_surplus_mm,
+                    depletion_beyond_taw_mm, estimated_moisture_state,
+                    stress_band, payload_json
+                )
+                VALUES (
+                    :snapshot_id, :state_id, :observed_at, :computed_at,
+                    'DATE_ONLY_UTC_START', :source_fingerprint,
+                    :disease_observation_id, :growth_observation_id,
+                    :water_observation_id, :water_sequence, 'tomato',
+                    'development', 39, 'Tomato___healthy', 'none', 0.95,
+                    0.05, 'low', 4.0, 'penman_monteith', 0.8, 3.2, 48.0,
+                    24.0, 1.0, 1.0, 0.0, 0.0, 'adequate', 'low', '{}'
+                )
+                """
+            ),
+            {
+                "snapshot_id": f"{state_id}-snapshot-{index}",
+                "state_id": state_id,
+                "observed_at": f"{current_date}T00:00:00+00:00",
+                "computed_at": f"{current_date}T00:00:40+00:00",
+                "source_fingerprint": f"{index}-{state_id}"[:64],
+                "disease_observation_id": f"{state_id}-disease",
+                "growth_observation_id": growth_id,
+                "water_observation_id": water_id,
+                "water_sequence": sequence,
+            },
+        )
+
+
+def _insert_daily_advancement(
+    connection,
+    *,
+    state_id: str,
+    record_id: str,
+    advancement_id: str,
+    target_date: str,
+    base_water_observation_id: str,
+    disease_observation_id: str,
+    growth_observation_id: str,
+    water_observation_id: str,
+    snapshot_id: str,
+    base_water_sequence: int = 1,
+    water_sequence: int = 2,
+) -> None:
+    connection.execute(
+        text(
+            """
+            INSERT INTO daily_advancements (
+                daily_advancement_record_id, state_id, advancement_id,
+                request_fingerprint, target_date, base_water_observation_id,
+                base_water_sequence, disease_observation_id,
+                growth_observation_id, water_observation_id, snapshot_id,
+                water_sequence, created_at
+            )
+            VALUES (
+                :record_id, :state_id, :advancement_id,
+                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                :target_date, :base_water_observation_id,
+                :base_water_sequence, :disease_observation_id,
+                :growth_observation_id, :water_observation_id, :snapshot_id,
+                :water_sequence, '2026-07-11T00:00:00+00:00'
+            )
+            """
+        ),
+        {
+            "record_id": record_id,
+            "state_id": state_id,
+            "advancement_id": advancement_id,
+            "target_date": target_date,
+            "base_water_observation_id": base_water_observation_id,
+            "base_water_sequence": base_water_sequence,
+            "disease_observation_id": disease_observation_id,
+            "growth_observation_id": growth_observation_id,
+            "water_observation_id": water_observation_id,
+            "snapshot_id": snapshot_id,
+            "water_sequence": water_sequence,
         },
     )

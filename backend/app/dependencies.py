@@ -16,6 +16,11 @@ from app.schemas import (
     TwinCurrentState,
 )
 from app.state_store import (
+    DailyAdvancementBaselineRequiredError,
+    DailyAdvancementDateConflictError,
+    DailyAdvancementDiseaseRequiredError,
+    DailyAdvancementPayloadConflictError,
+    DailyAdvancementTargetConflictError,
     DuplicateActualActionError,
     DuplicateIrrigationEventApplicationError,
     IncompleteStateError,
@@ -281,6 +286,68 @@ def raise_from_store_error(exc: Exception) -> NoReturn:
             code="WATER_STATE_CONCURRENCY_CONFLICT",
             message=str(exc),
             details={"state_id": exc.state_id},
+        )
+
+    if isinstance(exc, DailyAdvancementBaselineRequiredError):
+        raise_api_error(
+            status_code=409,
+            code="DAILY_ADVANCEMENT_BASELINE_REQUIRED",
+            message=str(exc),
+            details={
+                "state_id": exc.state_id,
+                "reason": (
+                    "Compute the initial water state through compute-water-state "
+                    "before advancing one day."
+                ),
+            },
+        )
+
+    if isinstance(exc, DailyAdvancementDiseaseRequiredError):
+        raise_api_error(
+            status_code=409,
+            code="DAILY_ADVANCEMENT_DISEASE_REQUIRED",
+            message=str(exc),
+            details={"state_id": exc.state_id},
+        )
+
+    if isinstance(exc, DailyAdvancementDateConflictError):
+        raise_api_error(
+            status_code=409,
+            code="DAILY_ADVANCEMENT_DATE_CONFLICT",
+            message=str(exc),
+            details={
+                "state_id": exc.state_id,
+                "requested_target_date": exc.requested_target_date.isoformat(),
+                "expected_target_date": exc.expected_target_date.isoformat(),
+                "canonical_base_date": exc.canonical_base_date.isoformat(),
+                "base_water_observation_id": exc.base_water_observation_id,
+                "base_water_sequence": exc.base_water_sequence,
+            },
+        )
+
+    if isinstance(exc, DailyAdvancementPayloadConflictError):
+        raise_api_error(
+            status_code=409,
+            code="DAILY_ADVANCEMENT_PAYLOAD_CONFLICT",
+            message=str(exc),
+            details={
+                "state_id": exc.state_id,
+                "advancement_id": exc.advancement_id,
+                "existing_fingerprint_prefix": exc.existing_fingerprint_prefix,
+                "request_fingerprint_prefix": exc.request_fingerprint_prefix,
+            },
+        )
+
+    if isinstance(exc, DailyAdvancementTargetConflictError):
+        raise_api_error(
+            status_code=409,
+            code="DAILY_ADVANCEMENT_TARGET_CONFLICT",
+            message=str(exc),
+            details={
+                "state_id": exc.state_id,
+                "target_date": exc.target_date.isoformat(),
+                "existing_advancement_id": exc.existing_advancement_id,
+            },
         )
 
     if isinstance(exc, IrrigationEventStateMismatchError):

@@ -12,6 +12,7 @@ from app.schemas import LastIrrigationEvent, ObservationTimeBasis, WeatherInput
 
 
 DERIVED_WATER_UPDATE_ID_PREFIX = "derived-water-update-"
+DAILY_ADVANCEMENT_WATER_UPDATE_ID_PREFIX = "daily-advancement-water-"
 
 
 def derive_water_update_id(
@@ -60,6 +61,39 @@ def compute_water_update_fingerprint(
         ),
         "base_water_observation_id": base_water_observation_id,
         "base_water_sequence": base_water_sequence,
+    }
+    return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+def derive_daily_advancement_water_update_id(
+    *,
+    state_id: str,
+    advancement_id: str,
+) -> str:
+    payload = {
+        "state_id": _non_empty_string("state_id", state_id),
+        "advancement_id": _non_empty_string("advancement_id", advancement_id),
+    }
+    digest = hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+    return f"{DAILY_ADVANCEMENT_WATER_UPDATE_ID_PREFIX}{digest}"
+
+
+def compute_daily_advancement_fingerprint(
+    *,
+    state_id: str,
+    advancement_id: str,
+    target_date: date,
+    weather: WeatherInput,
+    last_irrigation_event: LastIrrigationEvent | None,
+) -> str:
+    payload = {
+        "state_id": _non_empty_string("state_id", state_id),
+        "advancement_id": _non_empty_string("advancement_id", advancement_id),
+        "target_date": target_date.isoformat(),
+        "weather": _canonical_weather(weather),
+        "last_irrigation_event": _canonical_irrigation_event(
+            last_irrigation_event,
+        ),
     }
     return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
 

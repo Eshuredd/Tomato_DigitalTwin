@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Protocol, TYPE_CHECKING
 
 from app.schemas import (
     ActualActionCreateRequest,
     ActualActionResponse,
+    AdvanceOneDayResponse,
     CreateCropCycleRequest,
     CreateSessionRequest,
     DiseasePredictionResponse,
@@ -157,6 +158,38 @@ class TwinStateStore(Protocol):
         water_update_id: str,
         request_fingerprint: str,
     ) -> WaterStateResponse | None: ...
+
+    def get_daily_advancement(
+        self,
+        state_id: str,
+        advancement_id: str,
+        request_fingerprint: str,
+    ) -> AdvanceOneDayResponse | None: ...
+
+    def get_daily_advancement_id_for_target_date(
+        self,
+        state_id: str,
+        target_date: date,
+    ) -> str | None: ...
+
+    def cache_daily_advancement(
+        self,
+        *,
+        state_id: str,
+        advancement_id: str,
+        request_fingerprint: str,
+        target_date: date,
+        growth_state: GrowthStageResponse,
+        water_state: WaterStateResponse,
+        water_update_id: str,
+        weather_payload: dict[str, object],
+        expected_base_water_observation_id: str,
+        expected_base_water_sequence: int,
+        calculated_previous_root_zone_depletion_mm: float,
+        reported_irrigation_event: LastIrrigationEvent | None,
+        effective_irrigation_mm: float,
+        computed_at: datetime,
+    ) -> AdvanceOneDayResponse: ...
 
     def record_actual_action(
         self,

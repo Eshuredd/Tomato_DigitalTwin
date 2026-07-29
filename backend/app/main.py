@@ -9,16 +9,21 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.responses import JSONResponse
 
 from app.dependencies import (
     TwinAPIException,
+    build_error_response,
     get_state_store,
     initialize_state_store,
     twin_api_exception_handler,
 )
 from app.routes import (
     actions,
+    advancement,
     disease,
     farms,
     meta,
@@ -49,12 +54,43 @@ app.add_exception_handler(
     twin_api_exception_handler,
 )
 
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_error_handler(
+    request: Request,
+    exc: RequestValidationError,
+):
+    if request.url.path.endswith("/advance-one-day"):
+        error_response = build_error_response(
+            status_code=422,
+            code="INVALID_DAILY_ADVANCEMENT_REQUEST",
+            message="Invalid daily advancement request.",
+            details={"errors": _json_safe_validation_errors(exc.errors())},
+        )
+        return JSONResponse(
+            status_code=422,
+            content=error_response.model_dump(mode="json"),
+        )
+    return await request_validation_exception_handler(request, exc)
+
+
+def _json_safe_validation_errors(errors: list[dict[str, object]]) -> list[dict[str, object]]:
+    safe_errors: list[dict[str, object]] = []
+    for error in errors:
+        safe = dict(error)
+        ctx = safe.get("ctx")
+        if isinstance(ctx, dict):
+            safe["ctx"] = {key: str(value) for key, value in ctx.items()}
+        safe_errors.append(safe)
+    return safe_errors
+
 app.include_router(meta.router)
 app.include_router(farms.router)
 app.include_router(plots.router)
 app.include_router(sessions.router)
 app.include_router(disease.router)
 app.include_router(water.router)
+app.include_router(advancement.router)
 app.include_router(simulation.router)
 app.include_router(recommend.router)
 app.include_router(narration.router)

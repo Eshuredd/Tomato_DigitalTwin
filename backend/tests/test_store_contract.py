@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.growth_stage.resolver import resolve_growth_stage
 from app.persistence.models import (
+    DailyAdvancementModel,
     GrowthObservationModel,
     TwinStateSnapshotModel,
     WaterObservationModel,
@@ -47,15 +48,21 @@ from app.state_store import (
     RelatedRecommendationNotFoundError,
     StateNotFoundError,
     WaterBaselineMismatchError,
+    WaterStateConcurrencyConflictError,
     WaterUpdateConcurrencyConflictError,
     WaterUpdatePayloadConflictError,
     WaterObservationTimeConflictError,
+    DailyAdvancementDateConflictError,
+    DailyAdvancementPayloadConflictError,
+    DailyAdvancementTargetConflictError,
     derive_irrigation_event_id,
     with_irrigation_event_id,
 )
 from app.store_protocol import TwinStateStore
 from app.water.update_identity import (
+    compute_daily_advancement_fingerprint,
     compute_water_update_fingerprint,
+    derive_daily_advancement_water_update_id,
     derive_water_update_id,
 )
 from app.water.water_balance import compute_water_state
@@ -338,6 +345,98 @@ def _cache_water_update(
     )
 
 
+def _advance_one_day(
+    store: TwinStateStore,
+    state_id: str,
+    *,
+    advancement_id: str = "advance-1",
+    target_date: date = date(2026, 7, 11),
+    weather: WeatherInput | None = None,
+):
+    record = store.get_record(state_id)
+    baseline = store.get_canonical_water_baseline(state_id)
+    assert baseline is not None
+    weather_value = weather or _weather()
+    reported_event = None
+    fingerprint = compute_daily_advancement_fingerprint(
+        state_id=state_id,
+        advancement_id=advancement_id,
+        target_date=target_date,
+        weather=weather_value,
+        last_irrigation_event=reported_event,
+    )
+    growth = resolve_growth_stage(
+        state_id=state_id,
+        crop_type=record.crop_type,
+        planting_date=record.planting_date,
+        current_date=target_date,
+    )
+    computed_at = datetime.combine(
+        target_date,
+        datetime.min.time(),
+        tzinfo=timezone.utc,
+    )
+    water = compute_water_state(
+        state_id=state_id,
+        crop_type=record.crop_type,
+        growth_stage=growth.growth_stage,
+        soil_texture=record.soil_texture,
+        current_date=target_date,
+        weather=weather_value,
+        latitude_deg=record.location.latitude,
+        elevation_m=record.location.elevation_m or 0.0,
+        previous_root_zone_depletion_mm=baseline.root_zone_depletion_mm,
+        observed_at=computed_at,
+        observation_time_basis=ObservationTimeBasis.DATE_ONLY_UTC_START,
+        computed_at=computed_at,
+    )
+    water_update_id = derive_daily_advancement_water_update_id(
+        state_id=state_id,
+        advancement_id=advancement_id,
+    )
+    water = water.model_copy(
+        update={
+            "water_update_id": water_update_id,
+            "base_water_observation_id": baseline.water_observation_id,
+            "base_water_sequence": baseline.water_sequence,
+            "previous_root_zone_depletion_mm": baseline.root_zone_depletion_mm,
+        },
+        deep=True,
+    )
+    return store.cache_daily_advancement(
+        state_id=state_id,
+        advancement_id=advancement_id,
+        request_fingerprint=fingerprint,
+        target_date=target_date,
+        growth_state=growth,
+        water_state=water,
+        water_update_id=water_update_id,
+        weather_payload=weather_value.model_dump(mode="json"),
+        expected_base_water_observation_id=baseline.water_observation_id,
+        expected_base_water_sequence=baseline.water_sequence,
+        calculated_previous_root_zone_depletion_mm=(
+            baseline.root_zone_depletion_mm
+        ),
+        reported_irrigation_event=reported_event,
+        effective_irrigation_mm=0.0,
+        computed_at=computed_at,
+    )
+
+
+def _setup_daily_concurrency_state(database_url: str, state_id: str) -> None:
+    store = SQLAlchemyTwinStateStore(database_url=database_url, auto_create=True)
+    store.create_session(_session_request(), state_id=state_id)
+    store.cache_disease_state(
+        state_id,
+        _disease(
+            state_id,
+            predicted_at=datetime(2026, 7, 10, 6, 0, tzinfo=timezone.utc),
+        ),
+    )
+    _cache_prerequisites(store, state_id, current_date=date(2026, 7, 10))
+    store.update_current_state(state_id)
+
+
 def test_store_contract_current_state_history_and_detached_objects(
     store_factory: StoreFactory,
 ) -> None:
@@ -384,6 +483,115 @@ def test_store_contract_current_state_history_and_detached_objects(
     assert second.state_history_count == 2
     assert second.current_state.computed_at != first.current_state.computed_at
     assert len(store.get_history_response(session.state_id).history) == 2
+
+
+def test_store_contract_daily_advancement_is_idempotent_and_lineaged(
+    store_factory: StoreFactory,
+) -> None:
+    store = store_factory()
+    session = store.create_session(_session_request(), state_id="state-daily")
+    store.cache_disease_state(
+        session.state_id,
+        _disease(
+            session.state_id,
+            predicted_at=datetime(2026, 7, 10, 6, 0, tzinfo=timezone.utc),
+        ),
+    )
+    _cache_prerequisites(store, session.state_id, current_date=date(2026, 7, 10))
+    initial = store.update_current_state(session.state_id)
+    baseline = store.get_canonical_water_baseline(session.state_id)
+    assert baseline is not None
+    counts_before = _observation_counts(store, session.state_id)
+    snapshots_before = _snapshot_count_for_store(store, session.state_id)
+
+    first = _advance_one_day(store, session.state_id)
+
+    assert first.advancement_created is True
+    assert first.target_date == date(2026, 7, 11)
+    assert first.water_state.water_sequence == baseline.water_sequence + 1
+    assert first.water_state.base_water_observation_id == baseline.water_observation_id
+    assert first.water_state.base_water_sequence == baseline.water_sequence
+    assert first.water_state.previous_root_zone_depletion_mm == pytest.approx(
+        baseline.root_zone_depletion_mm
+    )
+    assert first.twin_state.snapshot_id != initial.snapshot_id
+    assert _observation_counts(store, session.state_id) == (
+        counts_before[0] + 1,
+        counts_before[1] + 1,
+    )
+    assert _snapshot_count_for_store(store, session.state_id) == snapshots_before + 1
+
+    retry = _advance_one_day(store, session.state_id)
+
+    assert retry.advancement_created is False
+    assert retry.water_state.water_observation_id == first.water_state.water_observation_id
+    assert retry.water_state.water_sequence == first.water_state.water_sequence
+    assert retry.twin_state.snapshot_id == first.twin_state.snapshot_id
+    assert retry.twin_state.snapshot_created is False
+    assert _observation_counts(store, session.state_id) == (
+        counts_before[0] + 1,
+        counts_before[1] + 1,
+    )
+    assert _snapshot_count_for_store(store, session.state_id) == snapshots_before + 1
+
+    store.cache_disease_state(
+        session.state_id,
+        _disease(
+            session.state_id,
+            predicted_at=datetime(2026, 7, 11, 8, 0, tzinfo=timezone.utc),
+        ),
+    )
+    second_day = _advance_one_day(
+        store,
+        session.state_id,
+        advancement_id="advance-2",
+        target_date=date(2026, 7, 12),
+    )
+    late_retry = _advance_one_day(store, session.state_id)
+    assert late_retry.water_state.water_observation_id == (
+        first.water_state.water_observation_id
+    )
+    assert late_retry.twin_state.snapshot_id == first.twin_state.snapshot_id
+    assert second_day.water_state.water_sequence == first.water_state.water_sequence + 1
+
+    with pytest.raises(DailyAdvancementPayloadConflictError):
+        _advance_one_day(
+            store,
+            session.state_id,
+            weather=_weather(rainfall_mm=9.0),
+        )
+    with pytest.raises(DailyAdvancementTargetConflictError):
+        _advance_one_day(
+            store,
+            session.state_id,
+            advancement_id="advance-duplicate-date",
+            target_date=date(2026, 7, 12),
+        )
+    with pytest.raises(DailyAdvancementDateConflictError):
+        _advance_one_day(
+            store,
+            session.state_id,
+            advancement_id="advance-skip",
+            target_date=date(2026, 7, 14),
+        )
+
+    if isinstance(store, InMemoryTwinStateStore):
+        stored = store._daily_advancements[(session.state_id, "advance-1")]  # noqa: SLF001
+        assert stored[3].water_state.water_observation_id == (
+            first.water_state.water_observation_id
+        )
+    else:
+        assert isinstance(store, SQLAlchemyTwinStateStore)
+        with store._session_factory() as db_session:  # noqa: SLF001
+            row = db_session.scalars(
+                select(DailyAdvancementModel).where(
+                    DailyAdvancementModel.state_id == session.state_id,
+                    DailyAdvancementModel.advancement_id == "advance-1",
+                )
+            ).one()
+            assert row.base_water_observation_id == baseline.water_observation_id
+            assert row.water_observation_id == first.water_state.water_observation_id
+            assert row.snapshot_id == first.twin_state.snapshot_id
 
 
 def test_store_contract_simulation_and_recommendation_invalidation(
@@ -1403,6 +1611,94 @@ def test_sqlalchemy_concurrent_identical_water_update_retry_is_idempotent(tmp_pa
     metadata = _water_observation_metadata(setup_store, session.state_id)
     assert len(metadata) == 1
     assert metadata[0]["irrigation_event_id"] == "manual-concurrent"
+
+
+def test_sqlalchemy_concurrent_identical_daily_advancement_retry_is_idempotent(
+    tmp_path,
+) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'daily-concurrent.db'}"
+    state_id = "state-daily-concurrent"
+    _setup_daily_concurrency_state(database_url, state_id)
+    barrier = threading.Barrier(2)
+
+    def worker() -> object:
+        store = SQLAlchemyTwinStateStore(database_url=database_url, auto_create=False)
+        barrier.wait(timeout=10)
+        try:
+            return _advance_one_day(
+                store,
+                state_id,
+                advancement_id="advance-concurrent",
+            )
+        except Exception as exc:  # pragma: no cover - asserted below
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _index: worker(), range(2)))
+
+    assert all(not isinstance(result, Exception) for result in results)
+    assert sorted(result.advancement_created for result in results) == [False, True]
+    assert results[0].water_state.water_observation_id == (
+        results[1].water_state.water_observation_id
+    )
+    assert results[0].twin_state.snapshot_id == results[1].twin_state.snapshot_id
+    store = SQLAlchemyTwinStateStore(database_url=database_url, auto_create=False)
+    assert _observation_counts(store, state_id) == (2, 2)
+    assert _snapshot_count_for_store(store, state_id) == 2
+    with store._session_factory() as db_session:  # noqa: SLF001
+        assert db_session.scalar(
+            select(func.count())
+            .select_from(DailyAdvancementModel)
+            .where(DailyAdvancementModel.state_id == state_id)
+        ) == 1
+
+
+def test_sqlalchemy_concurrent_daily_advancement_same_target_rejects_loser(
+    tmp_path,
+) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'daily-target-race.db'}"
+    state_id = "state-daily-target-race"
+    _setup_daily_concurrency_state(database_url, state_id)
+    barrier = threading.Barrier(2)
+
+    def worker(advancement_id: str) -> object:
+        store = SQLAlchemyTwinStateStore(database_url=database_url, auto_create=False)
+        barrier.wait(timeout=10)
+        try:
+            return _advance_one_day(
+                store,
+                state_id,
+                advancement_id=advancement_id,
+            )
+        except Exception as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(
+            executor.map(worker, ["advance-target-a", "advance-target-b"])
+        )
+
+    successes = [result for result in results if not isinstance(result, Exception)]
+    failures = [result for result in results if isinstance(result, Exception)]
+
+    assert len(successes) == 1
+    assert len(failures) == 1
+    assert isinstance(
+        failures[0],
+        (DailyAdvancementTargetConflictError, WaterStateConcurrencyConflictError),
+    )
+    store = SQLAlchemyTwinStateStore(database_url=database_url, auto_create=False)
+    baseline = store.get_canonical_water_baseline(state_id)
+    assert baseline is not None
+    assert baseline.water_sequence == 2
+    assert _observation_counts(store, state_id) == (2, 2)
+    assert _snapshot_count_for_store(store, state_id) == 2
+    with store._session_factory() as db_session:  # noqa: SLF001
+        assert db_session.scalar(
+            select(func.count())
+            .select_from(DailyAdvancementModel)
+            .where(DailyAdvancementModel.state_id == state_id)
+        ) == 1
 
 
 def test_sqlalchemy_concurrent_conflicting_water_update_rejects_loser(tmp_path) -> None:

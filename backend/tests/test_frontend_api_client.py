@@ -109,6 +109,56 @@ def test_compute_water_state_posts_state_id_in_body() -> None:
     assert result == {"stress_band": "low"}
 
 
+def test_advance_one_day_posts_state_id_in_body_and_uses_expected_path() -> None:
+    payload = {
+        "advancement_id": "advance-1",
+        "target_date": "2026-07-11",
+        "weather": {"rainfall_mm": 0.5},
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/sessions/state-1/advance-one-day"
+        assert json.loads(request.content) == {"state_id": "state-1", **payload}
+        return httpx.Response(
+            200,
+            json={
+                "state_id": "state-1",
+                "advancement_id": "advance-1",
+                "advancement_created": True,
+            },
+        )
+
+    client = _client(httpx.MockTransport(handler))
+
+    result = client.advance_one_day("state-1", payload)
+
+    assert result["advancement_created"] is True
+
+
+def test_advance_one_day_structured_error_is_normalized() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            409,
+            json={
+                "error": {
+                    "code": "DAILY_ADVANCEMENT_PAYLOAD_CONFLICT",
+                    "message": "Daily advancement conflict.",
+                    "details": {"advancement_id": "advance-1"},
+                }
+            },
+        )
+
+    client = _client(httpx.MockTransport(handler))
+
+    with pytest.raises(CropTwinAPIError) as error:
+        client.advance_one_day("state-1", {"advancement_id": "advance-1"})
+
+    assert error.value.status_code == 409
+    assert error.value.code == "DAILY_ADVANCEMENT_PAYLOAD_CONFLICT"
+    assert error.value.details == {"advancement_id": "advance-1"}
+
+
 def test_get_weather_snapshot_uses_expected_route_and_query() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"

@@ -136,6 +136,18 @@ class CropTwinAPIClient:
             json=body,
         )
 
+    def advance_one_day(
+        self,
+        state_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        body = {"state_id": state_id, **payload}
+        return self._request(
+            "POST",
+            f"/sessions/{state_id}/advance-one-day",
+            json=body,
+        )
+
     def get_weather_snapshot(
         self,
         state_id: str,

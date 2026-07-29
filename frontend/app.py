@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sys
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, timedelta, time, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -25,12 +25,14 @@ from frontend.ui_helpers import (  # noqa: E402
     badge_tone_for_stress,
     badge_tone_for_uncertainty,
     detect_weather_manual_overrides,
+    daily_advancement_payload_signature,
     drip_runtime_to_litres_and_depth,
     encode_image_bytes_to_base64,
     escape_html,
     format_action_label,
     format_percent,
     friendly_wetness_risk_label,
+    generate_daily_advancement_id,
     generate_water_update_id,
     humanize_disease_label,
     irrigation_depth_from_litres_area,
@@ -71,6 +73,8 @@ SESSION_KEYS = {
     "weather_manual_overrides": None,
     "water_update_id": None,
     "water_update_signature": None,
+    "daily_advancement_id": None,
+    "daily_advancement_signature": None,
     "latest_water_observation_id": None,
     "latest_water_sequence": 0,
     "pending_water_base_observation_id": None,
@@ -870,7 +874,87 @@ def _render_water_tab(client: CropTwinAPIClient) -> None:
                 st.rerun()
 
     _render_water_summary(st.session_state.water_response)
+    _render_daily_advancement_card(client, irrigation_event)
     _render_twin_state_card(client)
+
+
+def _render_daily_advancement_card(
+    client: CropTwinAPIClient,
+    irrigation_event: dict[str, Any] | None | bool,
+) -> None:
+    water_response = st.session_state.water_response
+    if not water_response:
+        return
+
+    canonical_date = _date_from_api_datetime(water_response.get("observed_at"))
+    if canonical_date is None:
+        return
+    expected_next_date = canonical_date + timedelta(days=1)
+    st.session_state.water_current_date = expected_next_date
+
+    with _card(
+        "Advance one day",
+        "Submit the next day's weather to advance the canonical water chain and twin snapshot.",
+    ):
+        col_a, col_b, col_c = st.columns(3)
+        col_a.metric("Latest water date", canonical_date.isoformat())
+        col_b.metric("Next required date", expected_next_date.isoformat())
+        col_c.metric("Current sequence", int(water_response.get("water_sequence", 0)))
+
+        submitted = st.button(
+            "Advance one day",
+            type="primary",
+            use_container_width=True,
+        )
+        if submitted:
+            if irrigation_event is False:
+                st.error("Fix the recent irrigation details before advancing.")
+                return
+            payload: dict[str, Any] = {
+                "target_date": expected_next_date.isoformat(),
+                "weather": _current_weather_payload(),
+            }
+            if irrigation_event is not None:
+                payload["last_irrigation_event"] = irrigation_event
+            payload["advancement_id"] = _daily_advancement_id_for_payload(payload)
+            result = _call_api(
+                "Daily advancement",
+                lambda: client.advance_one_day(
+                    st.session_state.active_state_id,
+                    payload,
+                ),
+            )
+            if result:
+                st.session_state.water_response = result["water_state"]
+                st.session_state.twin_response = result["twin_state"]
+                _remember_latest_water_base(result["water_state"])
+                if result.get("advancement_created") is False:
+                    st.info("This daily advancement was already completed; reused the original result.")
+                elif result["twin_state"].get("snapshot_created") is not False:
+                    _clear_downstream("twin")
+                st.rerun()
+
+        with st.expander("Technical daily advancement values", expanded=False):
+            twin_state = (
+                st.session_state.twin_response
+                if isinstance(st.session_state.twin_response, dict)
+                else {}
+            )
+            st.json(
+                {
+                    "advancement_id": st.session_state.daily_advancement_id,
+                    "water_observation_id": water_response.get("water_observation_id"),
+                    "water_sequence": water_response.get("water_sequence"),
+                    "base_water_observation_id": water_response.get(
+                        "base_water_observation_id"
+                    ),
+                    "base_water_sequence": water_response.get(
+                        "base_water_sequence"
+                    ),
+                    "snapshot_id": twin_state.get("snapshot_id"),
+                    "snapshot_created": twin_state.get("snapshot_created"),
+                }
+            )
 
 
 def _apply_weather_snapshot(snapshot: dict[str, Any]) -> None:
@@ -1146,9 +1230,34 @@ def _water_update_id_for_payload(payload: dict[str, Any]) -> str:
     return retained_id
 
 
+def _daily_advancement_id_for_payload(payload: dict[str, Any]) -> str:
+    signature = daily_advancement_payload_signature(
+        state_id=st.session_state.active_state_id,
+        payload=payload,
+    )
+    retained_id = st.session_state.daily_advancement_id
+    if (
+        not retained_id
+        or st.session_state.daily_advancement_signature != signature
+    ):
+        retained_id = generate_daily_advancement_id()
+        st.session_state.daily_advancement_id = retained_id
+        st.session_state.daily_advancement_signature = signature
+    return retained_id
+
+
 def _reset_water_update_id() -> None:
     st.session_state.water_update_id = None
     st.session_state.water_update_signature = None
+
+
+def _date_from_api_datetime(value: object) -> date | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
 
 
 def _set_pending_water_base_from_latest() -> None:

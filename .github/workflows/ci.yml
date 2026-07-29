@@ -128,7 +128,7 @@ jobs:
           cd backend
           alembic upgrade head
           alembic current | tee "${RUNNER_TEMP}/postgres-alembic-current.txt"
-          grep "202607230005" "${RUNNER_TEMP}/postgres-alembic-current.txt"
+          grep "202607290006" "${RUNNER_TEMP}/postgres-alembic-current.txt"
           alembic downgrade base
           alembic upgrade head
 
@@ -182,7 +182,7 @@ jobs:
 
       - name: Check backend health inside container
         run: |
-          docker exec "${{ steps.container.outputs.name }}" python - <<'PY'
+          docker exec -i "${{ steps.container.outputs.name }}" python - <<'PY'
           import json
           import urllib.request
 

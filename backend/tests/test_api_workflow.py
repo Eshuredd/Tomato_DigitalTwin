@@ -17,6 +17,8 @@ from app.main import app
 from app.routes import meta, sessions
 from app.schemas import (
     ActionEnum,
+    AdvanceOneDayRequest,
+    AdvanceOneDayResponse,
     ComputeWaterStateRequest,
     CreateSessionRequest,
     CropType,
@@ -266,6 +268,32 @@ def _update_twin_state(
     return updated
 
 
+def _advance_one_day(
+    client: TestClient,
+    state_id: str,
+    *,
+    advancement_id: str = "advance-july-11",
+    target_date: date = date(2026, 7, 11),
+    weather: WeatherInput | None = None,
+) -> AdvanceOneDayResponse:
+    request = AdvanceOneDayRequest(
+        state_id=state_id,
+        advancement_id=advancement_id,
+        target_date=target_date,
+        weather=weather or _weather_input(),
+    )
+    response = client.post(
+        f"/sessions/{state_id}/advance-one-day",
+        json=request.model_dump(mode="json"),
+    )
+    assert response.status_code == 200
+    advanced = AdvanceOneDayResponse.model_validate(response.json())
+    assert advanced.state_id == state_id
+    assert advanced.advancement_id == advancement_id
+    assert advanced.target_date == target_date
+    return advanced
+
+
 def _simulate_actions(
     client: TestClient,
     state_id: str,
@@ -383,6 +411,7 @@ def test_registered_routes_match_accepted_contract() -> None:
         ("GET", "/sessions/{state_id}/weather-snapshot"),
         ("POST", "/sessions/{state_id}/predict-disease"),
         ("POST", "/sessions/{state_id}/compute-water-state"),
+        ("POST", "/sessions/{state_id}/advance-one-day"),
         ("POST", "/sessions/{state_id}/update-twin-state"),
         ("POST", "/sessions/{state_id}/simulate-actions"),
         ("POST", "/sessions/{state_id}/recommend"),
@@ -581,6 +610,196 @@ def test_complete_api_workflow(
 
     assert history.state_id == state_id
     assert len(history.history) >= 1
+
+
+def test_daily_advancement_api_workflow_is_atomic_and_idempotent(
+    client_and_store: tuple[TestClient, InMemoryTwinStateStore],
+    elevation_call_count: list[int],
+) -> None:
+    client, store = client_and_store
+    state_id = _create_session(
+        client,
+        elevation_call_count,
+        expected_elevation_calls=1,
+    )
+    _predict_disease(client, state_id)
+    initial_water = _compute_water_state(
+        client,
+        state_id,
+        current_date=date(2026, 7, 10),
+    )
+    initial_twin = _update_twin_state(client, state_id)
+    history_before = client.get(f"/sessions/{state_id}/history")
+    assert history_before.status_code == 200
+    before_count = len(
+        SessionHistoryResponse.model_validate(history_before.json()).history
+    )
+
+    july_11 = _advance_one_day(client, state_id)
+
+    assert july_11.advancement_created is True
+    assert july_11.water_state.water_sequence == initial_water.water_sequence + 1
+    assert july_11.target_date == date(2026, 7, 11)
+    assert july_11.twin_state.snapshot_id != initial_twin.snapshot_id
+    assert july_11.twin_state.snapshot_created is True
+    history_after = client.get(f"/sessions/{state_id}/history")
+    assert history_after.status_code == 200
+    after_count = len(
+        SessionHistoryResponse.model_validate(history_after.json()).history
+    )
+    assert after_count == before_count + 1
+
+    retry = _advance_one_day(client, state_id)
+
+    assert retry.advancement_created is False
+    assert retry.water_state.water_observation_id == (
+        july_11.water_state.water_observation_id
+    )
+    assert retry.water_state.water_sequence == july_11.water_state.water_sequence
+    assert retry.twin_state.snapshot_id == july_11.twin_state.snapshot_id
+    retry_history = client.get(f"/sessions/{state_id}/history")
+    assert retry_history.status_code == 200
+    assert len(
+        SessionHistoryResponse.model_validate(retry_history.json()).history
+    ) == after_count
+
+    changed_weather = _weather_input().model_copy(update={"rainfall_mm": 9.0})
+    conflict_request = AdvanceOneDayRequest(
+        state_id=state_id,
+        advancement_id="advance-july-11",
+        target_date=date(2026, 7, 11),
+        weather=changed_weather,
+    )
+    conflict = client.post(
+        f"/sessions/{state_id}/advance-one-day",
+        json=conflict_request.model_dump(mode="json"),
+    )
+    assert conflict.status_code == 409
+    assert _assert_error_envelope(conflict)["code"] == (
+        "DAILY_ADVANCEMENT_PAYLOAD_CONFLICT"
+    )
+
+    skipped_request = AdvanceOneDayRequest(
+        state_id=state_id,
+        advancement_id="advance-july-13",
+        target_date=date(2026, 7, 13),
+        weather=_weather_input(),
+    )
+    skipped = client.post(
+        f"/sessions/{state_id}/advance-one-day",
+        json=skipped_request.model_dump(mode="json"),
+    )
+    assert skipped.status_code == 409
+    skipped_error = _assert_error_envelope(skipped)
+    assert skipped_error["code"] == "DAILY_ADVANCEMENT_DATE_CONFLICT"
+    assert skipped_error["details"]["expected_target_date"] == "2026-07-12"
+
+    july_12 = _advance_one_day(
+        client,
+        state_id,
+        advancement_id="advance-july-12",
+        target_date=date(2026, 7, 12),
+    )
+    assert july_12.water_state.water_sequence == july_11.water_state.water_sequence + 1
+
+    late_retry = _advance_one_day(client, state_id)
+    assert late_retry.water_state.water_observation_id == (
+        july_11.water_state.water_observation_id
+    )
+    assert late_retry.twin_state.snapshot_id == july_11.twin_state.snapshot_id
+    assert len(store._water_history[state_id]) == 3  # noqa: SLF001
+
+
+def test_daily_advancement_api_precondition_errors(
+    client_and_store: tuple[TestClient, InMemoryTwinStateStore],
+    elevation_call_count: list[int],
+) -> None:
+    client, _store = client_and_store
+    state_id = _create_session(
+        client,
+        elevation_call_count,
+        expected_elevation_calls=1,
+    )
+    request = AdvanceOneDayRequest(
+        state_id=state_id,
+        advancement_id="advance-missing-baseline",
+        target_date=date(2026, 7, 11),
+        weather=_weather_input(),
+    )
+
+    no_baseline = client.post(
+        f"/sessions/{state_id}/advance-one-day",
+        json=request.model_dump(mode="json"),
+    )
+    assert no_baseline.status_code == 409
+    assert _assert_error_envelope(no_baseline)["code"] == (
+        "DAILY_ADVANCEMENT_BASELINE_REQUIRED"
+    )
+
+    _compute_water_state(client, state_id, current_date=date(2026, 7, 10))
+    no_disease = client.post(
+        f"/sessions/{state_id}/advance-one-day",
+        json=request.model_dump(mode="json"),
+    )
+    assert no_disease.status_code == 409
+    assert _assert_error_envelope(no_disease)["code"] == (
+        "DAILY_ADVANCEMENT_DISEASE_REQUIRED"
+    )
+
+
+def test_daily_advancement_api_validation_and_target_conflicts(
+    client_and_store: tuple[TestClient, InMemoryTwinStateStore],
+    elevation_call_count: list[int],
+) -> None:
+    client, _store = client_and_store
+    state_id = _create_session(
+        client,
+        elevation_call_count,
+        expected_elevation_calls=1,
+    )
+    _predict_disease(client, state_id)
+    _compute_water_state(client, state_id, current_date=date(2026, 7, 10))
+
+    mismatch = client.post(
+        f"/sessions/{state_id}/advance-one-day",
+        json={
+            "state_id": "other-state",
+            "advancement_id": "advance-mismatch",
+            "target_date": "2026-07-11",
+            "weather": _weather_input().model_dump(mode="json"),
+        },
+    )
+    assert mismatch.status_code == 422
+    assert _assert_error_envelope(mismatch)["code"] == "STATE_ID_MISMATCH"
+
+    empty_id = client.post(
+        f"/sessions/{state_id}/advance-one-day",
+        json={
+            "state_id": state_id,
+            "advancement_id": " ",
+            "target_date": "2026-07-11",
+            "weather": _weather_input().model_dump(mode="json"),
+        },
+    )
+    assert empty_id.status_code == 422
+    assert _assert_error_envelope(empty_id)["code"] == (
+        "INVALID_DAILY_ADVANCEMENT_REQUEST"
+    )
+
+    _advance_one_day(client, state_id)
+    duplicate_target = client.post(
+        f"/sessions/{state_id}/advance-one-day",
+        json={
+            "state_id": state_id,
+            "advancement_id": "advance-same-target",
+            "target_date": "2026-07-11",
+            "weather": _weather_input().model_dump(mode="json"),
+        },
+    )
+    assert duplicate_target.status_code == 409
+    assert _assert_error_envelope(duplicate_target)["code"] == (
+        "DAILY_ADVANCEMENT_TARGET_CONFLICT"
+    )
 
 
 def test_prerequisite_error_chain(

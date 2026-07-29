@@ -453,6 +453,28 @@ class ComputeWaterStateRequest(BaseModel):
         return self
 
 
+class AdvanceOneDayRequest(BaseModel):
+    state_id: str
+    advancement_id: str
+    target_date: date
+    weather: WeatherInput
+    last_irrigation_event: LastIrrigationEvent | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("advancement_id", mode="before")
+    @classmethod
+    def _advancement_id_must_be_bounded(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("advancement_id must be non-empty.")
+        if len(stripped) > 120:
+            raise ValueError("advancement_id must be at most 120 characters.")
+        return stripped
+
+
 class WaterStateResponse(BaseModel):
     state_id: str
     water_observation_id: str | None = None
@@ -559,6 +581,17 @@ class UpdateTwinStateResponse(BaseModel):
     state_history_count: int
     snapshot_id: str | None = None
     snapshot_created: bool = True
+
+
+class AdvanceOneDayResponse(BaseModel):
+    state_id: str
+    advancement_id: str
+    target_date: date
+    advancement_created: bool
+    water_state: WaterStateResponse
+    twin_state: UpdateTwinStateResponse
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class SessionStateResponse(BaseModel):

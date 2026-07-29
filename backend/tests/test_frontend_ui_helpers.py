@@ -13,12 +13,14 @@ from frontend.ui_helpers import (
     badge_tone_for_stress,
     badge_tone_for_uncertainty,
     detect_weather_manual_overrides,
+    daily_advancement_payload_signature,
     drip_runtime_to_litres_and_depth,
     encode_image_bytes_to_base64,
     escape_html,
     format_action_label,
     format_percent,
     friendly_wetness_risk_label,
+    generate_daily_advancement_id,
     generate_water_update_id,
     humanize_disease_label,
     irrigation_depth_from_litres_area,
@@ -264,3 +266,26 @@ def test_water_update_payload_signature_and_uuid_generation() -> None:
     assert first == second
     assert first != changed
     uuid.UUID(generate_water_update_id())
+
+
+def test_daily_advancement_payload_signature_and_uuid_generation() -> None:
+    payload = {
+        "target_date": "2026-07-11",
+        "weather": {"rainfall_mm": 0.0, "tmax_c": 31.0},
+    }
+    first = daily_advancement_payload_signature(state_id="state-1", payload=payload)
+    second = daily_advancement_payload_signature(
+        state_id="state-1",
+        payload={
+            "weather": {"tmax_c": 31.0, "rainfall_mm": 0.0},
+            "target_date": "2026-07-11",
+        },
+    )
+    changed = daily_advancement_payload_signature(
+        state_id="state-1",
+        payload={**payload, "target_date": "2026-07-12"},
+    )
+
+    assert first == second
+    assert first != changed
+    uuid.UUID(generate_daily_advancement_id())

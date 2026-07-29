@@ -50,8 +50,8 @@ In Docker, Supervisor launches Streamlit with `--server.address 0.0.0.0` and `--
 
 1. Create or load a CropTwin session.
 2. Upload a tomato leaf image for disease evidence.
-3. Fetch Open-Meteo weather or review/edit weather values manually, then enter optional irrigation inputs to compute water state.
-4. Update the canonical twin state.
+3. Fetch Open-Meteo weather or review/edit weather values manually, then enter optional irrigation inputs to compute the initial water state.
+4. Update the canonical twin state, or use the manual "Advance one day" section to submit the next day's weather and optional irrigation explicitly.
 5. Simulate candidate irrigation actions.
 6. Generate the deterministic recommendation.
 7. Generate narration and inspect session history.
@@ -65,6 +65,8 @@ Recent irrigation can be entered as direct depth, total litres over an irrigated
 For each unchanged water-state submission, the frontend generates one standard-library UUID as `water_update_id` and retains it in Streamlit session state across automatic reruns, timeouts, and temporary API errors. Changing the selected date, weather payload, or irrigation inputs invalidates that retained ID; the "New observation" command clears it explicitly. The raw ID is available only in the collapsed technical response JSON.
 
 Water-state results now display observed time, CropTwin computation time, current root-zone deficit, unallocated excess water, and deficit beyond assumed total available water. The Streamlit workflow continues to submit date-only water observations unless extended by a caller, so the API marks those observations as `DATE_ONLY_UTC_START`.
+
+The manual daily advancement section appears after a canonical water result exists. It shows the latest canonical water date, derives the required next date, and sends the weather values currently visible in the form; it does not fetch Open-Meteo automatically and does not schedule future runs. The frontend retains one `advancement_id` for an unchanged target date, weather payload, and irrigation payload so exact retries return the original water observation and snapshot. When the payload changes, a new `advancement_id` is generated. A new snapshot clears current simulations, recommendations, and narration; an exact retry preserves those downstream outputs.
 
 If the API reports that a submitted irrigation event was already accounted for, the frontend shows an informational note that 0 mm from that event was applied to the current update.
 

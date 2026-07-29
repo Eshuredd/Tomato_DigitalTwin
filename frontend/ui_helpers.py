@@ -75,6 +75,8 @@ DOWNSTREAM_KEYS_BY_STEP = {
         "weather_manual_overrides",
         "water_update_id",
         "water_update_signature",
+        "daily_advancement_id",
+        "daily_advancement_signature",
         "latest_water_observation_id",
         "latest_water_sequence",
         "pending_water_base_observation_id",
@@ -89,6 +91,8 @@ DOWNSTREAM_KEYS_BY_STEP = {
         "history_response",
         "water_update_id",
         "water_update_signature",
+        "daily_advancement_id",
+        "daily_advancement_signature",
         "pending_water_base_observation_id",
         "pending_water_base_sequence",
     ),
@@ -323,7 +327,28 @@ def generate_water_update_id() -> str:
     return str(uuid.uuid4())
 
 
+def generate_daily_advancement_id() -> str:
+    return str(uuid.uuid4())
+
+
 def water_update_payload_signature(
+    *,
+    state_id: str,
+    payload: dict[str, Any],
+) -> str:
+    return json.dumps(
+        {
+            "state_id": state_id,
+            "payload": payload,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+        allow_nan=False,
+    )
+
+
+def daily_advancement_payload_signature(
     *,
     state_id: str,
     payload: dict[str, Any],

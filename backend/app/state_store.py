@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import hashlib
 import json
 import math
@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from app.schemas import (
     ActualActionCreateRequest,
     ActualActionResponse,
+    AdvanceOneDayResponse,
     CreateSessionRequest,
     CreateCropCycleRequest,
     DiseasePredictionResponse,
@@ -169,6 +170,81 @@ class WaterStateConcurrencyConflictError(Exception):
         self.state_id = state_id
 
 
+class DailyAdvancementBaselineRequiredError(Exception):
+    def __init__(self, state_id: str) -> None:
+        super().__init__(
+            "Initial water state must be computed before advancing one day."
+        )
+        self.state_id = state_id
+
+
+class DailyAdvancementDiseaseRequiredError(Exception):
+    def __init__(self, state_id: str) -> None:
+        super().__init__(
+            "Disease evidence is required before advancing one day."
+        )
+        self.state_id = state_id
+
+
+class DailyAdvancementDateConflictError(Exception):
+    def __init__(
+        self,
+        state_id: str,
+        *,
+        requested_target_date: date,
+        expected_target_date: date,
+        canonical_base_date: date,
+        base_water_observation_id: str,
+        base_water_sequence: int,
+    ) -> None:
+        super().__init__(
+            "Daily advancement target_date must be exactly one calendar day "
+            "after the canonical water baseline."
+        )
+        self.state_id = state_id
+        self.requested_target_date = requested_target_date
+        self.expected_target_date = expected_target_date
+        self.canonical_base_date = canonical_base_date
+        self.base_water_observation_id = base_water_observation_id
+        self.base_water_sequence = base_water_sequence
+
+
+class DailyAdvancementPayloadConflictError(Exception):
+    def __init__(
+        self,
+        state_id: str,
+        advancement_id: str,
+        *,
+        existing_fingerprint: str,
+        request_fingerprint: str,
+    ) -> None:
+        super().__init__(
+            f"Daily advancement '{advancement_id}' for state '{state_id}' "
+            "already exists with different inputs."
+        )
+        self.state_id = state_id
+        self.advancement_id = advancement_id
+        self.existing_fingerprint_prefix = existing_fingerprint[:12]
+        self.request_fingerprint_prefix = request_fingerprint[:12]
+
+
+class DailyAdvancementTargetConflictError(Exception):
+    def __init__(
+        self,
+        state_id: str,
+        *,
+        target_date: date,
+        existing_advancement_id: str,
+    ) -> None:
+        super().__init__(
+            f"Daily advancement target date '{target_date.isoformat()}' for "
+            f"state '{state_id}' has already been completed."
+        )
+        self.state_id = state_id
+        self.target_date = target_date
+        self.existing_advancement_id = existing_advancement_id
+
+
 class IrrigationEventStateMismatchError(Exception):
     def __init__(
         self,
@@ -251,6 +327,7 @@ class TwinSessionRecord(BaseModel):
 class WaterBaseline:
     water_observation_id: str
     water_sequence: int
+    current_date: date
     observed_at: datetime
     root_zone_depletion_mm: float
     water_update_id: str
@@ -376,6 +453,22 @@ def _validate_request_fingerprint(request_fingerprint: str) -> str:
     return normalized
 
 
+def _validate_non_empty_bounded_string(
+    value: str,
+    *,
+    field_name: str,
+    max_length: int,
+) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be a string.")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{field_name} must be non-empty.")
+    if len(normalized) > max_length:
+        raise ValueError(f"{field_name} must be at most {max_length} characters.")
+    return normalized
+
+
 def _validate_effective_irrigation_mm(value: float) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError("effective_irrigation_mm must be a finite number.")
@@ -445,6 +538,14 @@ class InMemoryTwinStateStore:
         self._growth_by_observation_id: dict[str, tuple[str, GrowthStageResponse]] = {}
         self._snapshot_by_fingerprint: dict[tuple[str, str], tuple[str, TwinCurrentState, str]] = {}
         self._snapshot_sources: dict[str, SnapshotSourceIdentity] = {}
+        self._daily_advancements: dict[
+            tuple[str, str],
+            tuple[str, date, str, AdvanceOneDayResponse],
+        ] = {}
+        self._daily_advancement_by_target_date: dict[
+            tuple[str, date],
+            str,
+        ] = {}
         self._recommendations_by_id: dict[str, tuple[str, RecommendationResponse]] = {}
         self._disease_history: dict[str, list[DiseasePredictionResponse]] = {}
         self._growth_history: dict[str, list[GrowthStageResponse]] = {}
@@ -595,6 +696,10 @@ class InMemoryTwinStateStore:
             return WaterBaseline(
                 water_observation_id=water.water_observation_id,
                 water_sequence=water.water_sequence,
+                current_date=ensure_utc_datetime(
+                    water.observed_at,
+                    field_name="observed_at",
+                ).date(),
                 observed_at=ensure_utc_datetime(
                     water.observed_at,
                     field_name="observed_at",
@@ -1371,6 +1476,429 @@ class InMemoryTwinStateStore:
                 )
             return water_state.model_copy(deep=True)
 
+    def get_daily_advancement(
+        self,
+        state_id: str,
+        advancement_id: str,
+        request_fingerprint: str,
+    ) -> AdvanceOneDayResponse | None:
+        with self._lock:
+            self._get_record_unlocked(state_id)
+            advancement_id_value = _validate_non_empty_bounded_string(
+                advancement_id,
+                field_name="advancement_id",
+                max_length=120,
+            )
+            request_fingerprint_value = _validate_request_fingerprint(
+                request_fingerprint,
+            )
+            existing = self._daily_advancements.get(
+                (state_id, advancement_id_value),
+            )
+            if existing is None:
+                return None
+            existing_fingerprint, _target_date, _record_id, response = existing
+            if existing_fingerprint != request_fingerprint_value:
+                raise DailyAdvancementPayloadConflictError(
+                    state_id,
+                    advancement_id_value,
+                    existing_fingerprint=existing_fingerprint,
+                    request_fingerprint=request_fingerprint_value,
+                )
+            return self._daily_retry_response(response)
+
+    def cache_daily_advancement(
+        self,
+        *,
+        state_id: str,
+        advancement_id: str,
+        request_fingerprint: str,
+        target_date: date,
+        growth_state: GrowthStageResponse,
+        water_state: WaterStateResponse,
+        water_update_id: str,
+        weather_payload: dict[str, object],
+        expected_base_water_observation_id: str,
+        expected_base_water_sequence: int,
+        calculated_previous_root_zone_depletion_mm: float,
+        reported_irrigation_event: LastIrrigationEvent | None,
+        effective_irrigation_mm: float,
+        computed_at: datetime,
+    ) -> AdvanceOneDayResponse:
+        with self._lock:
+            record = self._get_record_unlocked(state_id)
+            advancement_id_value = _validate_non_empty_bounded_string(
+                advancement_id,
+                field_name="advancement_id",
+                max_length=120,
+            )
+            request_fingerprint_value = _validate_request_fingerprint(
+                request_fingerprint,
+            )
+            existing = self._daily_advancements.get(
+                (state_id, advancement_id_value),
+            )
+            if existing is not None:
+                existing_fingerprint, _target_date, _record_id, response = existing
+                if existing_fingerprint != request_fingerprint_value:
+                    raise DailyAdvancementPayloadConflictError(
+                        state_id,
+                        advancement_id_value,
+                        existing_fingerprint=existing_fingerprint,
+                        request_fingerprint=request_fingerprint_value,
+                    )
+                return self._daily_retry_response(response)
+
+            existing_target = self._daily_advancement_by_target_date.get(
+                (state_id, target_date),
+            )
+            if existing_target is not None:
+                raise DailyAdvancementTargetConflictError(
+                    state_id,
+                    target_date=target_date,
+                    existing_advancement_id=existing_target,
+                )
+
+            current_baseline = self.get_canonical_water_baseline(state_id)
+            if current_baseline is None:
+                raise DailyAdvancementBaselineRequiredError(state_id)
+            expected_date = current_baseline.current_date + timedelta(days=1)
+            if target_date != expected_date:
+                raise DailyAdvancementDateConflictError(
+                    state_id,
+                    requested_target_date=target_date,
+                    expected_target_date=expected_date,
+                    canonical_base_date=current_baseline.current_date,
+                    base_water_observation_id=current_baseline.water_observation_id,
+                    base_water_sequence=current_baseline.water_sequence,
+                )
+            self._validate_expected_water_baseline_unlocked(
+                state_id=state_id,
+                supplied_base_water_observation_id=expected_base_water_observation_id,
+                supplied_base_water_sequence=_validate_base_sequence(
+                    expected_base_water_sequence,
+                    field_name="expected_base_water_sequence",
+                ),
+                current_base_water_observation_id=(
+                    current_baseline.water_observation_id
+                ),
+                current_base_water_sequence=current_baseline.water_sequence,
+            )
+            if not _depletion_matches(
+                calculated_previous_root_zone_depletion_mm,
+                current_baseline.root_zone_depletion_mm,
+            ):
+                raise WaterBaselineMismatchError(
+                    "Calculated previous_root_zone_depletion_mm does not match "
+                    "the canonical water baseline.",
+                    state_id=state_id,
+                    supplied_previous_root_zone_depletion_mm=(
+                        calculated_previous_root_zone_depletion_mm
+                    ),
+                    current_previous_root_zone_depletion_mm=(
+                        current_baseline.root_zone_depletion_mm
+                    ),
+                )
+            if record.latest_disease_state is None:
+                raise DailyAdvancementDiseaseRequiredError(state_id)
+            disease_observation_id = self._latest_disease_observation_id.get(state_id)
+            if disease_observation_id is None:
+                raise DailyAdvancementDiseaseRequiredError(state_id)
+
+            effective_irrigation_mm_value = _validate_effective_irrigation_mm(
+                effective_irrigation_mm,
+            )
+            observed_at_value = ensure_utc_datetime(
+                water_state.observed_at,
+                field_name="observed_at",
+            )
+            if observed_at_value.date() != target_date:
+                raise WaterBaselineMismatchError(
+                    "Daily advancement observed_at must match target_date.",
+                    state_id=state_id,
+                    observed_at=observed_at_value.isoformat(),
+                    target_date=target_date.isoformat(),
+                )
+            if observed_at_value <= current_baseline.observed_at:
+                raise OutOfOrderWaterObservationError(
+                    state_id,
+                    supplied_observed_at=observed_at_value,
+                    current_observed_at=current_baseline.observed_at,
+                )
+
+            reported_event_id: str | None = None
+            applied_event_id: str | None = None
+            already_accounted_for = False
+            if reported_irrigation_event is not None:
+                normalized_event = self._record_irrigation_event_unlocked(
+                    state_id,
+                    reported_irrigation_event,
+                )
+                reported_event_id = normalized_event.irrigation_event_id
+                if reported_event_id is None:
+                    raise ValueError("irrigation_event_id is required.")
+                already_accounted_for = (
+                    reported_event_id in self._water_by_irrigation_event_id
+                )
+                if already_accounted_for:
+                    if effective_irrigation_mm_value != 0.0:
+                        raise WaterUpdateConcurrencyConflictError(
+                            state_id,
+                            reported_event_id,
+                        )
+                else:
+                    _validate_effective_matches_event(
+                        state_id=state_id,
+                        irrigation_event_id=reported_event_id,
+                        event_amount_mm=normalized_event.amount_mm,
+                        effective_irrigation_mm=effective_irrigation_mm_value,
+                    )
+                    applied_event_id = reported_event_id
+            elif effective_irrigation_mm_value != 0.0:
+                raise ValueError(
+                    "effective_irrigation_mm must be 0 when no irrigation event "
+                    "is reported."
+                )
+
+            computed_at_value = ensure_utc_datetime(
+                computed_at,
+                field_name="computed_at",
+            )
+            water_update_id_value = _validate_water_update_id(water_update_id)
+            observation_id = f"water_obs_{uuid.uuid4().hex}"
+            growth_observation_id = f"growth_obs_{uuid.uuid4().hex}"
+            next_sequence = current_baseline.water_sequence + 1
+            canonical_water_state = water_state.model_copy(
+                update={
+                    "water_observation_id": observation_id,
+                    "water_sequence": next_sequence,
+                    "base_water_observation_id": current_baseline.water_observation_id,
+                    "base_water_sequence": current_baseline.water_sequence,
+                    "previous_root_zone_depletion_mm": (
+                        current_baseline.root_zone_depletion_mm
+                    ),
+                    "water_update_id": water_update_id_value,
+                    "reported_irrigation_event_id": reported_event_id,
+                    "applied_irrigation_event_id": applied_event_id,
+                    "effective_irrigation_mm": effective_irrigation_mm_value,
+                    "irrigation_event_already_accounted_for": (
+                        reported_event_id is not None
+                        and already_accounted_for
+                        and effective_irrigation_mm_value == 0.0
+                    ),
+                    "observed_at": observed_at_value,
+                    "computed_at": computed_at_value,
+                },
+                deep=True,
+            )
+
+            record.latest_growth_state = growth_state.model_copy(deep=True)
+            self._latest_growth_observation_id[state_id] = growth_observation_id
+            self._growth_by_observation_id[growth_observation_id] = (
+                state_id,
+                record.latest_growth_state.model_copy(deep=True),
+            )
+            self._growth_history.setdefault(state_id, []).append(
+                record.latest_growth_state.model_copy(deep=True)
+            )
+            self._growth_observation_metadata.setdefault(state_id, []).append(
+                (
+                    observed_at_value,
+                    canonical_water_state.observation_time_basis,
+                    computed_at_value,
+                )
+            )
+
+            record.latest_water_state = canonical_water_state.model_copy(deep=True)
+            self._latest_water_observation_id[state_id] = observation_id
+            self._water_sequence[state_id] = next_sequence
+            self._water_history.setdefault(state_id, []).append(
+                record.latest_water_state.model_copy(deep=True)
+            )
+            self._water_by_update_id[(state_id, water_update_id_value)] = (
+                request_fingerprint_value,
+                record.latest_water_state.model_copy(deep=True),
+            )
+            self._water_by_observation_id[observation_id] = (
+                state_id,
+                record.latest_water_state.model_copy(deep=True),
+            )
+            self._water_growth_observation_id[observation_id] = growth_observation_id
+            self._water_observation_metadata.setdefault(state_id, []).append(
+                {
+                    "water_observation_id": observation_id,
+                    "growth_observation_id": growth_observation_id,
+                    "water_sequence": next_sequence,
+                    "base_water_observation_id": current_baseline.water_observation_id,
+                    "base_water_sequence": current_baseline.water_sequence,
+                    "water_update_id": water_update_id_value,
+                    "request_fingerprint": request_fingerprint_value,
+                    "reported_irrigation_event_id": reported_event_id,
+                    "irrigation_event_id": applied_event_id,
+                    "effective_irrigation_mm": effective_irrigation_mm_value,
+                    "daily_advancement_id": advancement_id_value,
+                }
+            )
+            if applied_event_id is not None:
+                self._water_by_irrigation_event_id[applied_event_id] = (
+                    record.latest_water_state.model_copy(deep=True)
+                )
+
+            twin_state = self._create_or_reuse_snapshot_unlocked(
+                state_id=state_id,
+                disease_observation_id=disease_observation_id,
+                growth_observation_id=growth_observation_id,
+                water_observation_id=observation_id,
+            )
+            response = AdvanceOneDayResponse(
+                state_id=state_id,
+                advancement_id=advancement_id_value,
+                target_date=target_date,
+                advancement_created=True,
+                water_state=record.latest_water_state.model_copy(deep=True),
+                twin_state=twin_state,
+            )
+            self._daily_advancements[(state_id, advancement_id_value)] = (
+                request_fingerprint_value,
+                target_date,
+                f"daily_advancement_{uuid.uuid4().hex}",
+                response.model_copy(deep=True),
+            )
+            self._daily_advancement_by_target_date[(state_id, target_date)] = (
+                advancement_id_value
+            )
+            return response.model_copy(deep=True)
+
+    def get_daily_advancement_id_for_target_date(
+        self,
+        state_id: str,
+        target_date: date,
+    ) -> str | None:
+        with self._lock:
+            self._get_record_unlocked(state_id)
+            return self._daily_advancement_by_target_date.get(
+                (state_id, target_date),
+            )
+
+    def _daily_retry_response(
+        self,
+        response: AdvanceOneDayResponse,
+    ) -> AdvanceOneDayResponse:
+        return response.model_copy(
+            update={
+                "advancement_created": False,
+                "twin_state": response.twin_state.model_copy(
+                    update={"snapshot_created": False},
+                    deep=True,
+                ),
+            },
+            deep=True,
+        )
+
+    def _create_or_reuse_snapshot_unlocked(
+        self,
+        *,
+        state_id: str,
+        disease_observation_id: str,
+        growth_observation_id: str,
+        water_observation_id: str,
+    ) -> UpdateTwinStateResponse:
+        record = self._get_record_unlocked(state_id)
+        disease_entry = self._disease_by_observation_id.get(disease_observation_id)
+        growth_entry = self._growth_by_observation_id.get(growth_observation_id)
+        water_entry = self._water_by_observation_id.get(water_observation_id)
+        if (
+            disease_entry is None
+            or growth_entry is None
+            or water_entry is None
+            or disease_entry[0] != state_id
+            or growth_entry[0] != state_id
+            or water_entry[0] != state_id
+        ):
+            raise PersistenceIntegrityError(
+                "Daily advancement source observations were not found."
+            )
+        fingerprint = snapshot_source_fingerprint(
+            state_id=state_id,
+            disease_observation_id=disease_observation_id,
+            growth_observation_id=growth_observation_id,
+            water_observation_id=water_observation_id,
+        )
+        existing = self._snapshot_by_fingerprint.get((state_id, fingerprint))
+        if existing is not None:
+            snapshot_id, current_state, _fingerprint = existing
+            record.current_state = current_state.model_copy(deep=True)
+            return UpdateTwinStateResponse(
+                state_id=state_id,
+                current_state=current_state.model_copy(deep=True),
+                state_history_count=len(record.state_history),
+                snapshot_id=snapshot_id,
+                snapshot_created=False,
+            )
+
+        disease = disease_entry[1]
+        growth = growth_entry[1]
+        water = water_entry[1]
+        now = utc_now()
+        current_state = TwinCurrentState(
+            crop_type=record.crop_type,
+            growth_stage=growth.growth_stage,
+            days_since_planting=growth.days_since_planting,
+            predicted_label=disease.predicted_label,
+            disease_category=disease.disease_category,
+            confidence_calibrated=disease.confidence_calibrated,
+            uncertainty_score=disease.uncertainty_score,
+            uncertainty_band=disease.uncertainty_band,
+            eto_computed=water.eto_computed,
+            eto_method=water.eto_method,
+            kc=water.kc,
+            etc=water.etc,
+            taw=water.taw,
+            raw_threshold=water.raw_threshold,
+            raw_root_zone_depletion_mm=water.raw_root_zone_depletion_mm,
+            root_zone_depletion_mm=water.root_zone_depletion_mm,
+            root_zone_depletion=water.root_zone_depletion,
+            water_surplus_mm=water.water_surplus_mm,
+            depletion_beyond_taw_mm=water.depletion_beyond_taw_mm,
+            estimated_moisture_state=water.estimated_moisture_state,
+            stress_band=water.stress_band,
+            observed_at=water.observed_at,
+            computed_at=now,
+            observation_time_basis=water.observation_time_basis,
+            last_update_time=now,
+        )
+        record.current_state = current_state.model_copy(deep=True)
+        record.latest_simulation = None
+        record.latest_recommendation = None
+        snapshot_id = f"snapshot_{uuid.uuid4().hex}"
+        history_event = HistoryEvent(
+            timestamp=now,
+            growth_stage=current_state.growth_stage,
+            predicted_label=current_state.predicted_label,
+            root_zone_depletion=current_state.root_zone_depletion,
+            stress_band=current_state.stress_band,
+        )
+        record.state_history.append(history_event)
+        record.state_history = record.state_history[-self._max_history :]
+        self._snapshot_by_fingerprint[(state_id, fingerprint)] = (
+            snapshot_id,
+            record.current_state.model_copy(deep=True),
+            fingerprint,
+        )
+        self._snapshot_sources[snapshot_id] = SnapshotSourceIdentity(
+            state_id=state_id,
+            disease_observation_id=disease_observation_id,
+            growth_observation_id=growth_observation_id,
+            water_observation_id=water_observation_id,
+        )
+        return UpdateTwinStateResponse(
+            state_id=state_id,
+            current_state=record.current_state.model_copy(deep=True),
+            state_history_count=len(record.state_history),
+            snapshot_id=snapshot_id,
+            snapshot_created=True,
+        )
+
     def record_actual_action(
         self,
         state_id: str,
@@ -1448,6 +1976,8 @@ class InMemoryTwinStateStore:
             self._growth_by_observation_id.clear()
             self._snapshot_by_fingerprint.clear()
             self._snapshot_sources.clear()
+            self._daily_advancements.clear()
+            self._daily_advancement_by_target_date.clear()
             self._recommendations_by_id.clear()
             self._disease_history.clear()
             self._growth_history.clear()

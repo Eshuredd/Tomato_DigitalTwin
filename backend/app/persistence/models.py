@@ -324,6 +324,89 @@ class TwinStateSnapshotModel(Base):
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
 
 
+class DailyAdvancementModel(Base):
+    __tablename__ = "daily_advancements"
+    __table_args__ = (
+        UniqueConstraint(
+            "state_id",
+            "advancement_id",
+            name="uq_daily_advancements_state_advancement",
+        ),
+        UniqueConstraint(
+            "state_id",
+            "target_date",
+            name="uq_daily_advancements_state_target_date",
+        ),
+        UniqueConstraint(
+            "water_observation_id",
+            name="uq_daily_advancements_water_observation_id",
+        ),
+        CheckConstraint(
+            "base_water_sequence >= 1",
+            name="ck_daily_advancements_base_water_sequence_gte_1",
+        ),
+        CheckConstraint(
+            "water_sequence >= 2",
+            name="ck_daily_advancements_water_sequence_gte_2",
+        ),
+        CheckConstraint(
+            "water_sequence = base_water_sequence + 1",
+            name="ck_daily_advancements_water_sequence_next",
+        ),
+        Index(
+            "ix_daily_advancements_state_target_date",
+            "state_id",
+            "target_date",
+        ),
+        Index(
+            "ix_daily_advancements_state_advancement",
+            "state_id",
+            "advancement_id",
+        ),
+    )
+
+    daily_advancement_record_id: Mapped[str] = mapped_column(
+        String(120),
+        primary_key=True,
+    )
+    state_id: Mapped[str] = mapped_column(
+        String(120),
+        ForeignKey("crop_cycles.state_id"),
+        nullable=False,
+    )
+    advancement_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_date: Mapped[date] = mapped_column(Date, nullable=False)
+    base_water_observation_id: Mapped[str] = mapped_column(
+        String(120),
+        ForeignKey("water_observations.observation_id"),
+        nullable=False,
+    )
+    base_water_sequence: Mapped[int] = mapped_column(nullable=False)
+    disease_observation_id: Mapped[str] = mapped_column(
+        String(120),
+        ForeignKey("disease_observations.observation_id"),
+        nullable=False,
+    )
+    growth_observation_id: Mapped[str] = mapped_column(
+        String(120),
+        ForeignKey("growth_observations.observation_id"),
+        nullable=False,
+    )
+    water_observation_id: Mapped[str] = mapped_column(
+        String(120),
+        ForeignKey("water_observations.observation_id"),
+        nullable=False,
+    )
+    snapshot_id: Mapped[str] = mapped_column(
+        String(120),
+        ForeignKey("twin_state_snapshots.snapshot_id"),
+        nullable=False,
+    )
+    water_sequence: Mapped[int] = mapped_column(nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class SimulationRunModel(Base):
     __tablename__ = "simulation_runs"
     __table_args__ = (

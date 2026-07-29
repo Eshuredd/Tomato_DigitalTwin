@@ -167,7 +167,15 @@ Example water chain:
 | 2 | July 11 | 1 | 3 mm | 6 mm |
 | 3 | July 12 | 2 | 6 mm | depends on July 12 inputs |
 
-This task does not add automatic time advancement, scheduled weather ingestion, recurring jobs, sensors, or background water-state updates.
+`POST /sessions/{state_id}/advance-one-day` adds a manual, deterministic one-calendar-day advancement path. It requires an existing canonical water baseline and existing disease evidence, accepts caller-supplied weather plus optional irrigation, and always uses `observed_at = target_date 00:00:00 UTC` with `observation_time_basis = DATE_ONLY_UTC_START`. The request does not accept client-supplied base observation IDs, water sequences, snapshot IDs, or arbitrary observation times.
+
+Daily advancement is exact-one-day only. If the canonical water state is July 10 sequence 1, the next accepted `target_date` is July 11 and the resulting water state is sequence 2 with base sequence 1. The following accepted day is July 12 sequence 3 with base sequence 2. A skipped date, repeated baseline date, or earlier date returns a conflict instead of silently rebasing or filling gaps.
+
+`advancement_id` is the idempotency key for daily advancement. Exact retries with the same `state_id`, `advancement_id`, `target_date`, weather, and optional irrigation return the original water observation, water sequence, and snapshot with `advancement_created = false`; they do not add growth, water, snapshot, or history rows. Reusing the same `advancement_id` with changed rainfall, temperature, humidity, wind, radiation, reference ETo, or irrigation event details returns `DAILY_ADVANCEMENT_PAYLOAD_CONFLICT`. A different `advancement_id` for an already completed target date returns `DAILY_ADVANCEMENT_TARGET_CONFLICT`.
+
+The daily advancement ledger stores the selected disease observation, paired growth observation, canonical water observation, and snapshot from the first successful call. An exact retry of July 11 after July 12 has advanced still returns the original July 11 sequence 2 and original snapshot, without altering the July 12 canonical pointer. A genuinely new daily advancement creates a new current snapshot, so simulations and recommendations must be regenerated; exact retries do not invalidate outputs tied to that same snapshot.
+
+This task does not add automatic time advancement, scheduled weather ingestion, automatic Open-Meteo fetch during advancement, multi-day replay, recurring jobs, sensors, or background water-state updates.
 
 `/update-twin-state` combines the canonical water observation, that water observation's paired growth observation, and the latest available disease observation at snapshot computation time. Disease evidence may be newer than the water observation; the snapshot source IDs preserve the exact evidence set, while snapshot `observed_at` remains the water observation time and snapshot `computed_at` records when the combined state was assembled.
 
@@ -503,6 +511,7 @@ The frontend uses `CROPTWIN_API_BASE_URL` or the Settings panel to choose the AP
 | `GET` | `/sessions/{state_id}/weather-snapshot` | Fetch one-day Open-Meteo weather for the stored farm location |
 | `POST` | `/sessions/{state_id}/predict-disease` | Run disease inference |
 | `POST` | `/sessions/{state_id}/compute-water-state` | Compute growth and water state |
+| `POST` | `/sessions/{state_id}/advance-one-day` | Manually advance growth, water, and twin snapshot by exactly one UTC date-only day |
 | `POST` | `/sessions/{state_id}/update-twin-state` | Build current twin state |
 | `POST` | `/sessions/{state_id}/simulate-actions` | Simulate candidate actions |
 | `POST` | `/sessions/{state_id}/recommend` | Generate recommendation |
@@ -511,6 +520,8 @@ The frontend uses `CROPTWIN_API_BASE_URL` or the Settings panel to choose the AP
 | `GET` | `/sessions/{state_id}/actual-actions` | List physical farmer actions |
 
 `POST /sessions/{state_id}/compute-water-state` accepts optional `water_update_id`. The path `state_id` remains authoritative, and older clients may omit the field. Exact retries return the canonical persisted `WaterStateResponse`; conflicting reuse of `water_update_id` or `irrigation_event_id` returns a structured conflict response with `status_code`, `code`, `message`, and `details`.
+
+`POST /sessions/{state_id}/advance-one-day` accepts `state_id`, `advancement_id`, `target_date`, `weather`, and optional `last_irrigation_event`. The initial water state must first be computed through `/compute-water-state`; disease evidence must also exist so the endpoint can atomically persist growth, water, and the immutable twin snapshot. The endpoint does not run scheduling, automatic weather ingestion, simulations, recommendations, or narration.
 
 Local API documentation:
 
@@ -752,7 +763,7 @@ docker run --rm --detach --name croptwin-ci-local \
   --env CROPTWIN_API_BASE_URL=http://127.0.0.1:8000 \
   croptwin-ci:local
 curl --fail http://127.0.0.1:7860/_stcore/health
-docker exec croptwin-ci-local python - <<'PY'
+docker exec -i croptwin-ci-local python - <<'PY'
 import json
 import urllib.request
 with urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=10) as response:
@@ -767,7 +778,7 @@ Current local verification:
 
 | Command | Result |
 |---|---|
-| `PYTHONPATH=backend python3 -m pytest -v backend/tests` | `251 passed, 2 skipped in 2.09s` |
+| `PYTHONPATH=backend python3 -m pytest -v backend/tests` | `262 passed, 2 skipped in 2.10s` |
 
 The full suite includes API workflow tests, route tests, persistence store-contract tests, deployment configuration tests, disease artifact validation, image validation, uncertainty policy tests, ETo/Open-Meteo tests, water-balance tests, and frontend HTTP/helper tests. Some route tests use dependency overrides; the optional real artifact smoke test runs when the local runtime can execute it.
 
