@@ -83,15 +83,21 @@ flowchart TD
 
 The disease model does not compute water balance, run simulations, or choose the irrigation action. The narrator explains a cached recommendation; it does not recompute water balance, rerun simulation, or override the deterministic recommendation.
 
-Public store imports remain stable through facades. `app.state_store` re-exports
-the in-memory implementation from `app.store.in_memory`, domain exceptions from
-`app.store.errors`, record dataclasses from `app.store.types`, and deterministic
-identity helpers from `app.store.identity`. `app.persistence.sqlalchemy_store`
-continues to expose `SQLAlchemyTwinStateStore`; its implementation now lives
-under `app.persistence.store`. The Streamlit entrypoint remains
-`frontend/app.py`, with the coordinated view implementation under
-`frontend.views.app_main`, styling under `frontend.views.style`, and pure
-session workflow decisions under `frontend.workflow_state`.
+Public store imports remain stable through explicit compatibility facades.
+`app.state_store` re-exports the in-memory coordinator from
+`app.store.in_memory`, domain exceptions from `app.store.errors`, record
+dataclasses from `app.store.types`, and deterministic identity helpers from
+`app.store.identity`. In-memory operations are separated by domain under
+`app.store.in_memory_*` modules while `InMemoryTwinStateStore` remains the public
+entry point.
+
+`app.persistence.sqlalchemy_store` continues to expose
+`SQLAlchemyTwinStateStore`; SQLAlchemy persistence operations are separated by
+domain under `app.persistence.store`, with transaction-owning methods kept
+explicit in the operation modules. The Streamlit entrypoint remains
+`frontend/app.py` and is retained as the temporary legacy frontend. A Next.js
+migration is planned in `docs/nextjs-frontend-migration.md`, but no Next.js
+application exists yet.
 
 ## End-to-End Workflow
 

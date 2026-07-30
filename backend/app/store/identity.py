@@ -187,3 +187,12 @@ def _depletion_matches(expected: float, actual: float) -> bool:
     )
 
 
+__all__ = [
+    "snapshot_source_fingerprint",
+    "utc_now",
+    "ensure_utc_datetime",
+    "derive_irrigation_event_id",
+    "with_irrigation_event_id",
+    "normalize_irrigation_event",
+    "irrigation_event_payload_conflict_field",
+]

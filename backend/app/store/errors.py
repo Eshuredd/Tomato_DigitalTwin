@@ -271,3 +271,27 @@ class PersistenceIntegrityError(Exception):
         super().__init__(message)
 
 
+__all__ = [
+    "StateNotFoundError",
+    "IncompleteStateError",
+    "MissingCachedOutputError",
+    "DuplicateIrrigationEventApplicationError",
+    "WaterUpdatePayloadConflictError",
+    "WaterUpdateConcurrencyConflictError",
+    "StaleWaterBaselineError",
+    "WaterBaselineMismatchError",
+    "OutOfOrderWaterObservationError",
+    "WaterObservationTimeConflictError",
+    "WaterStateConcurrencyConflictError",
+    "DailyAdvancementBaselineRequiredError",
+    "DailyAdvancementDiseaseRequiredError",
+    "DailyAdvancementDateConflictError",
+    "DailyAdvancementPayloadConflictError",
+    "DailyAdvancementTargetConflictError",
+    "IrrigationEventStateMismatchError",
+    "IrrigationEventPayloadConflictError",
+    "RelatedRecommendationNotFoundError",
+    "RecommendationStateMismatchError",
+    "DuplicateActualActionError",
+    "PersistenceIntegrityError",
+]

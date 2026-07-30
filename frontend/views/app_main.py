@@ -54,9 +54,9 @@ from frontend.ui_helpers import (  # noqa: E402
 from frontend.views.style import inject_custom_css  # noqa: E402
 from frontend.workflow_state import (  # noqa: E402
     apply_pending_water_current_date,
+    daily_advancement_ui_transition,
     pop_flash_notice,
     set_flash_notice,
-    should_replace_local_canonical_water,
 )
 
 
@@ -932,26 +932,25 @@ def _apply_daily_advancement_result(
         if isinstance(water_state, dict)
         else None
     )
-    replace_canonical = should_replace_local_canonical_water(
+    transition = daily_advancement_ui_transition(
+        advancement_created=result.get("advancement_created"),
         current_sequence=current_sequence,
         returned_sequence=returned_sequence,
     )
 
-    if result.get("advancement_created") is False:
+    if transition.notice:
         st.session_state.daily_advancement_retry_response = result
-        set_flash_notice(
-            st.session_state,
-            "This daily advancement was already completed; reused the original result.",
-        )
-        return
+        set_flash_notice(st.session_state, transition.notice)
 
-    if isinstance(water_state, dict) and replace_canonical:
+    if isinstance(water_state, dict) and transition.replace_canonical_water:
         st.session_state.water_response = water_state
         _remember_latest_water_base(water_state)
-    if isinstance(twin_state, dict):
+    if isinstance(twin_state, dict) and transition.replace_twin_state:
         st.session_state.twin_response = twin_state
-    st.session_state.pending_water_current_date = next_pending_date
-    _clear_downstream("twin")
+    if transition.set_pending_date:
+        st.session_state.pending_water_current_date = next_pending_date
+    if transition.clear_downstream:
+        _clear_downstream("twin")
 
 
 def _use_latest_water_base_from_error(details: dict[str, Any]) -> None:

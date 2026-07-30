@@ -55,3 +55,8 @@ class SnapshotSourceIdentity:
     water_observation_id: str
 
 
+__all__ = [
+    "TwinSessionRecord",
+    "WaterBaseline",
+    "SnapshotSourceIdentity",
+]

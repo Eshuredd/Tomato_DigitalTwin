@@ -34,7 +34,9 @@ from frontend.ui_helpers import (
     workflow_progress_states,
 )
 from frontend.workflow_state import (
+    DAILY_ADVANCEMENT_REUSED_NOTICE,
     apply_pending_water_current_date,
+    daily_advancement_ui_transition,
     pop_flash_notice,
     set_flash_notice,
     should_replace_local_canonical_water,
@@ -170,6 +172,149 @@ def test_should_replace_local_canonical_water_uses_sequences(
         )
         is expected
     )
+
+
+@pytest.mark.parametrize(
+    (
+        "advancement_created",
+        "current_sequence",
+        "returned_sequence",
+        "expected",
+    ),
+    [
+        (
+            True,
+            1,
+            2,
+            {
+                "replace_canonical_water": True,
+                "replace_twin_state": True,
+                "clear_downstream": True,
+                "set_pending_date": True,
+                "is_historical_retry": False,
+                "notice": None,
+            },
+        ),
+        (
+            False,
+            1,
+            2,
+            {
+                "replace_canonical_water": True,
+                "replace_twin_state": True,
+                "clear_downstream": False,
+                "set_pending_date": False,
+                "is_historical_retry": False,
+                "notice": DAILY_ADVANCEMENT_REUSED_NOTICE,
+            },
+        ),
+        (
+            False,
+            2,
+            2,
+            {
+                "replace_canonical_water": True,
+                "replace_twin_state": True,
+                "clear_downstream": False,
+                "set_pending_date": False,
+                "is_historical_retry": False,
+                "notice": DAILY_ADVANCEMENT_REUSED_NOTICE,
+            },
+        ),
+        (
+            False,
+            3,
+            2,
+            {
+                "replace_canonical_water": False,
+                "replace_twin_state": False,
+                "clear_downstream": False,
+                "set_pending_date": False,
+                "is_historical_retry": True,
+                "notice": DAILY_ADVANCEMENT_REUSED_NOTICE,
+            },
+        ),
+        (
+            False,
+            2,
+            None,
+            {
+                "replace_canonical_water": False,
+                "replace_twin_state": False,
+                "clear_downstream": False,
+                "set_pending_date": False,
+                "is_historical_retry": True,
+                "notice": DAILY_ADVANCEMENT_REUSED_NOTICE,
+            },
+        ),
+        (
+            False,
+            2,
+            "not-a-sequence",
+            {
+                "replace_canonical_water": False,
+                "replace_twin_state": False,
+                "clear_downstream": False,
+                "set_pending_date": False,
+                "is_historical_retry": True,
+                "notice": DAILY_ADVANCEMENT_REUSED_NOTICE,
+            },
+        ),
+        (
+            False,
+            2,
+            True,
+            {
+                "replace_canonical_water": False,
+                "replace_twin_state": False,
+                "clear_downstream": False,
+                "set_pending_date": False,
+                "is_historical_retry": True,
+                "notice": DAILY_ADVANCEMENT_REUSED_NOTICE,
+            },
+        ),
+        (
+            False,
+            2,
+            -1,
+            {
+                "replace_canonical_water": False,
+                "replace_twin_state": False,
+                "clear_downstream": False,
+                "set_pending_date": False,
+                "is_historical_retry": True,
+                "notice": DAILY_ADVANCEMENT_REUSED_NOTICE,
+            },
+        ),
+    ],
+)
+def test_daily_advancement_ui_transition_policy(
+    advancement_created: object,
+    current_sequence: object,
+    returned_sequence: object,
+    expected: dict[str, object],
+) -> None:
+    transition = daily_advancement_ui_transition(
+        advancement_created=advancement_created,
+        current_sequence=current_sequence,
+        returned_sequence=returned_sequence,
+    )
+
+    assert transition.__dict__ == expected
+
+
+def test_daily_advancement_ui_transition_does_not_mutate_inputs() -> None:
+    response = {"advancement_created": False}
+    water_state = {"water_sequence": 2}
+
+    daily_advancement_ui_transition(
+        advancement_created=response["advancement_created"],
+        current_sequence=1,
+        returned_sequence=water_state["water_sequence"],
+    )
+
+    assert response == {"advancement_created": False}
+    assert water_state == {"water_sequence": 2}
 
 
 def test_sanitize_error_details_redacts_nested_base64() -> None:
