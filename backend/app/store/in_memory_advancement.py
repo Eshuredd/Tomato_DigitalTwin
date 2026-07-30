@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
 import threading
 import uuid
@@ -144,26 +145,35 @@ def _restore_daily_advancement_rollback_snapshot_unlocked(
         record.latest_simulation = snapshot["latest_simulation"]
         record.latest_recommendation = snapshot["latest_recommendation"]
         record.state_history = list(snapshot["state_history"])
-        for name in (
-            "_irrigation_events",
-            "_water_by_irrigation_event_id",
-            "_water_by_update_id",
-            "_water_by_observation_id",
-            "_water_growth_observation_id",
-            "_latest_water_observation_id",
-            "_water_sequence",
-            "_latest_growth_observation_id",
-            "_growth_by_observation_id",
-            "_snapshot_by_fingerprint",
-            "_snapshot_sources",
-            "_daily_advancements",
-            "_daily_advancement_by_target_date",
-            "_growth_history",
-            "_growth_observation_metadata",
-            "_water_history",
-            "_water_observation_metadata",
+        for compatibility_name, state_name in (
+            ("_irrigation_events", "irrigation_events"),
+            ("_water_by_irrigation_event_id", "water_by_irrigation_event_id"),
+            ("_water_by_update_id", "water_by_update_id"),
+            ("_water_by_observation_id", "water_by_observation_id"),
+            ("_water_growth_observation_id", "water_growth_observation_id"),
+            ("_latest_water_observation_id", "latest_water_observation_id"),
+            ("_water_sequence", "water_sequence"),
+            ("_latest_growth_observation_id", "latest_growth_observation_id"),
+            ("_growth_by_observation_id", "growth_by_observation_id"),
+            ("_snapshot_by_fingerprint", "snapshot_by_fingerprint"),
+            ("_snapshot_sources", "snapshot_sources"),
+            ("_daily_advancements", "daily_advancements"),
+            ("_daily_advancement_by_target_date", "daily_advancement_by_target_date"),
+            ("_growth_history", "growth_history"),
+            ("_growth_observation_metadata", "growth_observation_metadata"),
+            ("_water_history", "water_history"),
+            ("_water_observation_metadata", "water_observation_metadata"),
         ):
-            setattr(self, name, snapshot[name])
+            target = getattr(self._state, state_name)
+            _restore_mapping_contents(target, snapshot[compatibility_name])
+            setattr(self, compatibility_name, target)
+
+
+def _restore_mapping_contents(target: dict[object, object], source: object) -> None:
+    if not isinstance(source, dict):
+        raise TypeError("Rollback snapshot mapping entry must be a dictionary.")
+    target.clear()
+    target.update({key: deepcopy(value) for key, value in source.items()})
 
 
 def get_daily_advancement(

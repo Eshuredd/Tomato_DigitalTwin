@@ -12,15 +12,21 @@ DAILY_ADVANCEMENT_NOTICE_KEY = "daily_advancement_notice"
 DAILY_ADVANCEMENT_REUSED_NOTICE = (
     "This daily advancement was already completed; reused the original result."
 )
+DAILY_ADVANCEMENT_CATCH_UP_NOTICE = (
+    "The advancement already existed. CropTwin refreshed the local workflow to "
+    "the latest canonical state."
+)
 
 
 @dataclass(frozen=True)
 class DailyAdvancementUITransition:
     replace_canonical_water: bool
-    replace_twin_state: bool
+    replace_twin_from_response: bool
+    refresh_authoritative_twin: bool
     clear_downstream: bool
     set_pending_date: bool
-    is_historical_retry: bool
+    retain_historical_response: bool
+    transition_kind: str
     notice: str | None
 
 
@@ -74,30 +80,84 @@ def daily_advancement_ui_transition(
     advancement_created: object,
     current_sequence: object,
     returned_sequence: object,
+    current_snapshot_id: object = None,
+    returned_snapshot_id: object = None,
 ) -> DailyAdvancementUITransition:
-    created = advancement_created is True
-    exact_retry = advancement_created is False
+    if advancement_created is True:
+        return DailyAdvancementUITransition(
+            replace_canonical_water=True,
+            replace_twin_from_response=True,
+            refresh_authoritative_twin=False,
+            clear_downstream=True,
+            set_pending_date=True,
+            retain_historical_response=False,
+            transition_kind="new_advancement",
+            notice=None,
+        )
+
+    retry = advancement_created is False
     current = _coerce_nonnegative_int(current_sequence, default=0)
     returned = _coerce_nonnegative_int(returned_sequence, default=None)
+    if not retry:
+        return DailyAdvancementUITransition(
+            replace_canonical_water=False,
+            replace_twin_from_response=False,
+            refresh_authoritative_twin=False,
+            clear_downstream=False,
+            set_pending_date=False,
+            retain_historical_response=False,
+            transition_kind="unknown",
+            notice=None,
+        )
     if returned is None:
         return DailyAdvancementUITransition(
             replace_canonical_water=False,
-            replace_twin_state=False,
+            replace_twin_from_response=False,
+            refresh_authoritative_twin=False,
             clear_downstream=False,
             set_pending_date=False,
-            is_historical_retry=exact_retry,
-            notice=DAILY_ADVANCEMENT_REUSED_NOTICE if exact_retry else None,
+            retain_historical_response=True,
+            transition_kind="malformed_retry",
+            notice=DAILY_ADVANCEMENT_REUSED_NOTICE,
         )
 
-    replace = returned >= (current or 0)
-    notice = DAILY_ADVANCEMENT_REUSED_NOTICE if exact_retry else None
+    current_value = current or 0
+    if returned > current_value:
+        return DailyAdvancementUITransition(
+            replace_canonical_water=True,
+            replace_twin_from_response=False,
+            refresh_authoritative_twin=True,
+            clear_downstream=True,
+            set_pending_date=True,
+            retain_historical_response=False,
+            transition_kind="catch_up_retry",
+            notice=DAILY_ADVANCEMENT_CATCH_UP_NOTICE,
+        )
+    if returned == current_value:
+        replace_twin = _valid_snapshot_id(current_snapshot_id) and (
+            current_snapshot_id == returned_snapshot_id
+        )
+        refresh_twin = not _valid_snapshot_id(current_snapshot_id)
+        return DailyAdvancementUITransition(
+            replace_canonical_water=True,
+            replace_twin_from_response=replace_twin,
+            refresh_authoritative_twin=refresh_twin,
+            clear_downstream=False,
+            set_pending_date=False,
+            retain_historical_response=True,
+            transition_kind="current_retry",
+            notice=DAILY_ADVANCEMENT_REUSED_NOTICE,
+        )
+
     return DailyAdvancementUITransition(
-        replace_canonical_water=replace,
-        replace_twin_state=replace,
-        clear_downstream=created and replace,
-        set_pending_date=created and replace,
-        is_historical_retry=exact_retry and not replace,
-        notice=notice,
+        replace_canonical_water=False,
+        replace_twin_from_response=False,
+        refresh_authoritative_twin=False,
+        clear_downstream=False,
+        set_pending_date=False,
+        retain_historical_response=True,
+        transition_kind="historical_retry",
+        notice=DAILY_ADVANCEMENT_REUSED_NOTICE,
     )
 
 
@@ -113,3 +173,7 @@ def _coerce_nonnegative_int(value: object, *, default: int | None) -> int | None
     if integer < 0:
         return default
     return integer
+
+
+def _valid_snapshot_id(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())

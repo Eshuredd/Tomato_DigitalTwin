@@ -71,6 +71,43 @@ from app.water.water_balance import compute_water_state
 StoreFactory = Callable[[], TwinStateStore]
 
 
+_IN_MEMORY_STATE_ALIASES = (
+    ("_sessions", "sessions"),
+    ("_farms", "farms"),
+    ("_plots", "plots"),
+    ("_actual_actions", "actual_actions"),
+    ("_irrigation_events", "irrigation_events"),
+    ("_water_by_irrigation_event_id", "water_by_irrigation_event_id"),
+    ("_water_by_update_id", "water_by_update_id"),
+    ("_water_by_observation_id", "water_by_observation_id"),
+    ("_water_growth_observation_id", "water_growth_observation_id"),
+    ("_latest_water_observation_id", "latest_water_observation_id"),
+    ("_water_sequence", "water_sequence"),
+    ("_latest_disease_observation_id", "latest_disease_observation_id"),
+    ("_latest_growth_observation_id", "latest_growth_observation_id"),
+    ("_disease_by_observation_id", "disease_by_observation_id"),
+    ("_growth_by_observation_id", "growth_by_observation_id"),
+    ("_snapshot_by_fingerprint", "snapshot_by_fingerprint"),
+    ("_snapshot_sources", "snapshot_sources"),
+    ("_daily_advancements", "daily_advancements"),
+    ("_daily_advancement_by_target_date", "daily_advancement_by_target_date"),
+    ("_recommendations_by_id", "recommendations_by_id"),
+    ("_disease_history", "disease_history"),
+    ("_growth_history", "growth_history"),
+    ("_growth_observation_metadata", "growth_observation_metadata"),
+    ("_water_history", "water_history"),
+    ("_water_observation_metadata", "water_observation_metadata"),
+)
+
+
+def _assert_in_memory_state_aliases(store: InMemoryTwinStateStore) -> None:
+    for compatibility_name, state_name in _IN_MEMORY_STATE_ALIASES:
+        assert getattr(store, compatibility_name) is getattr(  # noqa: SLF001
+            store._state,
+            state_name,
+        )
+
+
 @pytest.fixture(params=["memory", "sqlalchemy"])
 def store_factory(
     request: pytest.FixtureRequest,
@@ -598,6 +635,7 @@ def test_in_memory_daily_advancement_rolls_back_late_snapshot_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = InMemoryTwinStateStore()
+    _assert_in_memory_state_aliases(store)
     session = store.create_session(
         _session_request(),
         state_id="state-daily-atomic",
@@ -673,6 +711,14 @@ def test_in_memory_daily_advancement_rolls_back_late_snapshot_failure(
     current_before = store.get_current_state(session.state_id)
     simulation_before = store.get_latest_simulation(session.state_id)
     recommendation_before = store.get_latest_recommendation(session.state_id)
+    growth_history_before = list(store._growth_history[session.state_id])  # noqa: SLF001
+    growth_metadata_before = list(  # noqa: SLF001
+        store._growth_observation_metadata[session.state_id],
+    )
+    water_history_before = list(store._water_history[session.state_id])  # noqa: SLF001
+    water_metadata_before = list(  # noqa: SLF001
+        store._water_observation_metadata[session.state_id],
+    )
     latest_water_observation_id_before = store._latest_water_observation_id[  # noqa: SLF001
         session.state_id
     ]
@@ -717,9 +763,14 @@ def test_in_memory_daily_advancement_rolls_back_late_snapshot_failure(
     assert store.get_history_response(session.state_id).history == history_before
     assert store.get_latest_simulation(session.state_id) == simulation_before
     assert store.get_latest_recommendation(session.state_id) == recommendation_before
+    assert store._growth_history[session.state_id] == growth_history_before  # noqa: SLF001
+    assert store._growth_observation_metadata[session.state_id] == growth_metadata_before  # noqa: SLF001
+    assert store._water_history[session.state_id] == water_history_before  # noqa: SLF001
+    assert store._water_observation_metadata[session.state_id] == water_metadata_before  # noqa: SLF001
     assert (session.state_id, advancement_id) not in store._daily_advancements  # noqa: SLF001
     assert (session.state_id, target_date) not in store._daily_advancement_by_target_date  # noqa: SLF001
     assert reported_event.irrigation_event_id not in store._water_by_irrigation_event_id  # noqa: SLF001
+    _assert_in_memory_state_aliases(store)
 
     monkeypatch.undo()
     result = store.cache_daily_advancement(
@@ -740,6 +791,7 @@ def test_in_memory_daily_advancement_rolls_back_late_snapshot_failure(
     )
 
     assert result.advancement_created is True
+    _assert_in_memory_state_aliases(store)
     assert _observation_counts(store, session.state_id) == (
         counts_before[0] + 1,
         counts_before[1] + 1,
@@ -761,6 +813,7 @@ def test_in_memory_daily_advancement_rolls_back_late_snapshot_failure(
         computed_at=computed_at,
     )
     assert retry.advancement_created is False
+    _assert_in_memory_state_aliases(store)
     assert _observation_counts(store, session.state_id) == (
         counts_before[0] + 1,
         counts_before[1] + 1,

@@ -558,7 +558,8 @@ def _render_daily_advancement_card(
             if result:
                 _apply_daily_advancement_result(
                     result,
-                    next_pending_date=expected_next_date + timedelta(days=1),
+                    client=client,
+                    fallback_pending_date=expected_next_date + timedelta(days=1),
                 )
                 st.rerun()
 
@@ -585,7 +586,7 @@ def _render_daily_advancement_card(
             )
             retry_response = st.session_state.daily_advancement_retry_response
             if isinstance(retry_response, dict):
-                st.json({"historical_retry_response": retry_response})
+                st.json({"reused_advancement_response": retry_response})
 
 
 def _apply_weather_snapshot(snapshot: dict[str, Any]) -> None:
@@ -921,7 +922,8 @@ def _remember_latest_water_base(response: dict[str, Any]) -> None:
 def _apply_daily_advancement_result(
     result: dict[str, Any],
     *,
-    next_pending_date: date,
+    client: CropTwinAPIClient,
+    fallback_pending_date: date,
 ) -> None:
     st.session_state.daily_advancement_retry_response = None
     water_state = result.get("water_state")
@@ -932,25 +934,60 @@ def _apply_daily_advancement_result(
         if isinstance(water_state, dict)
         else None
     )
+    current_twin = (
+        st.session_state.twin_response
+        if isinstance(st.session_state.twin_response, dict)
+        else None
+    )
+    current_snapshot_id = (
+        current_twin.get("snapshot_id") if current_twin is not None else None
+    )
+    returned_snapshot_id = (
+        twin_state.get("snapshot_id") if isinstance(twin_state, dict) else None
+    )
     transition = daily_advancement_ui_transition(
         advancement_created=result.get("advancement_created"),
         current_sequence=current_sequence,
         returned_sequence=returned_sequence,
+        current_snapshot_id=current_snapshot_id,
+        returned_snapshot_id=returned_snapshot_id,
     )
 
     if transition.notice:
-        st.session_state.daily_advancement_retry_response = result
         set_flash_notice(st.session_state, transition.notice)
+    if transition.retain_historical_response:
+        st.session_state.daily_advancement_retry_response = result
 
     if isinstance(water_state, dict) and transition.replace_canonical_water:
         st.session_state.water_response = water_state
         _remember_latest_water_base(water_state)
-    if isinstance(twin_state, dict) and transition.replace_twin_state:
+    if isinstance(twin_state, dict) and transition.replace_twin_from_response:
         st.session_state.twin_response = twin_state
+    if transition.refresh_authoritative_twin:
+        refreshed = _call_api(
+            "Refreshing current twin",
+            lambda: client.update_twin_state(st.session_state.active_state_id),
+        )
+        if refreshed:
+            st.session_state.twin_response = refreshed
     if transition.set_pending_date:
-        st.session_state.pending_water_current_date = next_pending_date
+        st.session_state.pending_water_current_date = _returned_water_next_date(
+            water_state,
+            fallback_pending_date,
+        )
     if transition.clear_downstream:
         _clear_downstream("twin")
+
+
+def _returned_water_next_date(
+    water_state: object,
+    fallback_pending_date: date,
+) -> date:
+    if isinstance(water_state, dict):
+        observed_date = _date_from_api_datetime(water_state.get("observed_at"))
+        if observed_date is not None:
+            return observed_date + timedelta(days=1)
+    return fallback_pending_date
 
 
 def _use_latest_water_base_from_error(details: dict[str, Any]) -> None:

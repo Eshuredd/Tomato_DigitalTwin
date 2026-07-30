@@ -60,6 +60,22 @@ web/
 9. Narration, history and actual actions.
 10. Streamlit removal after parity.
 
+## Daily Advancement Retry Semantics
+
+`POST /sessions/{state_id}/advance-one-day` is idempotent by
+`advancement_id`. When `advancement_created` is `false`, the returned ledger
+response may describe an earlier successful advancement rather than the
+currently authoritative twin. A retry can therefore be an exact current retry,
+a catch-up from stale local water state, or a historical retry after newer
+water or disease evidence has moved the current twin forward.
+
+Next.js clients must not treat every returned advancement snapshot as current.
+For catch-up retries, update local canonical water from the returned water
+state, clear simulation, recommendation, and narration outputs, then call
+`/sessions/{state_id}/update-twin-state` to refresh the authoritative current
+twin. Historical retries should be read-only locally except for retaining the
+technical response and showing a reuse notice.
+
 ## Streamlit Route Inventory
 
 These are the FastAPI endpoints currently used by the legacy Streamlit client. The migration should reuse them rather than inventing replacement routes.
