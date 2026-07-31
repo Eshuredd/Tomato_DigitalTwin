@@ -65,3 +65,15 @@ backend/data/*.sqlite
 backend/data/*.sqlite3
 models/
 output/
+
+# Next.js frontend
+web/node_modules/
+web/.next/
+web/coverage/
+web/*.tsbuildinfo
+web/.env.local
+web/.env.*.local
+web/test-results/
+web/playwright-report/
+web/blob-report/
+web/npm-debug.log*

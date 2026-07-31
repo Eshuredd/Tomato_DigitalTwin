@@ -1,6 +1,6 @@
 # Next.js Frontend Migration Plan
 
-This document describes a later frontend migration only. It does not introduce a Next.js application, Node tooling, or new backend routes in the current task.
+This document tracks the staged migration from the legacy Streamlit UI to a Next.js frontend. Phase 1 now introduces the `web/` application shell and API boundary foundation only.
 
 ## Planned Architecture
 
@@ -49,8 +49,8 @@ web/
 
 ## Migration Order
 
-1. Application shell and API client.
-2. Session creation/loading.
+1. Application shell and API client. **Implemented in Phase 1.**
+2. Session creation/loading foundation. **Implemented in Phase 1; full workflow parity remains future work.**
 3. Disease upload and results.
 4. Weather and irrigation inputs.
 5. Initial water computation.
@@ -59,6 +59,18 @@ web/
 8. Simulation and recommendation.
 9. Narration, history and actual actions.
 10. Streamlit removal after parity.
+
+## Phase 1 Implementation Notes
+
+The `web/` app uses Next.js App Router, TypeScript, Tailwind, npm, `src/`, and the `@/*` import alias. It includes no separate Git repository and no generated demo app content.
+
+The API client is hand-typed for this phase rather than generated from OpenAPI. This keeps the initial migration small while preserving explicit TypeScript contracts for the current Pydantic request and response shapes. Generated types can be reconsidered once the frontend reaches broader workflow coverage and the backend OpenAPI contract is stable enough to make code generation valuable.
+
+`NEXT_PUBLIC_CROPTWIN_API_BASE_URL` configures the browser-visible FastAPI base URL and defaults to `http://127.0.0.1:8000`. It is intentionally public configuration only; secrets must not be added to `NEXT_PUBLIC_*` values.
+
+The frontend wrappers cover the existing backend routes listed below, but Phase 1 UI calls only `/health`, `POST /sessions`, and `GET /sessions/{state_id}`. Disease, water, advancement, twin-update, simulation, recommendation, narration, history, and actual-action screens are intentionally left for later phases.
+
+Browser-level Playwright coverage is not part of Phase 1. The current frontend test boundary is Vitest, jsdom, React Testing Library, and API-client unit coverage.
 
 ## Daily Advancement Retry Semantics
 

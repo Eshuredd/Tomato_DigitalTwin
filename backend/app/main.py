@@ -8,11 +8,13 @@ external services.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import os
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.dependencies import (
     TwinAPIException,
@@ -43,10 +45,29 @@ async def lifespan(fastapi_app: FastAPI):
     yield
 
 
+def _cors_origins_from_env() -> list[str]:
+    configured = os.getenv("CROPTWIN_CORS_ORIGINS")
+    if configured is None:
+        return ["http://localhost:3000", "http://127.0.0.1:3000"]
+    return [
+        origin.strip().rstrip("/")
+        for origin in configured.split(",")
+        if origin.strip()
+    ]
+
+
 app = FastAPI(
     title="Tomato Irrigation Disease Digital Twin API",
     version=meta.API_VERSION,
     lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins_from_env(),
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["accept", "content-type"],
 )
 
 app.add_exception_handler(
@@ -83,6 +104,7 @@ def _json_safe_validation_errors(errors: list[dict[str, object]]) -> list[dict[s
             safe["ctx"] = {key: str(value) for key, value in ctx.items()}
         safe_errors.append(safe)
     return safe_errors
+
 
 app.include_router(meta.router)
 app.include_router(farms.router)

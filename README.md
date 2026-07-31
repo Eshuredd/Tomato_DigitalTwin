@@ -17,6 +17,7 @@ CropTwin does not treat model output as a confirmed diagnosis, and it does not r
 | Tomato disease classifier | Implemented |
 | Temperature calibration | Implemented |
 | Streamlit frontend | Implemented |
+| Next.js frontend | Phase 1 scaffold implemented |
 | Automated tests | Implemented |
 | Persistent database | Implemented |
 | Public deployment | Not yet implemented |
@@ -37,6 +38,7 @@ CropTwin does not treat model output as a confirmed diagnosis, and it does not r
 - Farmer-readable narration of an already-selected recommendation.
 - Session history.
 - Streamlit workflow interface.
+- Next.js Phase 1 shell for backend health and session creation/loading.
 - Direct FastAPI, Swagger, and ReDoc access.
 
 ## Problem Statement
@@ -96,8 +98,9 @@ entry point.
 domain under `app.persistence.store`, with transaction-owning methods kept
 explicit in the operation modules. The Streamlit entrypoint remains
 `frontend/app.py` and is retained as the temporary legacy frontend. A Next.js
-migration is planned in `docs/nextjs-frontend-migration.md`, but no Next.js
-application exists yet.
+migration is underway in `web/` and documented in
+`docs/nextjs-frontend-migration.md`; it does not yet provide full Streamlit
+feature parity.
 
 ## End-to-End Workflow
 
@@ -131,11 +134,35 @@ Supported simulation actions:
 | Disease model runtime | PyTorch / Torchvision |
 | Model architecture | MobileNetV3-Small |
 | Image handling | Pillow |
-| Frontend | Streamlit |
+| Frontend | Streamlit, Next.js Phase 1 |
 | HTTP client | httpx |
 | Testing | pytest |
 | State storage | SQLAlchemy persistent store, optional in-memory store |
 | Recorded training/runtime context | AMD ROCm PyTorch environment |
+
+## Frontend Development
+
+The Streamlit frontend remains available and operational:
+
+```bash
+streamlit run frontend/app.py
+```
+
+The Next.js frontend is the migration target for new UI work:
+
+```bash
+cd web
+npm ci
+npm run dev
+```
+
+Set `NEXT_PUBLIC_CROPTWIN_API_BASE_URL` in `web/.env.local` when the FastAPI
+server is not available at `http://127.0.0.1:8000`. The FastAPI app controls all
+agronomy calculations, disease inference, recommendations, narration,
+validation, and persistence; the browser submits requests and renders API
+responses only. Phase 1 includes the app shell, health check, and session
+creation/loading foundation, not disease, water, advancement, recommendation,
+or narration workflow parity.
 
 ## Persistence
 
@@ -645,6 +672,7 @@ Default local URLs:
 - Swagger UI: `http://127.0.0.1:8000/docs`
 - ReDoc: `http://127.0.0.1:8000/redoc`
 - Streamlit: usually `http://localhost:8501`
+- Next.js: usually `http://localhost:3000`
 
 `--reload` is for local development, not production serving.
 
