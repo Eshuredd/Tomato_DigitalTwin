@@ -17,7 +17,7 @@ CropTwin does not treat model output as a confirmed diagnosis, and it does not r
 | Tomato disease classifier | Implemented |
 | Temperature calibration | Implemented |
 | Streamlit frontend | Implemented |
-| Next.js frontend | Phase 1 scaffold implemented |
+| Next.js frontend | Phase 2 session and disease workflow implemented |
 | Automated tests | Implemented |
 | Persistent database | Implemented |
 | Public deployment | Not yet implemented |
@@ -38,7 +38,7 @@ CropTwin does not treat model output as a confirmed diagnosis, and it does not r
 - Farmer-readable narration of an already-selected recommendation.
 - Session history.
 - Streamlit workflow interface.
-- Next.js Phase 1 shell for backend health and session creation/loading.
+- Next.js migration UI for backend health, session creation/loading, and disease evidence.
 - Direct FastAPI, Swagger, and ReDoc access.
 
 ## Problem Statement
@@ -99,8 +99,8 @@ domain under `app.persistence.store`, with transaction-owning methods kept
 explicit in the operation modules. The Streamlit entrypoint remains
 `frontend/app.py` and is retained as the temporary legacy frontend. A Next.js
 migration is underway in `web/` and documented in
-`docs/nextjs-frontend-migration.md`; it does not yet provide full Streamlit
-feature parity.
+`docs/nextjs-frontend-migration.md`; it now covers session and disease evidence
+workflows but does not yet provide full Streamlit feature parity.
 
 ## End-to-End Workflow
 
@@ -134,7 +134,7 @@ Supported simulation actions:
 | Disease model runtime | PyTorch / Torchvision |
 | Model architecture | MobileNetV3-Small |
 | Image handling | Pillow |
-| Frontend | Streamlit, Next.js Phase 1 |
+| Frontend | Streamlit, Next.js Phase 2 |
 | HTTP client | httpx |
 | Testing | pytest |
 | State storage | SQLAlchemy persistent store, optional in-memory store |
@@ -160,9 +160,13 @@ Set `NEXT_PUBLIC_CROPTWIN_API_BASE_URL` in `web/.env.local` when the FastAPI
 server is not available at `http://127.0.0.1:8000`. The FastAPI app controls all
 agronomy calculations, disease inference, recommendations, narration,
 validation, and persistence; the browser submits requests and renders API
-responses only. Phase 1 includes the app shell, health check, and session
-creation/loading foundation, not disease, water, advancement, recommendation,
-or narration workflow parity.
+responses only. The Next.js app now includes the app shell, health check,
+session creation/loading, active-session summary, and disease-image evidence
+workflow. Water, twin update, advancement, simulation, recommendation,
+narration, history, records, farms, and plots remain in Streamlit until later
+migration phases. Backend changes are deferred until Next.js reaches full
+Streamlit feature parity unless an existing API contract makes a frontend
+workflow impossible.
 
 ## Persistence
 

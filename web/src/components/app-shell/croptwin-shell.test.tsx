@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { CropTwinShell } from "./croptwin-shell";
 
 describe("CropTwinShell", () => {
-  it("renders the Phase 1 shell without fake workflow data", () => {
+  it("renders the Phase 2 shell without fake workflow data", () => {
     vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockRejectedValue(new TypeError("offline")));
 
     render(<CropTwinShell />);

@@ -2,6 +2,9 @@ import { HealthStatus } from "./health-status";
 import { Notice } from "@/components/ui/notice";
 import { Panel } from "@/components/ui/panel";
 import { SessionPanel } from "@/features/session/session-panel";
+import { WorkflowProvider } from "@/features/workflow/workflow-context";
+import { ActiveSessionSummary } from "@/features/workflow/active-session-summary";
+import { DiseasePanel } from "@/features/disease/disease-panel";
 
 export function CropTwinShell() {
   return (
@@ -32,21 +35,24 @@ export function CropTwinShell() {
           </div>
         </header>
 
-        <section className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
-          <HealthStatus />
-          <Panel>
-            <h2 className="text-xl font-semibold">Migration phase</h2>
-            <p className="mt-3 text-sm leading-6 text-[var(--color-muted)]">
-              Phase 1 moves the foundation from Streamlit to Next.js: a typed
-              FastAPI client, backend health status, and session creation/loading.
-              Disease upload, water computation, twin updates, simulations,
-              recommendations and narration remain in Streamlit until their
-              workflow screens are migrated deliberately.
-            </p>
-          </Panel>
-        </section>
+        <WorkflowProvider>
+          <section className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
+            <HealthStatus />
+            <Panel>
+              <h2 className="text-xl font-semibold">Migration phase</h2>
+              <p className="mt-3 text-sm leading-6 text-[var(--color-muted)]">
+                Phase 2 adds active-session state and disease evidence upload
+                to the Next.js migration. Weather, water computation, twin
+                updates, simulations, recommendations and narration remain in
+                Streamlit until their workflow screens are migrated deliberately.
+              </p>
+            </Panel>
+          </section>
 
-        <SessionPanel />
+          <SessionPanel />
+          <ActiveSessionSummary />
+          <DiseasePanel />
+        </WorkflowProvider>
       </div>
     </main>
   );

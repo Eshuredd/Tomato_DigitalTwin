@@ -11,6 +11,7 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 export interface ApiRequestOptions<TBody = undefined> {
   method?: "GET" | "POST";
   body?: TBody;
+  cache?: RequestCache;
   signal?: AbortSignal;
   timeoutMs?: number;
   headers?: HeadersInit;
@@ -56,6 +57,7 @@ export class CropTwinApiClient {
     try {
       const response = await this.fetcher(`${this.baseUrl}${path}`, {
         method,
+        cache: options.cache ?? "no-store",
         headers: buildHeaders(options.headers, options.body),
         body:
           options.body === undefined

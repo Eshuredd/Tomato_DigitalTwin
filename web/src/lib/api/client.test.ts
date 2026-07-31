@@ -25,7 +25,7 @@ describe("CropTwinApiClient", () => {
 
     expect(fetcher).toHaveBeenCalledWith(
       "http://api/health",
-      expect.objectContaining({ method: "GET" }),
+      expect.objectContaining({ cache: "no-store", method: "GET" }),
     );
   });
 
@@ -40,6 +40,7 @@ describe("CropTwinApiClient", () => {
       "http://api/sessions",
       expect.objectContaining({
         body: JSON.stringify(body),
+        cache: "no-store",
         headers: expect.objectContaining({ "Content-Type": "application/json" }),
         method: "POST",
       }),

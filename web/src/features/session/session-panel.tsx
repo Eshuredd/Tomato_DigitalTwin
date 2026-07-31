@@ -11,9 +11,11 @@ import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
 import { Panel } from "@/components/ui/panel";
 import { Select } from "@/components/ui/select";
+import { useWorkflowDispatch } from "@/features/workflow/workflow-context";
 
 export function SessionPanel() {
   const endpoints = useMemo(() => createBrowserEndpoints(), []);
+  const dispatch = useWorkflowDispatch();
   const [createResult, setCreateResult] = useState<SessionResponse | null>(null);
   const [loadResult, setLoadResult] = useState<SessionStateResponse | null>(null);
   const [error, setError] = useState<CropTwinApiError | null>(null);
@@ -32,6 +34,8 @@ export function SessionPanel() {
       const request = buildCreateSessionRequest(new FormData(event.currentTarget));
       const response = await endpoints.createSession(request);
       setCreateResult(response);
+      setLoadResult(null);
+      dispatch({ type: "sessionCreated", session: response });
     } catch (caught) {
       setCreateResult(null);
       if (caught instanceof CropTwinApiError) {
@@ -63,6 +67,8 @@ export function SessionPanel() {
     try {
       const response = await endpoints.getSession(trimmed);
       setLoadResult(response);
+      setCreateResult(null);
+      dispatch({ type: "sessionLoaded", session: response });
     } catch (caught) {
       setLoadResult(null);
       if (caught instanceof CropTwinApiError) {

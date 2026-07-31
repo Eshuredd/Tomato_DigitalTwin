@@ -50,6 +50,9 @@ jobs:
       - name: Test frontend
         run: npm run test:run
 
+      - name: Coverage frontend
+        run: npm run test:coverage
+
       - name: Build frontend
         run: npm run build
 

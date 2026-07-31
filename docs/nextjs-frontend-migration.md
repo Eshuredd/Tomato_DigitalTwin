@@ -1,6 +1,6 @@
 # Next.js Frontend Migration Plan
 
-This document tracks the staged migration from the legacy Streamlit UI to a Next.js frontend. Phase 1 now introduces the `web/` application shell and API boundary foundation only.
+This document tracks the staged migration from the legacy Streamlit UI to a Next.js frontend. Phase 2 introduces disease-image submission and disease-evidence rendering while keeping FastAPI as the authoritative backend.
 
 ## Planned Architecture
 
@@ -17,6 +17,8 @@ SQLite/PostgreSQL
 FastAPI remains the authoritative application and agronomy boundary. No agronomy calculations move to TypeScript. The browser must not recompute water balance, select recommendations, classify disease images, run simulations, or generate narration. The Next.js frontend will validate only basic UI input shape, submit API requests, and render API responses. Backend Pydantic validation remains authoritative for accepted inputs, error envelopes, and persistence rules.
 
 The existing Streamlit frontend remains available until the Next.js frontend reaches feature parity.
+
+Backend changes are deferred until Next.js reaches full Streamlit feature parity unless an existing API contract makes a frontend workflow impossible.
 
 ## Proposed Future Structure
 
@@ -49,9 +51,9 @@ web/
 
 ## Migration Order
 
-1. Application shell and API client. **Implemented in Phase 1.**
-2. Session creation/loading foundation. **Implemented in Phase 1; full workflow parity remains future work.**
-3. Disease upload and results.
+1. Application shell and API client. **Implemented.**
+2. Session creation/loading. **Implemented.**
+3. Disease upload and results. **Implemented.**
 4. Weather and irrigation inputs.
 5. Initial water computation.
 6. Twin update.
@@ -60,7 +62,7 @@ web/
 9. Narration, history and actual actions.
 10. Streamlit removal after parity.
 
-## Phase 1 Implementation Notes
+## Phase 1 And 2 Implementation Notes
 
 The `web/` app uses Next.js App Router, TypeScript, Tailwind, npm, `src/`, and the `@/*` import alias. It includes no separate Git repository and no generated demo app content.
 
@@ -68,7 +70,11 @@ The API client is hand-typed for this phase rather than generated from OpenAPI. 
 
 `NEXT_PUBLIC_CROPTWIN_API_BASE_URL` configures the browser-visible FastAPI base URL and defaults to `http://127.0.0.1:8000`. It is intentionally public configuration only; secrets must not be added to `NEXT_PUBLIC_*` values.
 
-The frontend wrappers cover the existing backend routes listed below, but Phase 1 UI calls only `/health`, `POST /sessions`, and `GET /sessions/{state_id}`. Disease, water, advancement, twin-update, simulation, recommendation, narration, history, and actual-action screens are intentionally left for later phases.
+The frontend wrappers cover the existing backend routes listed below, but the current UI calls only `/health`, `/system-info`, `POST /sessions`, `GET /sessions/{state_id}`, and `POST /sessions/{state_id}/predict-disease`. Water, advancement, twin-update, simulation, recommendation, narration, history, and actual-action screens are intentionally left for later phases.
+
+Phase 2 adds a small React reducer/context boundary for active session state and disease evidence. It does not add Redux, React Query, URL persistence, localStorage persistence, or a frontend database.
+
+Disease image bytes are kept in component-local browser state only. The preview uses an object URL that is revoked when the file changes or the component unmounts. Base64 conversion happens only immediately before the FastAPI disease request and is not stored in workflow state.
 
 Browser-level Playwright coverage is not part of Phase 1. The current frontend test boundary is Vitest, jsdom, React Testing Library, and API-client unit coverage.
 

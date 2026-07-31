@@ -8,6 +8,20 @@ export default defineConfig({
     },
   },
   test: {
+    coverage: {
+      provider: "v8",
+      exclude: [
+        ".next/**",
+        "node_modules/**",
+        "coverage/**",
+        "*.config.*",
+        "next-env.d.ts",
+        "src/test/**",
+        "src/**/*.test.ts",
+        "src/**/*.test.tsx",
+        "src/lib/types/**",
+      ],
+    },
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test/setup.ts"],

@@ -27,6 +27,12 @@ export function HealthStatus() {
       if (response.status !== "ok") {
         setStatus("malformed");
         setHealth(null);
+        setError(new CropTwinApiError({
+          kind: "malformed",
+          status: null,
+          code: "FRONTEND_MALFORMED_RESPONSE",
+          message: "The backend responded, but its health response did not match the expected format.",
+        }));
         return;
       }
       setHealth(response);
@@ -35,7 +41,13 @@ export function HealthStatus() {
       const normalized = normalizeError(caught);
       setError(normalized);
       setHealth(null);
-      setStatus(normalized.kind === "timeout" ? "timeout" : "unavailable");
+      setStatus(
+        normalized.kind === "timeout"
+          ? "timeout"
+          : normalized.kind === "malformed"
+            ? "malformed"
+            : "unavailable",
+      );
     }
   }, [endpoints]);
 

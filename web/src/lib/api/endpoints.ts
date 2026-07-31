@@ -1,4 +1,11 @@
 import { CropTwinApiClient, encodePath } from "./client";
+import {
+  parseDiseasePredictionResponse,
+  parseHealthResponse,
+  parseSessionResponse,
+  parseSessionStateResponse,
+  parseSystemInfoResponse,
+} from "./validators";
 import type {
   ActualActionCreateRequest,
   ActualActionResponse,
@@ -31,24 +38,27 @@ export class CropTwinEndpoints {
   constructor(private readonly client: CropTwinApiClient) {}
 
   getHealth(): Promise<HealthResponse> {
-    return this.client.request<HealthResponse>("/health");
+    return this.client.request<unknown>("/health").then(parseHealthResponse);
   }
 
   getSystemInfo(): Promise<SystemInfoResponse> {
-    return this.client.request<SystemInfoResponse>("/system-info");
+    return this.client.request<unknown>("/system-info").then(parseSystemInfoResponse);
   }
 
   createSession(request: CreateSessionRequest): Promise<SessionResponse> {
-    return this.client.request<SessionResponse, CreateSessionRequest>("/sessions", {
-      method: "POST",
-      body: request,
-    });
+    return this.client.request<unknown, CreateSessionRequest>(
+      "/sessions",
+      {
+        method: "POST",
+        body: request,
+      },
+    ).then(parseSessionResponse);
   }
 
   getSession(stateId: string): Promise<SessionStateResponse> {
-    return this.client.request<SessionStateResponse>(
+    return this.client.request<unknown>(
       `/sessions/${encodePath(stateId)}`,
-    );
+    ).then(parseSessionStateResponse);
   }
 
   getSessionHistory(stateId: string): Promise<SessionHistoryResponse> {
@@ -60,11 +70,17 @@ export class CropTwinEndpoints {
   predictDisease(
     stateId: string,
     request: Omit<DiseasePredictionRequest, "state_id">,
+    options: { signal?: AbortSignal; timeoutMs?: number } = {},
   ): Promise<DiseasePredictionResponse> {
-    return this.client.request<DiseasePredictionResponse, DiseasePredictionRequest>(
+    return this.client.request<unknown, DiseasePredictionRequest>(
       `/sessions/${encodePath(stateId)}/predict-disease`,
-      { method: "POST", body: { state_id: stateId, ...request } },
-    );
+      {
+        method: "POST",
+        body: { state_id: stateId, ...request },
+        signal: options.signal,
+        timeoutMs: options.timeoutMs,
+      },
+    ).then(parseDiseasePredictionResponse);
   }
 
   getWeatherSnapshot(

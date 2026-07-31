@@ -49,5 +49,7 @@ describe("HealthStatus", () => {
     render(<HealthStatus />);
 
     expect(await screen.findByText("Malformed response")).toBeInTheDocument();
+    expect(screen.getByText("The backend responded, but its health response did not match the expected format.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
   });
 });

@@ -1,4 +1,5 @@
 import type { CreateSessionRequest, SoilTexture } from "@/lib/types/api";
+import { optionalFiniteNumber } from "./numbers";
 
 export const SOIL_TEXTURE_OPTIONS: SoilTexture[] = [
   "sand",
@@ -10,7 +11,7 @@ export const SOIL_TEXTURE_OPTIONS: SoilTexture[] = [
 ];
 
 export function buildCreateSessionRequest(formData: FormData): CreateSessionRequest {
-  const elevation = textValue(formData, "elevation_m");
+  const elevation = optionalFiniteNumber(textValue(formData, "elevation_m"), "Elevation");
   return {
     crop_type: "tomato",
     planting_date: requiredText(formData, "planting_date"),
@@ -18,7 +19,7 @@ export function buildCreateSessionRequest(formData: FormData): CreateSessionRequ
       name: requiredText(formData, "location_name"),
       latitude: requiredNumber(formData, "latitude"),
       longitude: requiredNumber(formData, "longitude"),
-      ...(elevation ? { elevation_m: Number(elevation) } : {}),
+      ...(elevation !== undefined ? { elevation_m: elevation } : {}),
     },
     soil_texture: requiredText(formData, "soil_texture") as SoilTexture,
   };

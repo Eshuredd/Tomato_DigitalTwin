@@ -2,6 +2,8 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionPanel } from "./session-panel";
+import { WorkflowProvider } from "@/features/workflow/workflow-context";
+import { ActiveSessionSummary } from "@/features/workflow/active-session-summary";
 
 const sessionResponse = {
   state_id: "state-1",
@@ -48,6 +50,31 @@ function installFetch(handler: (url: string, init?: RequestInit) => Response) {
   return fetcher;
 }
 
+function renderSessionPanel() {
+  return render(
+    <WorkflowProvider>
+      <SessionPanel />
+    </WorkflowProvider>,
+  );
+}
+
+function renderSessionWorkflow() {
+  return render(
+    <WorkflowProvider>
+      <SessionPanel />
+      <ActiveSessionSummary />
+    </WorkflowProvider>,
+  );
+}
+
+function deferredResponse() {
+  let resolve!: (response: Response) => void;
+  const promise = new Promise<Response>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
 describe("SessionPanel", () => {
   beforeEach(() => {
     process.env.NEXT_PUBLIC_CROPTWIN_API_BASE_URL = "http://api.test";
@@ -56,7 +83,7 @@ describe("SessionPanel", () => {
   it("renders required session fields", () => {
     installFetch(() => new Response("{}"));
 
-    render(<SessionPanel />);
+    renderSessionPanel();
 
     expect(screen.getByLabelText("Planting date")).toBeRequired();
     expect(screen.getByLabelText("Location name")).toBeRequired();
@@ -75,7 +102,7 @@ describe("SessionPanel", () => {
     });
     const user = userEvent.setup();
 
-    render(<SessionPanel />);
+    renderSessionPanel();
     await user.type(screen.getByLabelText("Planting date"), "2026-07-01");
     await user.type(screen.getByLabelText("Location name"), "Hyderabad Farm");
     await user.type(screen.getByLabelText("Latitude"), "17.3");
@@ -87,17 +114,49 @@ describe("SessionPanel", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
-  it("disables duplicate session submission while loading", async () => {
+  it("writes created sessions into the active-session summary and copies state IDs by user action", async () => {
     installFetch(() => new Response(JSON.stringify(sessionResponse)));
+    const writeText = vi.fn().mockResolvedValue(undefined);
     const user = userEvent.setup();
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      get: () => ({ writeText }),
+    });
 
-    render(<SessionPanel />);
+    renderSessionWorkflow();
     await user.type(screen.getByLabelText("Planting date"), "2026-07-01");
     await user.type(screen.getByLabelText("Location name"), "Hyderabad Farm");
     await user.type(screen.getByLabelText("Latitude"), "17.3");
     await user.type(screen.getByLabelText("Longitude"), "78.4");
     await user.click(screen.getByRole("button", { name: "Create session" }));
 
+    expect(await screen.findByText("Hyderabad Farm")).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Copy state ID" }));
+
+    expect(writeText).toHaveBeenCalledWith("state-1");
+    expect(await screen.findByText("State ID copied.")).toBeInTheDocument();
+  });
+
+  it("disables duplicate session submission while loading", async () => {
+    const deferred = deferredResponse();
+    const fetcher = vi.fn<typeof fetch>().mockReturnValue(deferred.promise);
+    vi.stubGlobal("fetch", fetcher);
+    const user = userEvent.setup();
+
+    renderSessionPanel();
+    await user.type(screen.getByLabelText("Planting date"), "2026-07-01");
+    await user.type(screen.getByLabelText("Location name"), "Hyderabad Farm");
+    await user.type(screen.getByLabelText("Latitude"), "17.3");
+    await user.type(screen.getByLabelText("Longitude"), "78.4");
+    await user.click(screen.getByRole("button", { name: "Create session" }));
+
+    expect(screen.getByRole("button", { name: "Creating" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Creating" }));
+    expect(fetcher).toHaveBeenCalledTimes(1);
+
+    deferred.resolve(new Response(JSON.stringify(sessionResponse)));
+
+    expect(await screen.findByText(/Created session/)).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("button", { name: "Create session" })).toBeEnabled());
   });
 
@@ -112,7 +171,7 @@ describe("SessionPanel", () => {
     );
     const user = userEvent.setup();
 
-    render(<SessionPanel />);
+    renderSessionPanel();
     await user.type(screen.getByLabelText("Planting date"), "2026-07-01");
     await user.type(screen.getByLabelText("Location name"), "Bad");
     await user.type(screen.getByLabelText("Latitude"), "17.3");
@@ -127,7 +186,7 @@ describe("SessionPanel", () => {
     installFetch(() => new Response("{}"));
     const user = userEvent.setup();
 
-    render(<SessionPanel />);
+    renderSessionPanel();
     await user.type(screen.getByLabelText("State ID"), "   ");
     await user.click(screen.getByRole("button", { name: "Load session" }));
 
@@ -147,7 +206,7 @@ describe("SessionPanel", () => {
     });
     const user = userEvent.setup();
 
-    render(<SessionPanel />);
+    renderSessionPanel();
     await user.type(screen.getByLabelText("State ID"), "state 1/2");
     await user.click(screen.getByRole("button", { name: "Load session" }));
 
@@ -166,7 +225,7 @@ describe("SessionPanel", () => {
     );
     const user = userEvent.setup();
 
-    render(<SessionPanel />);
+    renderSessionPanel();
     await user.type(screen.getByLabelText("State ID"), "missing");
     await user.click(screen.getByRole("button", { name: "Load session" }));
 
