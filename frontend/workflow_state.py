@@ -16,6 +16,10 @@ DAILY_ADVANCEMENT_CATCH_UP_NOTICE = (
     "The advancement already existed. CropTwin refreshed the local workflow to "
     "the latest canonical state."
 )
+DAILY_ADVANCEMENT_TWIN_REFRESH_FAILED_NOTICE = (
+    "The canonical water state was updated, but CropTwin could not refresh the "
+    "current twin. Retry 'Update digital twin' before running simulations."
+)
 
 
 @dataclass(frozen=True)
@@ -23,6 +27,7 @@ class DailyAdvancementUITransition:
     replace_canonical_water: bool
     replace_twin_from_response: bool
     refresh_authoritative_twin: bool
+    invalidate_current_twin: bool
     clear_downstream: bool
     set_pending_date: bool
     retain_historical_response: bool
@@ -88,6 +93,7 @@ def daily_advancement_ui_transition(
             replace_canonical_water=True,
             replace_twin_from_response=True,
             refresh_authoritative_twin=False,
+            invalidate_current_twin=False,
             clear_downstream=True,
             set_pending_date=True,
             retain_historical_response=False,
@@ -103,6 +109,7 @@ def daily_advancement_ui_transition(
             replace_canonical_water=False,
             replace_twin_from_response=False,
             refresh_authoritative_twin=False,
+            invalidate_current_twin=False,
             clear_downstream=False,
             set_pending_date=False,
             retain_historical_response=False,
@@ -114,6 +121,7 @@ def daily_advancement_ui_transition(
             replace_canonical_water=False,
             replace_twin_from_response=False,
             refresh_authoritative_twin=False,
+            invalidate_current_twin=False,
             clear_downstream=False,
             set_pending_date=False,
             retain_historical_response=True,
@@ -127,11 +135,12 @@ def daily_advancement_ui_transition(
             replace_canonical_water=True,
             replace_twin_from_response=False,
             refresh_authoritative_twin=True,
+            invalidate_current_twin=True,
             clear_downstream=True,
             set_pending_date=True,
             retain_historical_response=False,
             transition_kind="catch_up_retry",
-            notice=DAILY_ADVANCEMENT_CATCH_UP_NOTICE,
+            notice=None,
         )
     if returned == current_value:
         replace_twin = _valid_snapshot_id(current_snapshot_id) and (
@@ -142,7 +151,8 @@ def daily_advancement_ui_transition(
             replace_canonical_water=True,
             replace_twin_from_response=replace_twin,
             refresh_authoritative_twin=refresh_twin,
-            clear_downstream=False,
+            invalidate_current_twin=refresh_twin,
+            clear_downstream=refresh_twin,
             set_pending_date=False,
             retain_historical_response=True,
             transition_kind="current_retry",
@@ -153,6 +163,7 @@ def daily_advancement_ui_transition(
         replace_canonical_water=False,
         replace_twin_from_response=False,
         refresh_authoritative_twin=False,
+        invalidate_current_twin=False,
         clear_downstream=False,
         set_pending_date=False,
         retain_historical_response=True,

@@ -76,6 +76,15 @@ state, clear simulation, recommendation, and narration outputs, then call
 twin. Historical retries should be read-only locally except for retaining the
 technical response and showing a reuse notice.
 
+If a catch-up retry updates canonical water before the authoritative twin
+refresh completes, the previous twin must be invalidated before the refresh
+request. A failed refresh must never leave an older twin displayed as current.
+Clients that are missing their current snapshot identity must clear dependent
+simulation, recommendation, and narration outputs before recovering the
+authoritative twin. Show catch-up success notices only after the refresh
+succeeds; otherwise keep the technical retry response and ask the user to retry
+the twin update.
+
 ## Streamlit Route Inventory
 
 These are the FastAPI endpoints currently used by the legacy Streamlit client. The migration should reuse them rather than inventing replacement routes.

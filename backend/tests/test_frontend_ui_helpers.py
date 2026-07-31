@@ -39,6 +39,7 @@ from frontend.ui_helpers import (
 from frontend.workflow_state import (
     DAILY_ADVANCEMENT_CATCH_UP_NOTICE,
     DAILY_ADVANCEMENT_REUSED_NOTICE,
+    DAILY_ADVANCEMENT_TWIN_REFRESH_FAILED_NOTICE,
     apply_pending_water_current_date,
     daily_advancement_ui_transition,
     pop_flash_notice,
@@ -194,6 +195,7 @@ def test_should_replace_local_canonical_water_uses_sequences(
                 "replace_canonical_water": True,
                 "replace_twin_from_response": True,
                 "refresh_authoritative_twin": False,
+                "invalidate_current_twin": False,
                 "clear_downstream": True,
                 "set_pending_date": True,
                 "retain_historical_response": False,
@@ -209,11 +211,12 @@ def test_should_replace_local_canonical_water_uses_sequences(
                 "replace_canonical_water": True,
                 "replace_twin_from_response": False,
                 "refresh_authoritative_twin": True,
+                "invalidate_current_twin": True,
                 "clear_downstream": True,
                 "set_pending_date": True,
                 "retain_historical_response": False,
                 "transition_kind": "catch_up_retry",
-                "notice": DAILY_ADVANCEMENT_CATCH_UP_NOTICE,
+                "notice": None,
             },
         ),
         (
@@ -224,7 +227,8 @@ def test_should_replace_local_canonical_water_uses_sequences(
                 "replace_canonical_water": True,
                 "replace_twin_from_response": False,
                 "refresh_authoritative_twin": True,
-                "clear_downstream": False,
+                "invalidate_current_twin": True,
+                "clear_downstream": True,
                 "set_pending_date": False,
                 "retain_historical_response": True,
                 "transition_kind": "current_retry",
@@ -239,6 +243,7 @@ def test_should_replace_local_canonical_water_uses_sequences(
                 "replace_canonical_water": False,
                 "replace_twin_from_response": False,
                 "refresh_authoritative_twin": False,
+                "invalidate_current_twin": False,
                 "clear_downstream": False,
                 "set_pending_date": False,
                 "retain_historical_response": True,
@@ -254,6 +259,7 @@ def test_should_replace_local_canonical_water_uses_sequences(
                 "replace_canonical_water": False,
                 "replace_twin_from_response": False,
                 "refresh_authoritative_twin": False,
+                "invalidate_current_twin": False,
                 "clear_downstream": False,
                 "set_pending_date": False,
                 "retain_historical_response": True,
@@ -269,6 +275,7 @@ def test_should_replace_local_canonical_water_uses_sequences(
                 "replace_canonical_water": False,
                 "replace_twin_from_response": False,
                 "refresh_authoritative_twin": False,
+                "invalidate_current_twin": False,
                 "clear_downstream": False,
                 "set_pending_date": False,
                 "retain_historical_response": True,
@@ -284,6 +291,7 @@ def test_should_replace_local_canonical_water_uses_sequences(
                 "replace_canonical_water": False,
                 "replace_twin_from_response": False,
                 "refresh_authoritative_twin": False,
+                "invalidate_current_twin": False,
                 "clear_downstream": False,
                 "set_pending_date": False,
                 "retain_historical_response": True,
@@ -299,6 +307,7 @@ def test_should_replace_local_canonical_water_uses_sequences(
                 "replace_canonical_water": False,
                 "replace_twin_from_response": False,
                 "refresh_authoritative_twin": False,
+                "invalidate_current_twin": False,
                 "clear_downstream": False,
                 "set_pending_date": False,
                 "retain_historical_response": True,
@@ -341,8 +350,26 @@ def test_current_retry_only_replaces_matching_twin_snapshot() -> None:
 
     assert matching.replace_twin_from_response is True
     assert matching.refresh_authoritative_twin is False
+    assert matching.clear_downstream is False
     assert stale.replace_twin_from_response is False
     assert stale.refresh_authoritative_twin is False
+    assert stale.clear_downstream is False
+
+
+def test_current_retry_without_local_twin_requests_conservative_refresh() -> None:
+    transition = daily_advancement_ui_transition(
+        advancement_created=False,
+        current_sequence=2,
+        returned_sequence=2,
+        current_snapshot_id=None,
+        returned_snapshot_id="snapshot-ledger",
+    )
+
+    assert transition.transition_kind == "current_retry"
+    assert transition.refresh_authoritative_twin is True
+    assert transition.invalidate_current_twin is True
+    assert transition.clear_downstream is True
+    assert transition.set_pending_date is False
 
 
 def test_daily_advancement_ui_transition_does_not_mutate_inputs() -> None:
@@ -373,6 +400,7 @@ class _FakeSessionState(dict):
 class _FakeStreamlit:
     def __init__(self, state: _FakeSessionState) -> None:
         self.session_state = state
+        self.errors: list[str] = []
 
     def spinner(self, _label: str) -> nullcontext[None]:
         return nullcontext()
@@ -380,18 +408,29 @@ class _FakeStreamlit:
     def toast(self, _message: str) -> None:
         return None
 
+    def error(self, message: str) -> None:
+        self.errors.append(message)
+
 
 class _FakeDailyAdvancementClient:
-    def __init__(self, response: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        response: dict[str, Any] | None = None,
+        *,
+        error: Exception | None = None,
+    ) -> None:
         self.response = response or {
             "snapshot_id": "snapshot-authoritative",
             "snapshot_created": False,
             "current_state": {"source": "authoritative"},
         }
+        self.error = error
         self.update_calls: list[str] = []
 
     def update_twin_state(self, state_id: str) -> dict[str, Any]:
         self.update_calls.append(state_id)
+        if self.error is not None:
+            raise self.error
         return self.response
 
 
@@ -504,6 +543,40 @@ def test_apply_daily_advancement_result_handles_catch_up_retry(
     assert client.update_calls == ["state-1"]
 
 
+def test_apply_daily_advancement_result_handles_catch_up_refresh_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = _base_daily_state()
+    result = {
+        "advancement_created": False,
+        "water_state": _water_payload(2, "2026-07-11T00:00:00Z"),
+        "twin_state": _twin_payload("snapshot-ledger"),
+    }
+
+    client = _apply_daily_result_with_fake_streamlit(
+        monkeypatch,
+        state,
+        result,
+        client=_FakeDailyAdvancementClient(error=RuntimeError("refresh failed")),
+    )
+
+    assert state["water_response"] == result["water_state"]
+    assert state["latest_water_observation_id"] == "water-2"
+    assert state["latest_water_sequence"] == 2
+    assert state["twin_response"] is None
+    assert state["simulation_response"] is None
+    assert state["recommendation_response"] is None
+    assert state["narration_response"] is None
+    assert state["pending_water_current_date"] == date(2026, 7, 12)
+    assert state["daily_advancement_retry_response"] == result
+    assert (
+        state["daily_advancement_notice"]
+        == DAILY_ADVANCEMENT_TWIN_REFRESH_FAILED_NOTICE
+    )
+    assert state["daily_advancement_notice"] != DAILY_ADVANCEMENT_CATCH_UP_NOTICE
+    assert client.update_calls == ["state-1"]
+
+
 def test_apply_daily_advancement_result_handles_current_retry_matching_snapshot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -566,9 +639,42 @@ def test_apply_daily_advancement_result_refreshes_current_retry_without_local_tw
     )
 
     assert state["twin_response"] == authoritative_twin
-    assert state["simulation_response"] == {"simulation": "kept"}
+    assert state["simulation_response"] is None
+    assert state["recommendation_response"] is None
+    assert state["narration_response"] is None
     assert state["pending_water_current_date"] == date(2026, 7, 20)
     assert state["daily_advancement_retry_response"] == result
+    assert client.update_calls == ["state-1"]
+
+
+def test_apply_daily_advancement_result_handles_current_retry_refresh_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = _base_daily_state()
+    state["twin_response"] = None
+    result = {
+        "advancement_created": False,
+        "water_state": _water_payload(1, "2026-07-10T00:00:00Z"),
+        "twin_state": _twin_payload("snapshot-ledger"),
+    }
+
+    client = _apply_daily_result_with_fake_streamlit(
+        monkeypatch,
+        state,
+        result,
+        client=_FakeDailyAdvancementClient(error=RuntimeError("refresh failed")),
+    )
+
+    assert state["twin_response"] is None
+    assert state["simulation_response"] is None
+    assert state["recommendation_response"] is None
+    assert state["narration_response"] is None
+    assert state["pending_water_current_date"] == date(2026, 7, 20)
+    assert state["daily_advancement_retry_response"] == result
+    assert (
+        state["daily_advancement_notice"]
+        == DAILY_ADVANCEMENT_TWIN_REFRESH_FAILED_NOTICE
+    )
     assert client.update_calls == ["state-1"]
 
 

@@ -53,6 +53,8 @@ from frontend.ui_helpers import (  # noqa: E402
 )
 from frontend.views.style import inject_custom_css  # noqa: E402
 from frontend.workflow_state import (  # noqa: E402
+    DAILY_ADVANCEMENT_CATCH_UP_NOTICE,
+    DAILY_ADVANCEMENT_TWIN_REFRESH_FAILED_NOTICE,
     apply_pending_water_current_date,
     daily_advancement_ui_transition,
     pop_flash_notice,
@@ -953,30 +955,41 @@ def _apply_daily_advancement_result(
         returned_snapshot_id=returned_snapshot_id,
     )
 
-    if transition.notice:
-        set_flash_notice(st.session_state, transition.notice)
-    if transition.retain_historical_response:
-        st.session_state.daily_advancement_retry_response = result
-
     if isinstance(water_state, dict) and transition.replace_canonical_water:
         st.session_state.water_response = water_state
         _remember_latest_water_base(water_state)
     if isinstance(twin_state, dict) and transition.replace_twin_from_response:
         st.session_state.twin_response = twin_state
+    if transition.clear_downstream:
+        _clear_downstream("twin")
+    if transition.invalidate_current_twin:
+        st.session_state.twin_response = None
+
+    notice = transition.notice
+    retain_response = transition.retain_historical_response
     if transition.refresh_authoritative_twin:
         refreshed = _call_api(
             "Refreshing current twin",
             lambda: client.update_twin_state(st.session_state.active_state_id),
         )
-        if refreshed:
+        if refreshed is not None:
             st.session_state.twin_response = refreshed
+            if transition.transition_kind == "catch_up_retry":
+                notice = DAILY_ADVANCEMENT_CATCH_UP_NOTICE
+        else:
+            st.session_state.twin_response = None
+            notice = DAILY_ADVANCEMENT_TWIN_REFRESH_FAILED_NOTICE
+            retain_response = True
+
+    if notice:
+        set_flash_notice(st.session_state, notice)
+    if retain_response:
+        st.session_state.daily_advancement_retry_response = result
     if transition.set_pending_date:
         st.session_state.pending_water_current_date = _returned_water_next_date(
             water_state,
             fallback_pending_date,
         )
-    if transition.clear_downstream:
-        _clear_downstream("twin")
 
 
 def _returned_water_next_date(
