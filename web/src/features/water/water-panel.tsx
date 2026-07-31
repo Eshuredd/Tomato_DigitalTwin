@@ -47,6 +47,7 @@ export function WaterPanel({
     latestWaterObservationId,
     latestWaterSequence,
     session,
+    twinUpdatePending,
     water,
     waterComputationPending,
     weatherDraft,
@@ -56,6 +57,7 @@ export function WaterPanel({
   const activeStateRef = useRef(activeStateId);
   const abortControllerRef = useRef<AbortController | null>(null);
   const currentRequestSignatureRef = useRef<string | null>(null);
+  const currentRequestRef = useRef<{ stateId: string; requestId: string } | null>(null);
   const requestRef = useRef(0);
   const waterIdentityRef = useRef<{ signature: string; waterUpdateId: string } | null>(
     null,
@@ -83,6 +85,22 @@ export function WaterPanel({
     }, 0);
     return () => window.clearTimeout(timeoutId);
   }, [activeStateId, session?.planting_date]);
+
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+      requestRef.current += 1;
+      const currentRequest = currentRequestRef.current;
+      if (currentRequest) {
+        dispatch({
+          type: "waterComputationFinished",
+          stateId: currentRequest.stateId,
+          requestId: currentRequest.requestId,
+        });
+      }
+      currentRequestRef.current = null;
+    };
+  }, [dispatch]);
 
   useEffect(() => {
     if (!weatherDate) {
@@ -142,7 +160,7 @@ export function WaterPanel({
 
   async function computeWater(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!activeStateId || waterComputationPending) {
+    if (!activeStateId || waterComputationPending || twinUpdatePending) {
       return;
     }
     if (!weatherDraft) {
@@ -198,6 +216,7 @@ export function WaterPanel({
     abortControllerRef.current?.abort();
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
+    currentRequestRef.current = { stateId: requestStateId, requestId };
     currentRequestSignatureRef.current = signature;
     dispatch({
       type: "waterComputationStarted",
@@ -250,6 +269,9 @@ export function WaterPanel({
       if (abortControllerRef.current === abortController) {
         abortControllerRef.current = null;
       }
+      if (currentRequestRef.current?.requestId === requestId) {
+        currentRequestRef.current = null;
+      }
       dispatch({
         type: "waterComputationFinished",
         stateId: requestStateId,
@@ -264,11 +286,22 @@ export function WaterPanel({
     <Panel>
       <div className="grid gap-6 lg:grid-cols-[0.95fr_1.05fr]">
         <div>
-          <h2 className="text-xl font-semibold">Initial water state</h2>
+          <h2 className="text-xl font-semibold">Water state</h2>
           <p className="mt-2 text-sm leading-6 text-[var(--color-muted)]">
             Submit the reviewed weather and optional recent irrigation event to
             the existing deterministic water-state endpoint.
           </p>
+          {latestWaterSequence === 0 ? (
+            <p className="mt-2 text-sm text-[var(--color-muted)]">
+              This will create the first canonical water observation for the
+              active session.
+            </p>
+          ) : (
+            <p className="mt-2 text-sm text-[var(--color-muted)]">
+              This computation will extend the canonical water lineage from
+              base sequence {latestWaterSequence}.
+            </p>
+          )}
           {!activeStateId ? (
             <div className="mt-4">
               <Notice tone="warning">
@@ -286,7 +319,7 @@ export function WaterPanel({
           <form className="mt-5 grid gap-5" onSubmit={computeWater}>
             <Field label="Water computation date" htmlFor="water_current_date">
               <Input
-                disabled={!activeStateId || waterComputationPending}
+                disabled={!activeStateId || waterComputationPending || twinUpdatePending}
                 id="water_current_date"
                 min={session?.planting_date}
                 onChange={(event) => {
@@ -303,7 +336,7 @@ export function WaterPanel({
             </Field>
             <IrrigationInput
               key={activeStateId ?? "inactive"}
-              disabled={!activeStateId || waterComputationPending}
+              disabled={!activeStateId || waterComputationPending || twinUpdatePending}
               onChange={handleIrrigationChange}
             />
             {dateMismatch ? (
@@ -318,10 +351,11 @@ export function WaterPanel({
                 !activeStateId ||
                 !weatherDraft ||
                 !irrigationDraft.valid ||
-                waterComputationPending
+                waterComputationPending ||
+                twinUpdatePending
               }
             >
-              {waterComputationPending ? "Computing water state" : "Compute initial water state"}
+              {waterComputationPending ? "Computing water state" : "Compute water state"}
             </Button>
           </form>
           <div aria-live="polite" className="mt-4 grid gap-3">

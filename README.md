@@ -17,7 +17,7 @@ CropTwin does not treat model output as a confirmed diagnosis, and it does not r
 | Tomato disease classifier | Implemented |
 | Temperature calibration | Implemented |
 | Streamlit frontend | Implemented |
-| Next.js frontend | Phase 3 weather and initial water workflow implemented |
+| Next.js frontend | Phase 4 canonical twin-state update implemented |
 | Automated tests | Implemented |
 | Persistent database | Implemented |
 | Public deployment | Not yet implemented |
@@ -38,7 +38,7 @@ CropTwin does not treat model output as a confirmed diagnosis, and it does not r
 - Farmer-readable narration of an already-selected recommendation.
 - Session history.
 - Streamlit workflow interface.
-- Next.js migration UI for backend health, session creation/loading, disease evidence, hardened weather review, recent irrigation, and initial water computation.
+- Next.js migration UI for backend health, session creation/loading, disease evidence, hardened weather review, recent irrigation, water computation, and canonical twin-state update.
 - Direct FastAPI, Swagger, and ReDoc access.
 
 ## Problem Statement
@@ -100,7 +100,8 @@ explicit in the operation modules. The Streamlit entrypoint remains
 `frontend/app.py` and is retained as the temporary legacy frontend. A Next.js
 migration is underway in `web/` and documented in
 `docs/nextjs-frontend-migration.md`; it now covers session, disease evidence,
-weather review, recent irrigation input, and initial water-state computation
+weather review, recent irrigation input, water-state computation, and canonical
+twin-state update
 workflows but does not yet provide full Streamlit feature parity.
 
 ## End-to-End Workflow
@@ -135,7 +136,7 @@ Supported simulation actions:
 | Disease model runtime | PyTorch / Torchvision |
 | Model architecture | MobileNetV3-Small |
 | Image handling | Pillow |
-| Frontend | Streamlit, Next.js Phase 3 |
+| Frontend | Streamlit, Next.js Phase 4 |
 | HTTP client | httpx |
 | Testing | pytest |
 | State storage | SQLAlchemy persistent store, optional in-memory store |
@@ -164,12 +165,12 @@ validation, and persistence; the browser submits requests and renders API
 responses only. The Next.js app now includes the app shell, health check,
 session creation/loading, active-session summary, disease-image evidence
 workflow, weather review with nullable optional weather inputs, explicit recent
-irrigation validity, and initial water-state computation with pending-state and
-stale-response guards. Twin update, advancement, simulation, recommendation,
-narration, history, records, farms, and plots remain in Streamlit until later
-migration phases. Backend changes are deferred until Next.js reaches full
-Streamlit feature parity unless an existing API contract makes a frontend
-workflow impossible.
+irrigation validity, water-state computation, and canonical twin-state update
+with pending-state and stale-response guards. Advancement, simulation,
+recommendation, narration, history, records, farms, and plots remain in
+Streamlit until later migration phases. Backend changes are deferred until
+Next.js reaches full Streamlit feature parity unless an existing API contract
+makes a frontend workflow impossible.
 
 ## Persistence
 

@@ -1,7 +1,9 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { WorkflowProvider } from "@/features/workflow/workflow-context";
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { useWorkflowState, WorkflowProvider } from "@/features/workflow/workflow-context";
 import { WaterPanel } from "@/features/water/water-panel";
 import type {
   SessionResponse,
@@ -86,11 +88,13 @@ const waterState: WaterStateResponse = {
 };
 
 function activeState(overrides: Partial<WorkflowState> = {}): WorkflowState {
-  return {
+  const state: WorkflowState = {
     activeStateId: "state-a",
     session: sessionA,
+    loadedCurrentState: null,
     systemInfo: null,
     disease: null,
+    diseaseRequestPending: false,
     weatherSnapshot: null,
     weatherDraft,
     weatherDate: null,
@@ -98,16 +102,34 @@ function activeState(overrides: Partial<WorkflowState> = {}): WorkflowState {
     waterComputationPending: false,
     activeWaterRequestId: null,
     activeWaterRequestSignature: null,
+    twin: null,
+    twinUpdatePending: false,
+    activeTwinRequestId: null,
+    activeTwinSourceSignature: null,
     latestWaterObservationId: null,
     latestWaterSequence: 0,
     ...overrides,
   };
+  return state;
 }
 
 function fakeWeatherEndpoints(): WeatherPanelEndpoints {
   return {
     getWeatherSnapshot: vi.fn().mockResolvedValue(weatherSnapshot),
   };
+}
+
+function deferredWeather() {
+  let resolve!: (response: WeatherSnapshotResponse) => void;
+  const promise = new Promise<WeatherSnapshotResponse>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
+function WeatherMarker() {
+  const { weatherSnapshot } = useWorkflowState();
+  return <div>{weatherSnapshot ? "has-weather" : "no-weather"}</div>;
 }
 
 describe("WeatherPanel", () => {
@@ -169,11 +191,11 @@ describe("WeatherPanel", () => {
     expect(tminInput).toHaveValue(null);
     expect(await screen.findByText("Minimum temperature (C) is required.")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Deterministic water state" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Compute initial water state" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Compute water state" })).toBeDisabled();
 
     await user.type(tminInput, "21");
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Compute initial water state" })).toBeEnabled(),
+      expect(screen.getByRole("button", { name: "Compute water state" })).toBeEnabled(),
     );
     expect(screen.queryByRole("heading", { name: "Deterministic water state" })).not.toBeInTheDocument();
   });
@@ -194,5 +216,43 @@ describe("WeatherPanel", () => {
     expect(screen.getByLabelText("Weather date")).toBeDisabled();
     expect(screen.getByRole("button", { name: "Retrieve weather snapshot" })).toBeDisabled();
     expect(screen.getByLabelText("Minimum temperature (C)")).toBeDisabled();
+  });
+
+  it("aborts weather requests on unmount and does not store late responses", async () => {
+    const deferred = deferredWeather();
+    let signal: AbortSignal | undefined;
+    const endpoints: WeatherPanelEndpoints = {
+      getWeatherSnapshot: vi.fn((_stateId, _targetDate, options?: { signal?: AbortSignal }) => {
+        signal = options?.signal;
+        return deferred.promise;
+      }),
+    };
+    const user = userEvent.setup();
+
+    function Harness() {
+      const [showPanel, setShowPanel] = useState(true);
+      return (
+        <WorkflowProvider initialState={activeState({ weatherDraft: null })}>
+          <Button type="button" onClick={() => setShowPanel(false)}>
+            Hide weather
+          </Button>
+          {showPanel ? <WeatherPanel endpoints={endpoints} /> : null}
+          <WeatherMarker />
+        </WorkflowProvider>
+      );
+    }
+
+    render(<Harness />);
+
+    fireEvent.change(screen.getByLabelText("Weather date"), {
+      target: { value: "2026-08-04" },
+    });
+    await user.click(screen.getByRole("button", { name: "Retrieve weather snapshot" }));
+    await user.click(screen.getByRole("button", { name: "Hide weather" }));
+    expect(signal?.aborted).toBe(true);
+
+    deferred.resolve(weatherSnapshot);
+
+    await waitFor(() => expect(screen.getByText("no-weather")).toBeInTheDocument());
   });
 });

@@ -64,8 +64,10 @@ function inactiveState(): WorkflowState {
   return {
     activeStateId: null,
     session: null,
+    loadedCurrentState: null,
     systemInfo: null,
     disease: null,
+    diseaseRequestPending: false,
     weatherSnapshot: null,
     weatherDraft: null,
     weatherDate: null,
@@ -73,6 +75,10 @@ function inactiveState(): WorkflowState {
     waterComputationPending: false,
     activeWaterRequestId: null,
     activeWaterRequestSignature: null,
+    twin: null,
+    twinUpdatePending: false,
+    activeTwinRequestId: null,
+    activeTwinSourceSignature: null,
     latestWaterObservationId: null,
     latestWaterSequence: 0,
   };

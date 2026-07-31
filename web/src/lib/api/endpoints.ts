@@ -5,6 +5,7 @@ import {
   parseSessionResponse,
   parseSessionStateResponse,
   parseSystemInfoResponse,
+  parseUpdateTwinStateResponse,
   parseWaterStateResponse,
   parseWeatherSnapshotResponse,
 } from "./validators";
@@ -126,11 +127,19 @@ export class CropTwinEndpoints {
     );
   }
 
-  updateTwinState(stateId: string): Promise<UpdateTwinStateResponse> {
-    return this.client.request<UpdateTwinStateResponse, { state_id: string }>(
+  updateTwinState(
+    stateId: string,
+    options: { signal?: AbortSignal; timeoutMs?: number } = {},
+  ): Promise<UpdateTwinStateResponse> {
+    return this.client.request<unknown, { state_id: string }>(
       `/sessions/${encodePath(stateId)}/update-twin-state`,
-      { method: "POST", body: { state_id: stateId } },
-    );
+      {
+        method: "POST",
+        body: { state_id: stateId },
+        signal: options.signal,
+        timeoutMs: options.timeoutMs,
+      },
+    ).then(parseUpdateTwinStateResponse);
   }
 
   simulateActions(

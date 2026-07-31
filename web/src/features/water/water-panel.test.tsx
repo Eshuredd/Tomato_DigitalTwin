@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   useWorkflowDispatch,
@@ -96,11 +97,13 @@ const waterState: WaterStateResponse = {
 };
 
 function activeState(overrides: Partial<WorkflowState> = {}): WorkflowState {
-  return {
+  const state: WorkflowState = {
     activeStateId: "state-a",
     session: sessionA,
+    loadedCurrentState: null,
     systemInfo: null,
     disease: null,
+    diseaseRequestPending: false,
     weatherSnapshot: null,
     weatherDraft,
     weatherDate: null,
@@ -108,10 +111,15 @@ function activeState(overrides: Partial<WorkflowState> = {}): WorkflowState {
     waterComputationPending: false,
     activeWaterRequestId: null,
     activeWaterRequestSignature: null,
+    twin: null,
+    twinUpdatePending: false,
+    activeTwinRequestId: null,
+    activeTwinSourceSignature: null,
     latestWaterObservationId: null,
     latestWaterSequence: 0,
     ...overrides,
   };
+  return state;
 }
 
 function fakeEndpoints(response: WaterStateResponse = waterState): WaterPanelEndpoints {
@@ -179,7 +187,7 @@ describe("WaterPanel", () => {
     const user = userEvent.setup();
     renderWaterPanel(endpoints);
 
-    await user.click(screen.getByRole("button", { name: "Compute initial water state" }));
+    await user.click(screen.getByRole("button", { name: "Compute water state" }));
 
     await waitFor(() => expect(endpoints.computeWaterState).toHaveBeenCalledTimes(1));
     expect(endpoints.computeWaterState).toHaveBeenCalledWith(
@@ -195,7 +203,7 @@ describe("WaterPanel", () => {
     renderWaterPanel(endpoints);
 
     await user.selectOptions(screen.getByLabelText("Input mode"), "direct");
-    await user.click(screen.getByRole("button", { name: "Compute initial water state" }));
+    await user.click(screen.getByRole("button", { name: "Compute water state" }));
 
     await waitFor(() => expect(endpoints.computeWaterState).toHaveBeenCalledTimes(1));
     expect(endpoints.computeWaterState).toHaveBeenCalledWith(
@@ -213,7 +221,7 @@ describe("WaterPanel", () => {
     await user.selectOptions(screen.getByLabelText("Input mode"), "litres_area");
 
     expect(await screen.findByText("Irrigated area (m2) must be greater than 0.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Compute initial water state" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Compute water state" })).toBeDisabled();
     expect(endpoints.computeWaterState).not.toHaveBeenCalled();
   });
 
@@ -225,7 +233,7 @@ describe("WaterPanel", () => {
     await user.selectOptions(screen.getByLabelText("Input mode"), "drip_runtime");
 
     expect(await screen.findByText("Emitter count must be a positive integer.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Compute initial water state" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Compute water state" })).toBeDisabled();
     expect(endpoints.computeWaterState).not.toHaveBeenCalled();
   });
 
@@ -240,7 +248,7 @@ describe("WaterPanel", () => {
     await user.type(depthInput, "-1");
 
     expect(await screen.findByText("Irrigation depth (mm) must be >= 0.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Compute initial water state" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Compute water state" })).toBeDisabled();
     expect(endpoints.computeWaterState).not.toHaveBeenCalled();
   });
 
@@ -257,9 +265,9 @@ describe("WaterPanel", () => {
     await user.type(screen.getByLabelText("Irrigated area (m2)"), "20");
 
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Compute initial water state" })).toBeEnabled(),
+      expect(screen.getByRole("button", { name: "Compute water state" })).toBeEnabled(),
     );
-    await user.click(screen.getByRole("button", { name: "Compute initial water state" }));
+    await user.click(screen.getByRole("button", { name: "Compute water state" }));
 
     await waitFor(() => expect(endpoints.computeWaterState).toHaveBeenCalledTimes(1));
     expect(endpoints.computeWaterState).toHaveBeenCalledWith(
@@ -312,7 +320,7 @@ describe("WaterPanel", () => {
     await waitFor(() => expect(screen.getByLabelText("Input mode")).toHaveValue("none"));
     expect(screen.queryByDisplayValue("6")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Compute initial water state" }));
+    await user.click(screen.getByRole("button", { name: "Compute water state" }));
     await waitFor(() => expect(endpoints.computeWaterState).toHaveBeenCalledTimes(1));
     expect(endpoints.computeWaterState).toHaveBeenCalledWith(
       "state-b",
@@ -359,15 +367,55 @@ describe("WaterPanel", () => {
       </WorkflowProvider>,
     );
 
-    await user.click(screen.getByRole("button", { name: "Compute initial water state" }));
+    await user.click(screen.getByRole("button", { name: "Compute water state" }));
     expect(screen.getByRole("button", { name: "Computing water state" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Mutate weather" }));
     deferred.resolve(waterState);
 
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Compute initial water state" })).toBeEnabled(),
+      expect(screen.getByRole("button", { name: "Compute water state" })).toBeEnabled(),
     );
     expect(screen.getByText("no-stored-water")).toBeInTheDocument();
     expect(screen.queryByText("stored-water")).not.toBeInTheDocument();
+  });
+
+  it("aborts water requests on unmount and releases pending state", async () => {
+    const deferred = deferredWater();
+    let signal: AbortSignal | undefined;
+    const endpoints: WaterPanelEndpoints = {
+      computeWaterState: vi.fn((_stateId, _request, options?: { signal?: AbortSignal }) => {
+        signal = options?.signal;
+        return deferred.promise;
+      }),
+    };
+    const user = userEvent.setup();
+
+    function PendingMarker() {
+      const { waterComputationPending } = useWorkflowState();
+      return <div>{waterComputationPending ? "water-pending" : "water-idle"}</div>;
+    }
+
+    function Harness() {
+      const [showPanel, setShowPanel] = useState(true);
+      return (
+        <WorkflowProvider initialState={activeState()}>
+          <Button type="button" onClick={() => setShowPanel(false)}>
+            Hide water
+          </Button>
+          {showPanel ? <WaterPanel endpoints={endpoints} /> : null}
+          <PendingMarker />
+        </WorkflowProvider>
+      );
+    }
+
+    render(<Harness />);
+
+    await user.click(screen.getByRole("button", { name: "Compute water state" }));
+    expect(screen.getByText("water-pending")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Hide water" }));
+    expect(signal?.aborted).toBe(true);
+    deferred.resolve(waterState);
+
+    await waitFor(() => expect(screen.getByText("water-idle")).toBeInTheDocument());
   });
 });

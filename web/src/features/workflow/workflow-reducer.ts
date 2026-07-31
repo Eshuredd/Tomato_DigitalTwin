@@ -19,6 +19,7 @@ export function workflowReducer(
         ...clearActiveSessionData(state),
         activeStateId: action.session.state_id,
         session: action.session,
+        loadedCurrentState: null,
       };
     case "sessionLoaded": {
       const sameState = state.activeStateId === action.session.state_id;
@@ -26,12 +27,29 @@ export function workflowReducer(
         ...(sameState ? state : clearActiveSessionData(state)),
         activeStateId: action.session.state_id,
         session: action.session,
+        loadedCurrentState: action.session.current_state,
       };
     }
     case "sessionCleared":
       return {
         ...initialWorkflowState,
         systemInfo: state.systemInfo,
+      };
+    case "diseaseRequestStarted":
+      if (state.activeStateId !== action.stateId) {
+        return state;
+      }
+      return {
+        ...state,
+        diseaseRequestPending: true,
+      };
+    case "diseaseRequestFinished":
+      if (state.activeStateId !== action.stateId) {
+        return state;
+      }
+      return {
+        ...state,
+        diseaseRequestPending: false,
       };
     case "diseaseReceived":
       if (
@@ -43,6 +61,11 @@ export function workflowReducer(
       return {
         ...state,
         disease: action.disease,
+        diseaseRequestPending: false,
+        twin: null,
+        twinUpdatePending: false,
+        activeTwinRequestId: null,
+        activeTwinSourceSignature: null,
       };
     case "weatherSnapshotReceived":
       if (
@@ -120,8 +143,57 @@ export function workflowReducer(
         waterComputationPending: false,
         activeWaterRequestId: null,
         activeWaterRequestSignature: null,
+        twin: null,
+        twinUpdatePending: false,
+        activeTwinRequestId: null,
+        activeTwinSourceSignature: null,
         latestWaterObservationId: action.water.water_observation_id ?? null,
         latestWaterSequence: action.water.water_sequence,
+      };
+    case "twinUpdateStarted":
+      if (state.activeStateId !== action.stateId) {
+        return state;
+      }
+      return {
+        ...state,
+        twinUpdatePending: true,
+        activeTwinRequestId: action.requestId,
+        activeTwinSourceSignature: action.sourceSignature,
+      };
+    case "twinUpdateFinished":
+      if (
+        state.activeStateId !== action.stateId ||
+        state.activeTwinRequestId !== action.requestId
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        twinUpdatePending: false,
+        activeTwinRequestId: null,
+        activeTwinSourceSignature: null,
+      };
+    case "twinReceived":
+      if (
+        state.activeStateId !== action.stateId ||
+        action.twin.state_id !== action.stateId
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        twin: action.twin,
+        twinUpdatePending: false,
+        activeTwinRequestId: null,
+        activeTwinSourceSignature: null,
+      };
+    case "twinInvalidated":
+      if (state.activeStateId !== action.stateId) {
+        return state;
+      }
+      return {
+        ...state,
+        twin: null,
       };
     default:
       return state;
@@ -133,7 +205,9 @@ function clearActiveSessionData(state: WorkflowState): WorkflowState {
     ...state,
     activeStateId: null,
     session: null,
+    loadedCurrentState: null,
     disease: null,
+    diseaseRequestPending: false,
     weatherSnapshot: null,
     weatherDraft: null,
     weatherDate: null,
@@ -141,6 +215,10 @@ function clearActiveSessionData(state: WorkflowState): WorkflowState {
     waterComputationPending: false,
     activeWaterRequestId: null,
     activeWaterRequestSignature: null,
+    twin: null,
+    twinUpdatePending: false,
+    activeTwinRequestId: null,
+    activeTwinSourceSignature: null,
     latestWaterObservationId: null,
     latestWaterSequence: 0,
   };

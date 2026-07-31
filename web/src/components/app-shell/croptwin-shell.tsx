@@ -7,6 +7,7 @@ import { ActiveSessionSummary } from "@/features/workflow/active-session-summary
 import { DiseasePanel } from "@/features/disease/disease-panel";
 import { WeatherPanel } from "@/features/weather/weather-panel";
 import { WaterPanel } from "@/features/water/water-panel";
+import { TwinPanel } from "@/features/twin/twin-panel";
 
 export function CropTwinShell() {
   return (
@@ -43,10 +44,10 @@ export function CropTwinShell() {
             <Panel>
               <h2 className="text-xl font-semibold">Migration phase</h2>
               <p className="mt-3 text-sm leading-6 text-[var(--color-muted)]">
-                Phase 3 adds weather review, recent irrigation input and the
-                initial deterministic water computation. Twin updates,
-                simulation, recommendations and narration remain in Streamlit
-                until their workflow screens are migrated deliberately.
+                Phase 4 adds canonical twin-state update after accepted disease
+                evidence and water state. One-day advancement, simulation,
+                recommendations and narration remain in Streamlit until their
+                workflow screens are migrated deliberately.
               </p>
             </Panel>
           </section>
@@ -56,6 +57,7 @@ export function CropTwinShell() {
           <DiseasePanel />
           <WeatherPanel />
           <WaterPanel />
+          <TwinPanel />
         </WorkflowProvider>
       </div>
     </main>

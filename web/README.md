@@ -1,6 +1,6 @@
 # CropTwin Next.js Frontend
 
-This is the Phase 3 Next.js frontend for CropTwin. It provides the application shell, typed FastAPI client, backend health status, shared active-session state, session creation/loading, disease-image evidence submission/results, weather review, recent irrigation input, and initial deterministic water-state computation.
+This is the Phase 4 Next.js frontend for CropTwin. It provides the application shell, typed FastAPI client, backend health status, shared active-session state, session creation/loading, disease-image evidence submission/results, weather review, recent irrigation input, deterministic water-state computation, and canonical twin-state update.
 
 The FastAPI backend remains authoritative for agronomy, disease inference, recommendations, narration, validation, and persistence. The legacy Streamlit frontend in `../frontend/` remains operational while the migration proceeds.
 
@@ -59,7 +59,7 @@ The request body matches the existing FastAPI contract:
 
 Disease evidence is rendered from backend response values. Confidence is shown as a percentage with the raw value in technical details. Uncertainty remains visible, including high-uncertainty and `UNKNOWN` results. Technical details never include uploaded image bytes.
 
-## Weather And Initial Water Flow
+## Weather, Water And Canonical Twin Flow
 
 Weather is retrieved only when the user presses the weather snapshot button. The request uses `GET /sessions/{state_id}/weather-snapshot?target_date=YYYY-MM-DD`; components call the typed API wrapper rather than raw `fetch`.
 
@@ -69,7 +69,9 @@ Fetched weather snapshots default the water computation date to the snapshot `ta
 
 Recent irrigation can be omitted, entered directly in millimetres, converted from litres over area, or converted from drip runtime. Positive events send `LastIrrigationEvent` with a stable event id for the unchanged payload. A zero-depth entry sends no irrigation event. Invalid irrigation input is tracked explicitly and disables water computation instead of being interpreted as no irrigation.
 
-Initial water computation is submitted only when the user presses the compute button. The request uses `POST /sessions/{state_id}/compute-water-state` with the active state id, current date, reviewed weather, optional irrigation event, and a retry-stable `water_update_id`. First observations omit base water fields; later observations include the latest accepted water observation id and sequence. Weather, water-date and irrigation controls are disabled while a water request is pending; late or changed-payload responses are discarded.
+Water computation is submitted only when the user presses the compute button. The request uses `POST /sessions/{state_id}/compute-water-state` with the active state id, current date, reviewed weather, optional irrigation event, and a retry-stable `water_update_id`. First observations omit base water fields; later observations include the latest accepted water observation id and sequence. Weather, water-date and irrigation controls are disabled while a water request is pending; late or changed-payload responses are discarded.
+
+Canonical twin update is submitted only after the active session has accepted disease evidence and accepted water state. The request uses `POST /sessions/{state_id}/update-twin-state` with the exact body `{ "state_id": "active-state-id" }`. The UI captures a stable source signature from the accepted disease and water observations, aborts or discards stale responses after session/source changes, and renders the backend `current_state` without frontend calculations, simulations, recommendations, or action advice. New snapshots show `A new canonical twin snapshot was created.` Reused snapshots show `The canonical twin already reflected the latest accepted observations.`
 
 ## Safety Boundaries
 
@@ -82,7 +84,6 @@ Initial water computation is submitted only when the user presses the compute bu
 
 Still in Streamlit until later phases:
 
-- Twin update.
 - One-day advancement.
 - Simulation and recommendation.
 - Narration, history, and actual actions.

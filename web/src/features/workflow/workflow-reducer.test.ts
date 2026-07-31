@@ -5,6 +5,7 @@ import type {
   DiseasePredictionResponse,
   SessionResponse,
   SessionStateResponse,
+  UpdateTwinStateResponse,
   WaterStateResponse,
   WeatherInput,
   WeatherSnapshotResponse,
@@ -127,7 +128,48 @@ const waterState: WaterStateResponse = {
   observation_time_basis: "DATE_ONLY_UTC_START",
 };
 
+const twinState: UpdateTwinStateResponse = {
+  state_id: "state-a",
+  current_state: {
+    crop_type: "tomato",
+    growth_stage: "development",
+    days_since_planting: 30,
+    predicted_label: "Tomato___Late_blight",
+    disease_category: "fungal",
+    confidence_calibrated: 0.91,
+    uncertainty_score: 0.09,
+    uncertainty_band: "low",
+    eto_computed: 4,
+    eto_method: "penman_monteith",
+    kc: 0.8,
+    etc: 3.2,
+    taw: 48,
+    raw_threshold: 24,
+    raw_root_zone_depletion_mm: 0,
+    root_zone_depletion_mm: 0,
+    root_zone_depletion: 0,
+    water_surplus_mm: 0,
+    depletion_beyond_taw_mm: 0,
+    estimated_moisture_state: "adequate",
+    stress_band: "low",
+    observed_at: "2026-07-31T00:00:00Z",
+    computed_at: "2026-07-31T01:00:00Z",
+    observation_time_basis: "DATE_ONLY_UTC_START",
+    last_update_time: "2026-07-31T01:00:00Z",
+  },
+  state_history_count: 1,
+  snapshot_id: "snapshot-1",
+  snapshot_created: true,
+};
+
 describe("workflowReducer", () => {
+  it("starts with no twin state", () => {
+    expect(initialWorkflowState.twin).toBeNull();
+    expect(initialWorkflowState.twinUpdatePending).toBe(false);
+    expect(initialWorkflowState.activeTwinRequestId).toBeNull();
+    expect(initialWorkflowState.activeTwinSourceSignature).toBeNull();
+  });
+
   it("makes created sessions active and clears prior disease", () => {
     const state = workflowReducer({ ...initialWorkflowState, disease: diseaseA }, {
       type: "sessionCreated",
@@ -147,6 +189,7 @@ describe("workflowReducer", () => {
 
     expect(state.activeStateId).toBe("state-b");
     expect(state.session).toBe(sessionB);
+    expect(state.loadedCurrentState).toBe(sessionB.current_state);
   });
 
   it("clears disease when loading a different state", () => {
@@ -367,12 +410,169 @@ describe("workflowReducer", () => {
     })).toBe(active);
   });
 
+  it("starts twin update only for the active state", () => {
+    const active = workflowReducer(initialWorkflowState, {
+      type: "sessionCreated",
+      session: sessionA,
+    });
+
+    expect(workflowReducer(active, {
+      type: "twinUpdateStarted",
+      stateId: "state-b",
+      requestId: "twin-1",
+      sourceSignature: "source-1",
+    })).toBe(active);
+
+    const pending = workflowReducer(active, {
+      type: "twinUpdateStarted",
+      stateId: "state-a",
+      requestId: "twin-1",
+      sourceSignature: "source-1",
+    });
+    expect(pending.twinUpdatePending).toBe(true);
+    expect(pending.activeTwinRequestId).toBe("twin-1");
+    expect(pending.activeTwinSourceSignature).toBe("source-1");
+  });
+
+  it("clears matching twin update finishes and ignores non-matching finishes", () => {
+    const pending: WorkflowState = {
+      ...initialWorkflowState,
+      activeStateId: "state-a",
+      session: sessionA,
+      twinUpdatePending: true,
+      activeTwinRequestId: "twin-1",
+      activeTwinSourceSignature: "source-1",
+    };
+
+    expect(workflowReducer(pending, {
+      type: "twinUpdateFinished",
+      stateId: "state-a",
+      requestId: "twin-older",
+    })).toBe(pending);
+
+    const finished = workflowReducer(pending, {
+      type: "twinUpdateFinished",
+      stateId: "state-a",
+      requestId: "twin-1",
+    });
+    expect(finished.twinUpdatePending).toBe(false);
+    expect(finished.activeTwinRequestId).toBeNull();
+    expect(finished.activeTwinSourceSignature).toBeNull();
+  });
+
+  it("stores active twin responses and ignores responses for another state", () => {
+    const active = workflowReducer(initialWorkflowState, {
+      type: "sessionCreated",
+      session: sessionA,
+    });
+
+    const next = workflowReducer(active, {
+      type: "twinReceived",
+      stateId: "state-a",
+      twin: twinState,
+    });
+    expect(next.twin).toBe(twinState);
+    expect(next.twinUpdatePending).toBe(false);
+
+    expect(workflowReducer(active, {
+      type: "twinReceived",
+      stateId: "state-b",
+      twin: { ...twinState, state_id: "state-b" },
+    })).toBe(active);
+  });
+
+  it("stores reused snapshots normally", () => {
+    const active = workflowReducer(initialWorkflowState, {
+      type: "sessionCreated",
+      session: sessionA,
+    });
+    const reused = { ...twinState, snapshot_created: false };
+
+    expect(workflowReducer(active, {
+      type: "twinReceived",
+      stateId: "state-a",
+      twin: reused,
+    }).twin).toBe(reused);
+  });
+
+  it("accepted disease clears an existing twin", () => {
+    const previous: WorkflowState = {
+      ...initialWorkflowState,
+      activeStateId: "state-a",
+      session: sessionA,
+      twin: twinState,
+      twinUpdatePending: true,
+      activeTwinRequestId: "twin-1",
+      activeTwinSourceSignature: "source-1",
+    };
+
+    const next = workflowReducer(previous, {
+      type: "diseaseReceived",
+      stateId: "state-a",
+      disease: diseaseA,
+    });
+
+    expect(next.disease).toBe(diseaseA);
+    expect(next.twin).toBeNull();
+    expect(next.twinUpdatePending).toBe(false);
+    expect(next.activeTwinRequestId).toBeNull();
+    expect(next.activeTwinSourceSignature).toBeNull();
+  });
+
+  it("accepted water clears an existing twin but preserves canonical water lineage", () => {
+    const previous: WorkflowState = {
+      ...initialWorkflowState,
+      activeStateId: "state-a",
+      session: sessionA,
+      twin: twinState,
+      twinUpdatePending: true,
+      activeTwinRequestId: "twin-1",
+      activeTwinSourceSignature: "source-1",
+      latestWaterObservationId: "water-observation-older",
+      latestWaterSequence: 1,
+    };
+
+    const next = workflowReducer(previous, {
+      type: "waterReceived",
+      stateId: "state-a",
+      water: { ...waterState, water_sequence: 2 },
+    });
+
+    expect(next.twin).toBeNull();
+    expect(next.twinUpdatePending).toBe(false);
+    expect(next.activeTwinRequestId).toBeNull();
+    expect(next.activeTwinSourceSignature).toBeNull();
+    expect(next.latestWaterObservationId).toBe("water-observation-1");
+    expect(next.latestWaterSequence).toBe(2);
+  });
+
+  it("weather draft changes do not clear an existing canonical twin", () => {
+    const previous: WorkflowState = {
+      ...initialWorkflowState,
+      activeStateId: "state-a",
+      session: sessionA,
+      weatherDraft,
+      water: waterState,
+      twin: twinState,
+    };
+
+    const next = workflowReducer(previous, {
+      type: "weatherDraftChanged",
+      stateId: "state-a",
+      draft: { ...weatherDraft, rainfall_mm: 1 },
+    });
+
+    expect(next.water).toBeNull();
+    expect(next.twin).toBe(twinState);
+  });
+
   it("clears session-scoped disease, weather and water when loading another state", () => {
     const previous: WorkflowState = {
       ...initialWorkflowState,
       activeStateId: "state-a",
       session: sessionA,
       disease: diseaseA,
+      diseaseRequestPending: true,
       weatherSnapshot,
       weatherDraft,
       weatherDate: weatherSnapshot.target_date,
@@ -380,6 +580,10 @@ describe("workflowReducer", () => {
       waterComputationPending: true,
       activeWaterRequestId: "request-1",
       activeWaterRequestSignature: "signature-1",
+      twin: twinState,
+      twinUpdatePending: true,
+      activeTwinRequestId: "twin-1",
+      activeTwinSourceSignature: "source-1",
       latestWaterObservationId: "water-observation-1",
       latestWaterSequence: 1,
     };
@@ -387,6 +591,7 @@ describe("workflowReducer", () => {
     const next = workflowReducer(previous, { type: "sessionLoaded", session: sessionB });
 
     expect(next.disease).toBeNull();
+    expect(next.diseaseRequestPending).toBe(false);
     expect(next.weatherSnapshot).toBeNull();
     expect(next.weatherDraft).toBeNull();
     expect(next.weatherDate).toBeNull();
@@ -394,7 +599,44 @@ describe("workflowReducer", () => {
     expect(next.waterComputationPending).toBe(false);
     expect(next.activeWaterRequestId).toBeNull();
     expect(next.activeWaterRequestSignature).toBeNull();
+    expect(next.twin).toBeNull();
+    expect(next.twinUpdatePending).toBe(false);
+    expect(next.activeTwinRequestId).toBeNull();
+    expect(next.activeTwinSourceSignature).toBeNull();
     expect(next.latestWaterObservationId).toBeNull();
     expect(next.latestWaterSequence).toBe(0);
+  });
+
+  it("session clear clears twin state and pending metadata", () => {
+    const previous: WorkflowState = {
+      ...initialWorkflowState,
+      activeStateId: "state-a",
+      session: sessionA,
+      twin: twinState,
+      twinUpdatePending: true,
+      activeTwinRequestId: "twin-1",
+      activeTwinSourceSignature: "source-1",
+    };
+
+    expect(workflowReducer(previous, { type: "sessionCleared" })).toEqual(initialWorkflowState);
+  });
+
+  it("twin actions do not change canonical water lineage", () => {
+    const previous: WorkflowState = {
+      ...initialWorkflowState,
+      activeStateId: "state-a",
+      session: sessionA,
+      latestWaterObservationId: "water-observation-1",
+      latestWaterSequence: 1,
+    };
+
+    const next = workflowReducer(previous, {
+      type: "twinReceived",
+      stateId: "state-a",
+      twin: twinState,
+    });
+
+    expect(next.latestWaterObservationId).toBe("water-observation-1");
+    expect(next.latestWaterSequence).toBe(1);
   });
 });

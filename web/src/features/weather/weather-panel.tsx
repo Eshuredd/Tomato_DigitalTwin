@@ -50,6 +50,7 @@ export function WeatherPanel({
   const {
     activeStateId,
     session,
+    twinUpdatePending,
     waterComputationPending,
     weatherDraft,
     weatherSnapshot,
@@ -75,6 +76,13 @@ export function WeatherPanel({
     }, 0);
     return () => window.clearTimeout(timeoutId);
   }, [activeStateId, plantingDate]);
+
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+      requestRef.current += 1;
+    };
+  }, []);
 
   async function fetchSnapshot(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -166,14 +174,17 @@ export function WeatherPanel({
               <Input
                 id="weather_target_date"
                 min={plantingDate}
-                disabled={!activeStateId || pending || waterComputationPending}
+                disabled={!activeStateId || pending || waterComputationPending || twinUpdatePending}
                 onChange={(event) => setTargetDate(event.currentTarget.value)}
                 required
                 type="date"
                 value={targetDate}
               />
             </Field>
-            <Button type="submit" disabled={!activeStateId || pending || waterComputationPending}>
+            <Button
+              type="submit"
+              disabled={!activeStateId || pending || waterComputationPending || twinUpdatePending}
+            >
               {pending ? "Retrieving weather" : "Retrieve weather snapshot"}
             </Button>
           </form>
@@ -229,7 +240,7 @@ export function WeatherPanel({
 
       <WeatherDraftForm
         key={activeStateId ?? "inactive"}
-        disabled={!activeStateId || waterComputationPending}
+        disabled={!activeStateId || waterComputationPending || twinUpdatePending}
         draft={weatherDraft}
         onDraftChange={(draft) => {
           if (activeStateId) {

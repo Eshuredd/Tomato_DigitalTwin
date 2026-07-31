@@ -3,6 +3,7 @@ import type {
   CropType,
   DiseaseCategory,
   DiseasePredictionResponse,
+  GrowthStage,
   HealthResponse,
   Location,
   SessionResponse,
@@ -11,6 +12,7 @@ import type {
   SystemInfoResponse,
   TwinCurrentState,
   UncertaintyBand,
+  UpdateTwinStateResponse,
   WaterStateResponse,
   WeatherInput,
   WeatherSnapshotResponse,
@@ -18,6 +20,12 @@ import type {
 import type { JsonObject } from "@/lib/types/common";
 
 const CROP_TYPES = ["tomato"] as const satisfies readonly CropType[];
+const GROWTH_STAGES = [
+  "initial",
+  "development",
+  "mid_season",
+  "late_season",
+] as const satisfies readonly GrowthStage[];
 const SOIL_TEXTURES = [
   "sand",
   "sandy_loam",
@@ -54,7 +62,7 @@ export function parseHealthResponse(value: unknown): HealthResponse {
 export function parseSessionResponse(value: unknown): SessionResponse {
   if (
     isRecord(value) &&
-    typeof value.state_id === "string" &&
+    nonEmptyString(value.state_id) &&
     isOneOf(value.crop_type, CROP_TYPES) &&
     typeof value.planting_date === "string" &&
     isLocation(value.location) &&
@@ -69,14 +77,16 @@ export function parseSessionResponse(value: unknown): SessionResponse {
 export function parseSessionStateResponse(value: unknown): SessionStateResponse {
   if (
     isRecord(value) &&
-    typeof value.state_id === "string" &&
+    nonEmptyString(value.state_id) &&
     isOneOf(value.crop_type, CROP_TYPES) &&
     typeof value.planting_date === "string" &&
     isLocation(value.location) &&
-    isOneOf(value.soil_texture, SOIL_TEXTURES) &&
-    isTwinCurrentState(value.current_state)
+    isOneOf(value.soil_texture, SOIL_TEXTURES)
   ) {
-    return value as unknown as SessionStateResponse;
+    return {
+      ...(value as unknown as Omit<SessionStateResponse, "current_state">),
+      current_state: parseTwinCurrentState(value.current_state),
+    };
   }
   throw malformedResponseError("The CropTwin API returned an unexpected session-state response.");
 }
@@ -84,7 +94,7 @@ export function parseSessionStateResponse(value: unknown): SessionStateResponse 
 export function parseDiseasePredictionResponse(value: unknown): DiseasePredictionResponse {
   if (
     isRecord(value) &&
-    typeof value.state_id === "string" &&
+    nonEmptyString(value.state_id) &&
     isOneOf(value.crop_type, CROP_TYPES) &&
     typeof value.predicted_label === "string" &&
     isOneOf(value.disease_category, DISEASE_CATEGORIES) &&
@@ -92,7 +102,7 @@ export function parseDiseasePredictionResponse(value: unknown): DiseasePredictio
     isFiniteNumber(value.confidence_calibrated) &&
     isFiniteNumber(value.uncertainty_score) &&
     isOneOf(value.uncertainty_band, UNCERTAINTY_BANDS) &&
-    typeof value.predicted_at === "string"
+    isValidTimestamp(value.predicted_at)
   ) {
     return value as unknown as DiseasePredictionResponse;
   }
@@ -115,7 +125,7 @@ export function parseSystemInfoResponse(value: unknown): SystemInfoResponse {
 export function parseWeatherSnapshotResponse(value: unknown): WeatherSnapshotResponse {
   if (
     isRecord(value) &&
-    typeof value.state_id === "string" &&
+    nonEmptyString(value.state_id) &&
     typeof value.target_date === "string" &&
     value.source === "open_meteo" &&
     typeof value.source_timezone === "string" &&
@@ -130,7 +140,7 @@ export function parseWeatherSnapshotResponse(value: unknown): WeatherSnapshotRes
     value.shortwave_radiation_sum_mj_m2 >= 0 &&
     isFiniteNumber(value.eto_reference_feed) &&
     value.eto_reference_feed >= 0 &&
-    typeof value.fetched_at === "string"
+    isValidTimestamp(value.fetched_at)
   ) {
     return value as unknown as WeatherSnapshotResponse;
   }
@@ -140,46 +150,98 @@ export function parseWeatherSnapshotResponse(value: unknown): WeatherSnapshotRes
 export function parseWaterStateResponse(value: unknown): WaterStateResponse {
   if (
     isRecord(value) &&
-    typeof value.state_id === "string" &&
-    optionalString(value.water_observation_id) &&
+    nonEmptyString(value.state_id) &&
+    optionalNonEmptyString(value.water_observation_id) &&
     nonNegativeInteger(value.water_sequence) &&
-    optionalString(value.base_water_observation_id) &&
+    optionalNonEmptyString(value.base_water_observation_id) &&
     nonNegativeInteger(value.base_water_sequence) &&
     nonNegativeNumber(value.previous_root_zone_depletion_mm) &&
-    optionalString(value.water_update_id) &&
-    optionalString(value.reported_irrigation_event_id) &&
-    optionalString(value.applied_irrigation_event_id) &&
+    optionalNonEmptyString(value.water_update_id) &&
+    optionalNonEmptyString(value.reported_irrigation_event_id) &&
+    optionalNonEmptyString(value.applied_irrigation_event_id) &&
     nonNegativeNumber(value.effective_irrigation_mm) &&
     typeof value.irrigation_event_already_accounted_for === "boolean" &&
     isOneOf(value.crop_type, CROP_TYPES) &&
-    typeof value.growth_stage === "string" &&
+    isOneOf(value.growth_stage, GROWTH_STAGES) &&
     isOneOf(value.soil_texture, SOIL_TEXTURES) &&
-    isFiniteNumber(value.eto_computed) &&
+    nonNegativeNumber(value.eto_computed) &&
     isOneOf(value.eto_method, ETO_METHODS) &&
-    (value.eto_reference_feed === null || isFiniteNumber(value.eto_reference_feed)) &&
+    (value.eto_reference_feed === null || nonNegativeNumber(value.eto_reference_feed)) &&
     (value.eto_delta_pct === null || isFiniteNumber(value.eto_delta_pct)) &&
-    isFiniteNumber(value.kc) &&
-    isFiniteNumber(value.etc) &&
-    isFiniteNumber(value.field_capacity_assumed) &&
-    isFiniteNumber(value.wilting_point_assumed) &&
-    isFiniteNumber(value.root_depth_assumed) &&
-    isFiniteNumber(value.taw) &&
-    isFiniteNumber(value.p_allowable) &&
-    isFiniteNumber(value.raw_threshold) &&
-    isFiniteNumber(value.raw_root_zone_depletion_mm) &&
-    isFiniteNumber(value.root_zone_depletion_mm) &&
-    isFiniteNumber(value.root_zone_depletion) &&
-    isFiniteNumber(value.water_surplus_mm) &&
-    isFiniteNumber(value.depletion_beyond_taw_mm) &&
+    nonNegativeNumber(value.kc) &&
+    nonNegativeNumber(value.etc) &&
+    nonNegativeNumber(value.field_capacity_assumed) &&
+    nonNegativeNumber(value.wilting_point_assumed) &&
+    nonNegativeNumber(value.root_depth_assumed) &&
+    nonNegativeNumber(value.taw) &&
+    nonNegativeNumber(value.p_allowable) &&
+    nonNegativeNumber(value.raw_threshold) &&
+    nonNegativeNumber(value.raw_root_zone_depletion_mm) &&
+    nonNegativeNumber(value.root_zone_depletion_mm) &&
+    nonNegativeNumber(value.root_zone_depletion) &&
+    nonNegativeNumber(value.water_surplus_mm) &&
+    nonNegativeNumber(value.depletion_beyond_taw_mm) &&
     isOneOf(value.estimated_moisture_state, MOISTURE_STATES) &&
     isOneOf(value.stress_band, STRESS_BANDS) &&
-    typeof value.observed_at === "string" &&
-    typeof value.computed_at === "string" &&
+    isValidTimestamp(value.observed_at) &&
+    isValidTimestamp(value.computed_at) &&
     isOneOf(value.observation_time_basis, OBSERVATION_TIME_BASES)
   ) {
     return value as unknown as WaterStateResponse;
   }
   throw malformedResponseError("The CropTwin API returned an unexpected water state response.");
+}
+
+export function parseTwinCurrentState(value: unknown): TwinCurrentState {
+  if (
+    isRecord(value) &&
+    isOneOf(value.crop_type, CROP_TYPES) &&
+    isOneOf(value.growth_stage, GROWTH_STAGES) &&
+    nonNegativeInteger(value.days_since_planting) &&
+    typeof value.predicted_label === "string" &&
+    isOneOf(value.disease_category, DISEASE_CATEGORIES) &&
+    isFiniteNumber(value.confidence_calibrated) &&
+    value.confidence_calibrated >= 0 &&
+    value.confidence_calibrated <= 1 &&
+    isFiniteNumber(value.uncertainty_score) &&
+    isOneOf(value.uncertainty_band, UNCERTAINTY_BANDS) &&
+    nonNegativeNumber(value.eto_computed) &&
+    isOneOf(value.eto_method, ETO_METHODS) &&
+    nonNegativeNumber(value.kc) &&
+    nonNegativeNumber(value.etc) &&
+    nonNegativeNumber(value.taw) &&
+    nonNegativeNumber(value.raw_threshold) &&
+    nonNegativeNumber(value.raw_root_zone_depletion_mm) &&
+    nonNegativeNumber(value.root_zone_depletion_mm) &&
+    nonNegativeNumber(value.root_zone_depletion) &&
+    nonNegativeNumber(value.water_surplus_mm) &&
+    nonNegativeNumber(value.depletion_beyond_taw_mm) &&
+    isOneOf(value.estimated_moisture_state, MOISTURE_STATES) &&
+    isOneOf(value.stress_band, STRESS_BANDS) &&
+    isValidTimestamp(value.observed_at) &&
+    isValidTimestamp(value.computed_at) &&
+    isOneOf(value.observation_time_basis, OBSERVATION_TIME_BASES) &&
+    isValidTimestamp(value.last_update_time)
+  ) {
+    return value as unknown as TwinCurrentState;
+  }
+  throw malformedResponseError("The CropTwin API returned an unexpected twin current-state response.");
+}
+
+export function parseUpdateTwinStateResponse(value: unknown): UpdateTwinStateResponse {
+  if (
+    isRecord(value) &&
+    nonEmptyString(value.state_id) &&
+    nonNegativeInteger(value.state_history_count) &&
+    optionalNonEmptyString(value.snapshot_id) &&
+    typeof value.snapshot_created === "boolean"
+  ) {
+    return {
+      ...(value as unknown as Omit<UpdateTwinStateResponse, "current_state">),
+      current_state: parseTwinCurrentState(value.current_state),
+    };
+  }
+  throw malformedResponseError("The CropTwin API returned an unexpected twin-state update response.");
 }
 
 export function malformedResponseError(message: string): CropTwinApiError {
@@ -200,18 +262,6 @@ function isLocation(value: unknown): value is Location {
     (value.elevation_m === undefined ||
       value.elevation_m === null ||
       isFiniteNumber(value.elevation_m))
-  );
-}
-
-function isTwinCurrentState(value: unknown): value is TwinCurrentState {
-  return (
-    isRecord(value) &&
-    typeof value.growth_stage === "string" &&
-    typeof value.predicted_label === "string" &&
-    isOneOf(value.disease_category, DISEASE_CATEGORIES) &&
-    isFiniteNumber(value.confidence_calibrated) &&
-    isFiniteNumber(value.uncertainty_score) &&
-    isOneOf(value.uncertainty_band, UNCERTAINTY_BANDS)
   );
 }
 
@@ -252,8 +302,12 @@ function nonNegativeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
-function optionalString(value: unknown): boolean {
-  return value === undefined || value === null || typeof value === "string";
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function optionalNonEmptyString(value: unknown): boolean {
+  return value === undefined || value === null || nonEmptyString(value);
 }
 
 function isOneOf<T extends string>(
@@ -265,4 +319,41 @@ function isOneOf<T extends string>(
 
 function isRecord(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isValidTimestamp(value: unknown): value is string {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const match = value.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/,
+  );
+  if (!match) {
+    return false;
+  }
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, zone] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const second = Number(secondText);
+  if (month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59) {
+    return false;
+  }
+  if (day < 1 || day > daysInMonth(year, month)) {
+    return false;
+  }
+  if (zone !== "Z") {
+    const zoneHour = Number(zone.slice(1, 3));
+    const zoneMinute = Number(zone.slice(4, 6));
+    if (zoneHour > 23 || zoneMinute > 59) {
+      return false;
+    }
+  }
+  return !Number.isNaN(Date.parse(value));
+}
+
+function daysInMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
 }

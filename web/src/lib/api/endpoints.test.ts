@@ -114,6 +114,14 @@ const waterResponse = {
   observation_time_basis: "DATE_ONLY_UTC_START",
 };
 
+const twinResponse = {
+  state_id: "state 1/2",
+  current_state: sessionStateResponse.current_state,
+  state_history_count: 1,
+  snapshot_id: "snapshot-1",
+  snapshot_created: true,
+};
+
 describe("CropTwinEndpoints", () => {
   it("URL encodes state IDs in endpoint paths", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ state_id: "state 1/2", history: [] }));
@@ -207,5 +215,85 @@ describe("CropTwinEndpoints", () => {
         signal: expect.any(AbortSignal),
       }),
     );
+  });
+
+  it("posts exact twin update path, method and body with encoded state ID", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(twinResponse));
+    const endpoints = new CropTwinEndpoints(new CropTwinApiClient({ baseUrl: "http://api", fetcher }));
+
+    await endpoints.updateTwinState("state 1/2");
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://api/sessions/state%201%2F2/update-twin-state",
+      expect.objectContaining({
+        cache: "no-store",
+        method: "POST",
+        body: JSON.stringify({ state_id: "state 1/2" }),
+      }),
+    );
+  });
+
+  it("parses twin update responses and rejects malformed JSON shapes", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({ ...twinResponse, current_state: { ...sessionStateResponse.current_state, growth_stage: "bad" } }),
+    );
+    const endpoints = new CropTwinEndpoints(new CropTwinApiClient({ baseUrl: "http://api", fetcher }));
+
+    await expect(endpoints.updateTwinState("state 1/2")).rejects.toMatchObject({
+      code: "FRONTEND_MALFORMED_RESPONSE",
+      kind: "malformed",
+    });
+  });
+
+  it("supports caller abort for twin updates", async () => {
+    const controller = new AbortController();
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(
+      (_input, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+        }),
+    );
+    const endpoints = new CropTwinEndpoints(new CropTwinApiClient({ baseUrl: "http://api", fetcher }));
+    const request = endpoints.updateTwinState("state 1/2", { signal: controller.signal });
+
+    controller.abort();
+
+    await expect(request).rejects.toMatchObject({
+      code: "FRONTEND_REQUEST_ABORTED",
+      kind: "abort",
+    });
+  });
+
+  it("forwards twin update timeout options", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetcher = vi.fn<typeof fetch>().mockImplementation(
+        (_input, init) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+          }),
+      );
+      const endpoints = new CropTwinEndpoints(new CropTwinApiClient({ baseUrl: "http://api", fetcher, timeoutMs: 30_000 }));
+      const request = endpoints.updateTwinState("state 1/2", { timeoutMs: 5 });
+      const assertion = expect(request).rejects.toMatchObject({
+        code: "FRONTEND_REQUEST_TIMEOUT",
+        kind: "timeout",
+      });
+
+      await vi.advanceTimersByTimeAsync(6);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not automatically retry failed twin update POST requests", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockRejectedValue(new TypeError("offline"));
+    const endpoints = new CropTwinEndpoints(new CropTwinApiClient({ baseUrl: "http://api", fetcher }));
+
+    await expect(endpoints.updateTwinState("state 1/2")).rejects.toMatchObject({
+      code: "FRONTEND_NETWORK_ERROR",
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 });

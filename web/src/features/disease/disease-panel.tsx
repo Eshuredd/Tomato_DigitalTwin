@@ -29,7 +29,7 @@ export function DiseasePanel({
 }) {
   const defaultEndpoints = useMemo(() => createBrowserEndpoints(), []);
   const api = endpoints ?? defaultEndpoints;
-  const { activeStateId, disease, systemInfo } = useWorkflowState();
+  const { activeStateId, disease, systemInfo, twinUpdatePending } = useWorkflowState();
   const dispatch = useWorkflowDispatch();
   const activeStateRef = useRef(activeStateId);
   const abortRef = useRef<AbortController | null>(null);
@@ -86,6 +86,7 @@ export function DiseasePanel({
     setError(null);
     try {
       const imageBase64 = await fileToBase64(file);
+      dispatch({ type: "diseaseRequestStarted", stateId: requestStateId });
       const response = await api.predictDisease(
         requestStateId,
         {
@@ -127,6 +128,7 @@ export function DiseasePanel({
     } finally {
       if (activeStateRef.current === requestStateId) {
         setPending(false);
+        dispatch({ type: "diseaseRequestFinished", stateId: requestStateId });
       }
     }
   }
@@ -150,7 +152,7 @@ export function DiseasePanel({
           ) : null}
           <div className="mt-5">
             <DiseaseUploadForm
-              disabled={!activeStateId}
+              disabled={!activeStateId || twinUpdatePending}
               onSubmit={(file) => void submitDisease(file)}
               pending={pending}
               resetKey={activeStateId}
