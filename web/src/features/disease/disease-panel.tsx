@@ -29,10 +29,11 @@ export function DiseasePanel({
 }) {
   const defaultEndpoints = useMemo(() => createBrowserEndpoints(), []);
   const api = endpoints ?? defaultEndpoints;
-  const { activeStateId, disease, systemInfo, twinUpdatePending } = useWorkflowState();
+  const { activeStateId, advancementPending, disease, systemInfo, twinUpdatePending } = useWorkflowState();
   const dispatch = useWorkflowDispatch();
   const activeStateRef = useRef(activeStateId);
   const abortRef = useRef<AbortController | null>(null);
+  const requestRef = useRef(0);
   const requestedSystemInfoRef = useRef(false);
   const [fetchedModelInfo, setFetchedModelInfo] = useState<SystemInfoResponse["disease_model"] | null>(null);
   const modelInfo = systemInfo?.disease_model ?? fetchedModelInfo;
@@ -41,6 +42,7 @@ export function DiseasePanel({
 
   useEffect(() => {
     activeStateRef.current = activeStateId;
+    requestRef.current += 1;
     abortRef.current?.abort();
     const timeoutId = window.setTimeout(() => {
       setPending(false);
@@ -80,13 +82,16 @@ export function DiseasePanel({
       return;
     }
     const requestStateId = activeStateId;
+    const requestNumber = requestRef.current + 1;
+    const requestId = `disease-${requestNumber}`;
+    requestRef.current = requestNumber;
     const controller = new AbortController();
     abortRef.current = controller;
     setPending(true);
     setError(null);
+    dispatch({ type: "diseaseRequestStarted", stateId: requestStateId, requestId });
     try {
       const imageBase64 = await fileToBase64(file);
-      dispatch({ type: "diseaseRequestStarted", stateId: requestStateId });
       const response = await api.predictDisease(
         requestStateId,
         {
@@ -98,7 +103,7 @@ export function DiseasePanel({
           timeoutMs: DISEASE_REQUEST_TIMEOUT_MS,
         },
       );
-      if (activeStateRef.current !== requestStateId) {
+      if (activeStateRef.current !== requestStateId || requestRef.current !== requestNumber) {
         return;
       }
       if (response.state_id !== requestStateId) {
@@ -115,7 +120,7 @@ export function DiseasePanel({
         disease: response,
       });
     } catch (caught) {
-      if (activeStateRef.current !== requestStateId) {
+      if (activeStateRef.current !== requestStateId || requestRef.current !== requestNumber) {
         return;
       }
       if (caught instanceof CropTwinApiError) {
@@ -126,9 +131,9 @@ export function DiseasePanel({
         setError(caught instanceof Error ? caught.message : "Could not submit disease evidence.");
       }
     } finally {
-      if (activeStateRef.current === requestStateId) {
+      if (activeStateRef.current === requestStateId && requestRef.current === requestNumber) {
         setPending(false);
-        dispatch({ type: "diseaseRequestFinished", stateId: requestStateId });
+        dispatch({ type: "diseaseRequestFinished", stateId: requestStateId, requestId });
       }
     }
   }
@@ -152,7 +157,7 @@ export function DiseasePanel({
           ) : null}
           <div className="mt-5">
             <DiseaseUploadForm
-              disabled={!activeStateId || twinUpdatePending}
+              disabled={!activeStateId || twinUpdatePending || advancementPending}
               onSubmit={(file) => void submitDisease(file)}
               pending={pending}
               resetKey={activeStateId}

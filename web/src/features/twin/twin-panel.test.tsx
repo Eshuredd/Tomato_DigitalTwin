@@ -145,6 +145,7 @@ function activeState(overrides: Partial<WorkflowState> = {}): WorkflowState {
     systemInfo: null,
     disease,
     diseaseRequestPending: false,
+    activeDiseaseRequestId: null,
     weatherSnapshot: null,
     weatherDraft,
     weatherDate: null,
@@ -158,6 +159,14 @@ function activeState(overrides: Partial<WorkflowState> = {}): WorkflowState {
     activeTwinSourceSignature: null,
     latestWaterObservationId: water.water_observation_id ?? null,
     latestWaterSequence: water.water_sequence,
+    advancementPending: false,
+    activeAdvancementRequestId: null,
+    activeAdvancementRequestSignature: null,
+    latestAdvancement: null,
+    retainedAdvancement: null,
+    advancementNotice: null,
+    advancementTransitionKind: null,
+    advancementTwinRefreshStatus: null,
     ...overrides,
   };
   return state;

@@ -49,6 +49,7 @@ export function WeatherPanel({
   const api = endpoints ?? defaultEndpoints;
   const {
     activeStateId,
+    advancementPending,
     session,
     twinUpdatePending,
     waterComputationPending,
@@ -174,7 +175,7 @@ export function WeatherPanel({
               <Input
                 id="weather_target_date"
                 min={plantingDate}
-                disabled={!activeStateId || pending || waterComputationPending || twinUpdatePending}
+                disabled={!activeStateId || pending || waterComputationPending || twinUpdatePending || advancementPending}
                 onChange={(event) => setTargetDate(event.currentTarget.value)}
                 required
                 type="date"
@@ -183,7 +184,7 @@ export function WeatherPanel({
             </Field>
             <Button
               type="submit"
-              disabled={!activeStateId || pending || waterComputationPending || twinUpdatePending}
+              disabled={!activeStateId || pending || waterComputationPending || twinUpdatePending || advancementPending}
             >
               {pending ? "Retrieving weather" : "Retrieve weather snapshot"}
             </Button>
@@ -240,7 +241,7 @@ export function WeatherPanel({
 
       <WeatherDraftForm
         key={activeStateId ?? "inactive"}
-        disabled={!activeStateId || waterComputationPending || twinUpdatePending}
+        disabled={!activeStateId || waterComputationPending || twinUpdatePending || advancementPending}
         draft={weatherDraft}
         onDraftChange={(draft) => {
           if (activeStateId) {

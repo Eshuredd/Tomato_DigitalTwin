@@ -8,6 +8,7 @@ import { DiseasePanel } from "@/features/disease/disease-panel";
 import { WeatherPanel } from "@/features/weather/weather-panel";
 import { WaterPanel } from "@/features/water/water-panel";
 import { TwinPanel } from "@/features/twin/twin-panel";
+import { AdvancementPanel } from "@/features/advancement/advancement-panel";
 
 export function CropTwinShell() {
   return (
@@ -44,8 +45,8 @@ export function CropTwinShell() {
             <Panel>
               <h2 className="text-xl font-semibold">Migration phase</h2>
               <p className="mt-3 text-sm leading-6 text-[var(--color-muted)]">
-                Phase 4 adds canonical twin-state update after accepted disease
-                evidence and water state. One-day advancement, simulation,
+                Phase 5 adds one-day advancement after accepted disease,
+                canonical water and canonical twin state. Simulation,
                 recommendations and narration remain in Streamlit until their
                 workflow screens are migrated deliberately.
               </p>
@@ -58,6 +59,7 @@ export function CropTwinShell() {
           <WeatherPanel />
           <WaterPanel />
           <TwinPanel />
+          <AdvancementPanel />
         </WorkflowProvider>
       </div>
     </main>

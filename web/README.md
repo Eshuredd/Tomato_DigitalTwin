@@ -1,6 +1,6 @@
 # CropTwin Next.js Frontend
 
-This is the Phase 4 Next.js frontend for CropTwin. It provides the application shell, typed FastAPI client, backend health status, shared active-session state, session creation/loading, disease-image evidence submission/results, weather review, recent irrigation input, deterministic water-state computation, and canonical twin-state update.
+This is the Phase 5 Next.js frontend for CropTwin. It provides the application shell, typed FastAPI client, backend health status, shared active-session state, session creation/loading, disease-image evidence submission/results, weather review, recent irrigation input, deterministic water-state computation, canonical twin-state update, and one-day advancement.
 
 The FastAPI backend remains authoritative for agronomy, disease inference, recommendations, narration, validation, and persistence. The legacy Streamlit frontend in `../frontend/` remains operational while the migration proceeds.
 
@@ -73,6 +73,8 @@ Water computation is submitted only when the user presses the compute button. Th
 
 Canonical twin update is submitted only after the active session has accepted disease evidence and accepted water state. The request uses `POST /sessions/{state_id}/update-twin-state` with the exact body `{ "state_id": "active-state-id" }`. The UI captures a stable source signature from the accepted disease and water observations, aborts or discards stale responses after session/source changes, and renders the backend `current_state` without frontend calculations, simulations, recommendations, or action advice. New snapshots show `A new canonical twin snapshot was created.` Reused snapshots show `The canonical twin already reflected the latest accepted observations.`
 
+One-day advancement is submitted only after accepted disease evidence, accepted canonical water lineage, and accepted canonical twin state are present. The browser derives the only allowed target date from `twin.current_state.observed_at + 1 day`, requires reviewed next-day weather and valid recent-irrigation input, and sends `POST /sessions/{state_id}/advance-one-day` with a stable `advancement_id` for unchanged retries. Reused advancement responses are treated conservatively: catch-up retries refresh the authoritative twin through `update-twin-state`, current retries preserve newer local twin state, and historical retries remain technical data only.
+
 ## Safety Boundaries
 
 - Disease evidence does not determine irrigation.
@@ -84,7 +86,6 @@ Canonical twin update is submitted only after the active session has accepted di
 
 Still in Streamlit until later phases:
 
-- One-day advancement.
 - Simulation and recommendation.
 - Narration, history, and actual actions.
 - Farm and plot management.

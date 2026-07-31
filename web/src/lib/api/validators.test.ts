@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  parseAdvanceOneDayResponse,
   parseTwinCurrentState,
   parseUpdateTwinStateResponse,
   parseWaterStateResponse,
@@ -79,6 +80,30 @@ const twinResponse = {
   state_history_count: 1,
   snapshot_id: "snapshot-1",
   snapshot_created: true,
+};
+
+const advancementResponse = {
+  state_id: "state-a",
+  advancement_id: "advancement-1",
+  target_date: "2026-08-01",
+  advancement_created: true,
+  water_state: {
+    ...waterState,
+    water_observation_id: "water-observation-2",
+    water_sequence: 2,
+    base_water_observation_id: "water-observation-1",
+    base_water_sequence: 1,
+    observed_at: "2026-08-01T00:00:00Z",
+  },
+  twin_state: {
+    ...twinResponse,
+    snapshot_id: "snapshot-2",
+    current_state: {
+      ...currentState,
+      observed_at: "2026-08-01T00:00:00Z",
+      last_update_time: "2026-08-01T01:00:00Z",
+    },
+  },
 };
 
 describe("parseWaterStateResponse", () => {
@@ -223,5 +248,59 @@ describe("twin validators", () => {
 
   it("parses TwinCurrentState directly", () => {
     expect(parseTwinCurrentState(currentState).predicted_label).toBe("Tomato___healthy");
+  });
+});
+
+describe("advancement validators", () => {
+  it("accepts a valid one-day advancement response", () => {
+    expect(parseAdvanceOneDayResponse(advancementResponse)).toMatchObject({
+      state_id: "state-a",
+      advancement_id: "advancement-1",
+      advancement_created: true,
+      water_state: { water_sequence: 2 },
+      twin_state: { snapshot_id: "snapshot-2" },
+    });
+  });
+
+  it("accepts reused advancement responses", () => {
+    expect(parseAdvanceOneDayResponse({
+      ...advancementResponse,
+      advancement_created: false,
+    }).advancement_created).toBe(false);
+  });
+
+  it("rejects malformed target dates", () => {
+    expect(() => parseAdvanceOneDayResponse({
+      ...advancementResponse,
+      target_date: "2026-02-30",
+    })).toThrow("one-day advancement");
+  });
+
+  it("rejects missing or empty advancement IDs", () => {
+    expect(() => parseAdvanceOneDayResponse({
+      ...advancementResponse,
+      advancement_id: " ",
+    })).toThrow("one-day advancement");
+  });
+
+  it("rejects non-boolean created flags", () => {
+    expect(() => parseAdvanceOneDayResponse({
+      ...advancementResponse,
+      advancement_created: "false",
+    })).toThrow("one-day advancement");
+  });
+
+  it("rejects malformed nested water state", () => {
+    expect(() => parseAdvanceOneDayResponse({
+      ...advancementResponse,
+      water_state: { ...advancementResponse.water_state, water_sequence: 2.5 },
+    })).toThrow("water state");
+  });
+
+  it("rejects malformed nested twin state", () => {
+    expect(() => parseAdvanceOneDayResponse({
+      ...advancementResponse,
+      twin_state: { ...advancementResponse.twin_state, snapshot_created: "yes" },
+    })).toThrow("twin-state update");
   });
 });

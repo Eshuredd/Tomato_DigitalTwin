@@ -1,5 +1,6 @@
 import { CropTwinApiClient, encodePath } from "./client";
 import {
+  parseAdvanceOneDayResponse,
   parseDiseasePredictionResponse,
   parseHealthResponse,
   parseSessionResponse,
@@ -120,11 +121,17 @@ export class CropTwinEndpoints {
   advanceOneDay(
     stateId: string,
     request: Omit<AdvanceOneDayRequest, "state_id">,
+    options: { signal?: AbortSignal; timeoutMs?: number } = {},
   ): Promise<AdvanceOneDayResponse> {
-    return this.client.request<AdvanceOneDayResponse, AdvanceOneDayRequest>(
+    return this.client.request<unknown, AdvanceOneDayRequest>(
       `/sessions/${encodePath(stateId)}/advance-one-day`,
-      { method: "POST", body: { state_id: stateId, ...request } },
-    );
+      {
+        method: "POST",
+        body: { state_id: stateId, ...request },
+        signal: options.signal,
+        timeoutMs: options.timeoutMs,
+      },
+    ).then(parseAdvanceOneDayResponse);
   }
 
   updateTwinState(

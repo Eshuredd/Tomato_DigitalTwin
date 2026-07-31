@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CropTwinApiError } from "@/lib/api/errors";
 import type { DiseasePredictionResponse, SessionResponse, SystemInfoResponse } from "@/lib/types/api";
-import { WorkflowProvider, useWorkflowDispatch } from "@/features/workflow/workflow-context";
+import { WorkflowProvider, useWorkflowDispatch, useWorkflowState } from "@/features/workflow/workflow-context";
 import type { WorkflowState } from "@/features/workflow/workflow-types";
 import { DiseasePanel, type DiseasePanelEndpoints } from "./disease-panel";
 
@@ -68,6 +68,7 @@ function inactiveState(): WorkflowState {
     systemInfo: null,
     disease: null,
     diseaseRequestPending: false,
+    activeDiseaseRequestId: null,
     weatherSnapshot: null,
     weatherDraft: null,
     weatherDate: null,
@@ -81,6 +82,14 @@ function inactiveState(): WorkflowState {
     activeTwinSourceSignature: null,
     latestWaterObservationId: null,
     latestWaterSequence: 0,
+    advancementPending: false,
+    activeAdvancementRequestId: null,
+    activeAdvancementRequestSignature: null,
+    latestAdvancement: null,
+    retainedAdvancement: null,
+    advancementNotice: null,
+    advancementTransitionKind: null,
+    advancementTwinRefreshStatus: null,
   };
 }
 
@@ -120,6 +129,16 @@ function deferredDisease() {
     reject = fail;
   });
   return { promise, reject, resolve };
+}
+
+function DiseasePendingMarker() {
+  const { activeDiseaseRequestId, diseaseRequestPending } = useWorkflowState();
+  return (
+    <div>
+      {diseaseRequestPending ? "shared-disease-pending" : "shared-disease-idle"}
+      {activeDiseaseRequestId ? `:${activeDiseaseRequestId}` : ""}
+    </div>
+  );
 }
 
 describe("DiseasePanel", () => {
@@ -200,6 +219,53 @@ describe("DiseasePanel", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Submit disease evidence" })).toBeEnabled());
   });
 
+  it("sets shared pending before image encoding finishes", async () => {
+    const originalFileReader = globalThis.FileReader;
+    const readers: Array<{
+      onerror: (() => void) | null;
+      onload: (() => void) | null;
+      readAsDataURL: ReturnType<typeof vi.fn>;
+      result: string | null;
+    }> = [];
+    class SlowFileReader {
+      onerror: (() => void) | null = null;
+      onload: (() => void) | null = null;
+      readAsDataURL = vi.fn();
+      result: string | null = "data:image/jpeg;base64,c2xvdw==";
+
+      constructor() {
+        readers.push(this);
+      }
+    }
+    Object.defineProperty(globalThis, "FileReader", {
+      configurable: true,
+      value: SlowFileReader,
+    });
+    const endpoints = fakeEndpoints();
+    const user = userEvent.setup();
+    try {
+      render(
+        <WorkflowProvider initialState={activeState()}>
+          <DiseasePendingMarker />
+          <DiseasePanel endpoints={endpoints} />
+        </WorkflowProvider>,
+      );
+
+      await user.upload(screen.getByLabelText("Tomato leaf image"), imageFile());
+      await user.click(screen.getByRole("button", { name: "Submit disease evidence" }));
+
+      expect(screen.getByText(/shared-disease-pending:disease-/)).toBeInTheDocument();
+      expect(endpoints.predictDisease).not.toHaveBeenCalled();
+      readers[0].onload?.();
+      await waitFor(() => expect(endpoints.predictDisease).toHaveBeenCalledTimes(1));
+    } finally {
+      Object.defineProperty(globalThis, "FileReader", {
+        configurable: true,
+        value: originalFileReader,
+      });
+    }
+  });
+
   it("renders successful disease evidence fields and probabilities", async () => {
     const endpoints = fakeEndpoints();
     const user = userEvent.setup();
@@ -236,11 +302,11 @@ describe("DiseasePanel", () => {
     await user.upload(screen.getByLabelText("Tomato leaf image"), imageFile());
     await user.click(screen.getByRole("button", { name: "Submit disease evidence" }));
 
-    expect(endpoints.predictDisease).toHaveBeenCalledWith(
+    await waitFor(() => expect(endpoints.predictDisease).toHaveBeenCalledWith(
       "state-a",
       expect.objectContaining({ model_version: "2.3.4" }),
       expect.anything(),
-    );
+    ));
   });
 
   it("falls back when system info is malformed or unavailable", async () => {

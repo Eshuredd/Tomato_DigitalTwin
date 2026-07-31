@@ -26,6 +26,7 @@ export function TwinPanel({
   const api = endpoints ?? defaultEndpoints;
   const {
     activeStateId,
+    advancementPending,
     disease,
     diseaseRequestPending,
     loadedCurrentState,
@@ -93,6 +94,7 @@ export function TwinPanel({
       sourceSignature &&
       !diseaseRequestPending &&
       !waterComputationPending &&
+      !advancementPending &&
       !twinUpdatePending,
   );
 

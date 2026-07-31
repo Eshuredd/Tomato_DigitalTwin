@@ -75,6 +75,16 @@ const weatherResponse = {
   fetched_at: "2026-07-31T00:00:00Z",
 };
 
+const weatherRequest = {
+  tmin_c: 20,
+  tmax_c: 31,
+  humidity_pct: 60,
+  wind_speed_mps: 2,
+  shortwave_radiation_sum_mj_m2: null,
+  rainfall_mm: 0,
+  eto_reference_feed: null,
+};
+
 const waterResponse = {
   state_id: "state 1/2",
   water_observation_id: "water-observation-1",
@@ -120,6 +130,30 @@ const twinResponse = {
   state_history_count: 1,
   snapshot_id: "snapshot-1",
   snapshot_created: true,
+};
+
+const advancementResponse = {
+  state_id: "state 1/2",
+  advancement_id: "advancement-1",
+  target_date: "2026-08-01",
+  advancement_created: true,
+  water_state: {
+    ...waterResponse,
+    water_observation_id: "water-observation-2",
+    water_sequence: 2,
+    base_water_observation_id: "water-observation-1",
+    base_water_sequence: 1,
+    observed_at: "2026-08-01T00:00:00Z",
+  },
+  twin_state: {
+    ...twinResponse,
+    snapshot_id: "snapshot-2",
+    current_state: {
+      ...sessionStateResponse.current_state,
+      observed_at: "2026-08-01T00:00:00Z",
+      last_update_time: "2026-08-01T01:00:00Z",
+    },
+  },
 };
 
 describe("CropTwinEndpoints", () => {
@@ -292,6 +326,133 @@ describe("CropTwinEndpoints", () => {
     const endpoints = new CropTwinEndpoints(new CropTwinApiClient({ baseUrl: "http://api", fetcher }));
 
     await expect(endpoints.updateTwinState("state 1/2")).rejects.toMatchObject({
+      code: "FRONTEND_NETWORK_ERROR",
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("posts exact advancement path, method and body with encoded state ID", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(advancementResponse));
+    const endpoints = new CropTwinEndpoints(new CropTwinApiClient({ baseUrl: "http://api", fetcher }));
+
+    await endpoints.advanceOneDay("state 1/2", {
+      advancement_id: "advancement-1",
+      target_date: "2026-08-01",
+      weather: {
+        tmin_c: 20,
+        tmax_c: 31,
+        humidity_pct: 60,
+        wind_speed_mps: 2,
+        shortwave_radiation_sum_mj_m2: null,
+        rainfall_mm: 0,
+        eto_reference_feed: null,
+      },
+      last_irrigation_event: null,
+    });
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://api/sessions/state%201%2F2/advance-one-day",
+      expect.objectContaining({
+        cache: "no-store",
+        method: "POST",
+        body: JSON.stringify({
+          state_id: "state 1/2",
+          advancement_id: "advancement-1",
+          target_date: "2026-08-01",
+          weather: {
+            tmin_c: 20,
+            tmax_c: 31,
+            humidity_pct: 60,
+            wind_speed_mps: 2,
+            shortwave_radiation_sum_mj_m2: null,
+            rainfall_mm: 0,
+            eto_reference_feed: null,
+          },
+          last_irrigation_event: null,
+        }),
+      }),
+    );
+  });
+
+  it("parses advancement responses and rejects malformed nested JSON", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({ ...advancementResponse, water_state: { ...advancementResponse.water_state, water_sequence: false } }),
+    );
+    const endpoints = new CropTwinEndpoints(new CropTwinApiClient({ baseUrl: "http://api", fetcher }));
+
+    await expect(endpoints.advanceOneDay("state 1/2", {
+      advancement_id: "advancement-1",
+      target_date: "2026-08-01",
+      weather: weatherRequest,
+      last_irrigation_event: null,
+    })).rejects.toMatchObject({
+      code: "FRONTEND_MALFORMED_RESPONSE",
+      kind: "malformed",
+    });
+  });
+
+  it("supports caller abort for advancement requests", async () => {
+    const controller = new AbortController();
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(
+      (_input, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+        }),
+    );
+    const endpoints = new CropTwinEndpoints(new CropTwinApiClient({ baseUrl: "http://api", fetcher }));
+    const request = endpoints.advanceOneDay("state 1/2", {
+      advancement_id: "advancement-1",
+      target_date: "2026-08-01",
+      weather: weatherRequest,
+      last_irrigation_event: null,
+    }, { signal: controller.signal });
+
+    controller.abort();
+
+    await expect(request).rejects.toMatchObject({
+      code: "FRONTEND_REQUEST_ABORTED",
+      kind: "abort",
+    });
+  });
+
+  it("forwards advancement timeout options", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetcher = vi.fn<typeof fetch>().mockImplementation(
+        (_input, init) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+          }),
+      );
+      const endpoints = new CropTwinEndpoints(new CropTwinApiClient({ baseUrl: "http://api", fetcher, timeoutMs: 30_000 }));
+      const request = endpoints.advanceOneDay("state 1/2", {
+        advancement_id: "advancement-1",
+        target_date: "2026-08-01",
+        weather: weatherRequest,
+        last_irrigation_event: null,
+      }, { timeoutMs: 5 });
+      const assertion = expect(request).rejects.toMatchObject({
+        code: "FRONTEND_REQUEST_TIMEOUT",
+        kind: "timeout",
+      });
+
+      await vi.advanceTimersByTimeAsync(6);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not automatically retry failed advancement POST requests", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockRejectedValue(new TypeError("offline"));
+    const endpoints = new CropTwinEndpoints(new CropTwinApiClient({ baseUrl: "http://api", fetcher }));
+
+    await expect(endpoints.advanceOneDay("state 1/2", {
+      advancement_id: "advancement-1",
+      target_date: "2026-08-01",
+      weather: weatherRequest,
+      last_irrigation_event: null,
+    })).rejects.toMatchObject({
       code: "FRONTEND_NETWORK_ERROR",
     });
     expect(fetcher).toHaveBeenCalledTimes(1);

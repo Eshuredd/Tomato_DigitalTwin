@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { workflowReducer } from "./workflow-reducer";
 import { initialWorkflowState, type WorkflowAction, type WorkflowState } from "./workflow-types";
 import type {
+  AdvanceOneDayResponse,
   DiseasePredictionResponse,
   SessionResponse,
   SessionStateResponse,
@@ -162,12 +163,70 @@ const twinState: UpdateTwinStateResponse = {
   snapshot_created: true,
 };
 
+const advancementState: AdvanceOneDayResponse = {
+  state_id: "state-a",
+  advancement_id: "advancement-1",
+  target_date: "2026-08-01",
+  advancement_created: true,
+  water_state: {
+    ...waterState,
+    water_observation_id: "water-observation-2",
+    water_sequence: 2,
+    base_water_observation_id: "water-observation-1",
+    base_water_sequence: 1,
+    observed_at: "2026-08-01T00:00:00Z",
+  },
+  twin_state: {
+    ...twinState,
+    snapshot_id: "snapshot-2",
+    current_state: {
+      ...twinState.current_state,
+      observed_at: "2026-08-01T00:00:00Z",
+      last_update_time: "2026-08-01T01:00:00Z",
+    },
+  },
+};
+
 describe("workflowReducer", () => {
   it("starts with no twin state", () => {
     expect(initialWorkflowState.twin).toBeNull();
     expect(initialWorkflowState.twinUpdatePending).toBe(false);
     expect(initialWorkflowState.activeTwinRequestId).toBeNull();
     expect(initialWorkflowState.activeTwinSourceSignature).toBeNull();
+    expect(initialWorkflowState.advancementPending).toBe(false);
+    expect(initialWorkflowState.latestAdvancement).toBeNull();
+    expect(initialWorkflowState.retainedAdvancement).toBeNull();
+  });
+
+  it("uses request IDs so old disease requests cannot clear newer pending state", () => {
+    const active = workflowReducer(initialWorkflowState, {
+      type: "sessionCreated",
+      session: sessionA,
+    });
+    const first = workflowReducer(active, {
+      type: "diseaseRequestStarted",
+      stateId: "state-a",
+      requestId: "disease-1",
+    });
+    const second = workflowReducer(first, {
+      type: "diseaseRequestStarted",
+      stateId: "state-a",
+      requestId: "disease-2",
+    });
+
+    expect(workflowReducer(second, {
+      type: "diseaseRequestFinished",
+      stateId: "state-a",
+      requestId: "disease-1",
+    })).toBe(second);
+
+    const finished = workflowReducer(second, {
+      type: "diseaseRequestFinished",
+      stateId: "state-a",
+      requestId: "disease-2",
+    });
+    expect(finished.diseaseRequestPending).toBe(false);
+    expect(finished.activeDiseaseRequestId).toBeNull();
   });
 
   it("makes created sessions active and clears prior disease", () => {
@@ -638,5 +697,102 @@ describe("workflowReducer", () => {
 
     expect(next.latestWaterObservationId).toBe("water-observation-1");
     expect(next.latestWaterSequence).toBe(1);
+  });
+
+  it("tracks matching advancement requests", () => {
+    const active = workflowReducer(initialWorkflowState, {
+      type: "sessionCreated",
+      session: sessionA,
+    });
+    const pending = workflowReducer(active, {
+      type: "advancementStarted",
+      stateId: "state-a",
+      requestId: "advancement-1",
+      signature: "signature-1",
+    });
+
+    expect(pending.advancementPending).toBe(true);
+    expect(pending.activeAdvancementRequestId).toBe("advancement-1");
+    expect(workflowReducer(pending, {
+      type: "advancementFinished",
+      stateId: "state-a",
+      requestId: "advancement-old",
+    })).toBe(pending);
+
+    const finished = workflowReducer(pending, {
+      type: "advancementFinished",
+      stateId: "state-a",
+      requestId: "advancement-1",
+    });
+    expect(finished.advancementPending).toBe(false);
+    expect(finished.activeAdvancementRequestId).toBeNull();
+  });
+
+  it("applies new advancement to canonical water and twin", () => {
+    const pending: WorkflowState = {
+      ...initialWorkflowState,
+      activeStateId: "state-a",
+      session: sessionA,
+      water: waterState,
+      twin: twinState,
+      latestWaterObservationId: "water-observation-1",
+      latestWaterSequence: 1,
+      advancementPending: true,
+      activeAdvancementRequestId: "advancement-1",
+      activeAdvancementRequestSignature: "signature-1",
+    };
+
+    const next = workflowReducer(pending, {
+      type: "advancementApplied",
+      stateId: "state-a",
+      requestId: "advancement-1",
+      response: advancementState,
+      canonicalWater: advancementState.water_state,
+      canonicalTwin: advancementState.twin_state,
+      retainedResponse: null,
+      notice: null,
+      transitionKind: "new_advancement",
+      twinRefreshStatus: "not_needed",
+    });
+
+    expect(next.water).toBe(advancementState.water_state);
+    expect(next.twin).toBe(advancementState.twin_state);
+    expect(next.latestWaterObservationId).toBe("water-observation-2");
+    expect(next.latestWaterSequence).toBe(2);
+    expect(next.latestAdvancement).toBe(advancementState);
+    expect(next.retainedAdvancement).toBeNull();
+  });
+
+  it("retains historical advancement responses without replacing canonical state", () => {
+    const pending: WorkflowState = {
+      ...initialWorkflowState,
+      activeStateId: "state-a",
+      session: sessionA,
+      water: waterState,
+      twin: twinState,
+      latestWaterObservationId: "water-observation-3",
+      latestWaterSequence: 3,
+      advancementPending: true,
+      activeAdvancementRequestId: "advancement-1",
+      activeAdvancementRequestSignature: "signature-1",
+    };
+
+    const next = workflowReducer(pending, {
+      type: "advancementApplied",
+      stateId: "state-a",
+      requestId: "advancement-1",
+      response: advancementState,
+      retainedResponse: advancementState,
+      notice: "reused",
+      transitionKind: "historical_retry",
+      twinRefreshStatus: "not_needed",
+    });
+
+    expect(next.water).toBe(waterState);
+    expect(next.twin).toBe(twinState);
+    expect(next.latestWaterObservationId).toBe("water-observation-3");
+    expect(next.latestWaterSequence).toBe(3);
+    expect(next.retainedAdvancement).toBe(advancementState);
+    expect(next.advancementNotice).toBe("reused");
   });
 });

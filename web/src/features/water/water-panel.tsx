@@ -44,6 +44,7 @@ export function WaterPanel({
   const api = endpoints ?? defaultEndpoints;
   const {
     activeStateId,
+    advancementPending,
     latestWaterObservationId,
     latestWaterSequence,
     session,
@@ -160,7 +161,7 @@ export function WaterPanel({
 
   async function computeWater(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!activeStateId || waterComputationPending || twinUpdatePending) {
+    if (!activeStateId || waterComputationPending || twinUpdatePending || advancementPending) {
       return;
     }
     if (!weatherDraft) {
@@ -319,7 +320,7 @@ export function WaterPanel({
           <form className="mt-5 grid gap-5" onSubmit={computeWater}>
             <Field label="Water computation date" htmlFor="water_current_date">
               <Input
-                disabled={!activeStateId || waterComputationPending || twinUpdatePending}
+                disabled={!activeStateId || waterComputationPending || twinUpdatePending || advancementPending}
                 id="water_current_date"
                 min={session?.planting_date}
                 onChange={(event) => {
@@ -336,7 +337,7 @@ export function WaterPanel({
             </Field>
             <IrrigationInput
               key={activeStateId ?? "inactive"}
-              disabled={!activeStateId || waterComputationPending || twinUpdatePending}
+              disabled={!activeStateId || waterComputationPending || twinUpdatePending || advancementPending}
               onChange={handleIrrigationChange}
             />
             {dateMismatch ? (
@@ -352,7 +353,8 @@ export function WaterPanel({
                 !weatherDraft ||
                 !irrigationDraft.valid ||
                 waterComputationPending ||
-                twinUpdatePending
+                twinUpdatePending ||
+                advancementPending
               }
             >
               {waterComputationPending ? "Computing water state" : "Compute water state"}

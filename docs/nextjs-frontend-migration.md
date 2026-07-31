@@ -1,6 +1,6 @@
 # Next.js Frontend Migration Plan
 
-This document tracks the staged migration from the legacy Streamlit UI to a Next.js frontend. Phase 4 introduces canonical twin-state update after accepted disease evidence and accepted water state while keeping FastAPI as the authoritative backend.
+This document tracks the staged migration from the legacy Streamlit UI to a Next.js frontend. Phase 5 introduces deterministic one-day advancement after accepted disease evidence, canonical water state, and canonical twin state while keeping FastAPI as the authoritative backend.
 
 ## Planned Architecture
 
@@ -57,12 +57,12 @@ web/
 4. Weather and irrigation inputs. **Implemented.**
 5. Initial/manual water computation. **Implemented.**
 6. Twin update. **Implemented.**
-7. One-day advancement. **Not implemented.**
+7. One-day advancement. **Implemented.**
 8. Simulation and recommendation. **Not implemented.**
 9. Narration, history and actual actions. **Not implemented.**
 10. Streamlit removal after parity. **Not implemented.**
 
-## Phase 1 Through 4 Implementation Notes
+## Phase 1 Through 5 Implementation Notes
 
 The `web/` app uses Next.js App Router, TypeScript, Tailwind, npm, `src/`, and the `@/*` import alias. It includes no separate Git repository and no generated demo app content.
 
@@ -70,9 +70,9 @@ The API client is hand-typed for this phase rather than generated from OpenAPI. 
 
 `NEXT_PUBLIC_CROPTWIN_API_BASE_URL` configures the browser-visible FastAPI base URL and defaults to `http://127.0.0.1:8000`. It is intentionally public configuration only; secrets must not be added to `NEXT_PUBLIC_*` values.
 
-The frontend wrappers cover the existing backend routes listed below, but the current UI calls only `/health`, `/system-info`, `POST /sessions`, `GET /sessions/{state_id}`, `POST /sessions/{state_id}/predict-disease`, `GET /sessions/{state_id}/weather-snapshot`, `POST /sessions/{state_id}/compute-water-state`, and `POST /sessions/{state_id}/update-twin-state`. Advancement, simulation, recommendation, narration, history, and actual-action screens are intentionally left for later phases.
+The frontend wrappers cover the existing backend routes listed below, but the current UI calls only `/health`, `/system-info`, `POST /sessions`, `GET /sessions/{state_id}`, `POST /sessions/{state_id}/predict-disease`, `GET /sessions/{state_id}/weather-snapshot`, `POST /sessions/{state_id}/compute-water-state`, `POST /sessions/{state_id}/update-twin-state`, and `POST /sessions/{state_id}/advance-one-day`. Simulation, recommendation, narration, history, and actual-action screens are intentionally left for later phases.
 
-Phase 2 adds a small React reducer/context boundary for active session state and disease evidence. Phase 3 extends that state to system info, weather snapshots, reviewed weather drafts, water responses, and latest water lineage ids. Phase 4 adds canonical twin response state, twin request metadata, and loaded-current-state display separation. It does not add Redux, React Query, URL persistence, localStorage persistence, or a frontend database.
+Phase 2 adds a small React reducer/context boundary for active session state and disease evidence. Phase 3 extends that state to system info, weather snapshots, reviewed weather drafts, water responses, and latest water lineage ids. Phase 4 adds canonical twin response state, twin request metadata, and loaded-current-state display separation. Phase 5 adds advancement request metadata, retained reused/historical advancement responses, and transition notices. It does not add Redux, React Query, URL persistence, localStorage persistence, or a frontend database.
 
 Disease image bytes are kept in component-local browser state only. The preview uses an object URL that is revoked when the file changes or the component unmounts. Base64 conversion happens only immediately before the FastAPI disease request and is not stored in workflow state.
 
@@ -88,7 +88,9 @@ Initial water-state requests use a stable `water_update_id` for unchanged payloa
 
 Canonical twin update requires an active session, accepted disease evidence, and accepted water state. The browser submits `POST /sessions/{state_id}/update-twin-state` with the exact `{ state_id }` body and renders the backend `current_state` from `UpdateTwinStateResponse`. It keeps `SessionStateResponse.current_state` separate from the full twin update response because loaded sessions do not provide snapshot metadata. Twin update captures the request ID, state ID, and a stable source signature from the accepted disease and water observations; responses are aborted or discarded after session, disease, or water changes. New snapshots show `A new canonical twin snapshot was created.` Reused snapshots show `The canonical twin already reflected the latest accepted observations.` The browser does not fabricate snapshot IDs, calculate twin fields, run simulations, choose recommendations, or clear downstream workflows that are not yet migrated.
 
-Browser-level Playwright coverage is not part of Phase 1 through Phase 4. The current frontend test boundary is Vitest, jsdom, React Testing Library, API-client unit coverage, reducer tests, and pure conversion/signature tests.
+One-day advancement requires an active session, accepted disease evidence, accepted canonical water lineage, accepted canonical twin, reviewed weather for the derived next date, valid recent-irrigation input, and no conflicting pending request. The browser derives the target date from `twin.current_state.observed_at` plus one calendar day and does not expose arbitrary target-date selection. Fetched weather must match the required date and unchanged fetched values; edited or manually entered weather requires explicit acknowledgement. Advancement requests use stable payload signatures and reuse the same `advancement_id` for unchanged user-triggered retries. The browser validates the `AdvanceOneDayResponse`, displays created versus reused status, and applies retry transitions conservatively: new advancements replace canonical water and twin, catch-up retries replace water then refresh the authoritative twin, current retries preserve newer local twin state, historical retries remain technical-only, and malformed sequence metadata is never accepted as valid canonical state. The browser does not run simulation, recommendation, narration, history, or actual-action workflows.
+
+Browser-level Playwright coverage is not part of Phase 1 through Phase 5. The current frontend test boundary is Vitest, jsdom, React Testing Library, API-client unit coverage, reducer tests, and pure conversion/signature tests.
 
 ## Daily Advancement Retry Semantics
 

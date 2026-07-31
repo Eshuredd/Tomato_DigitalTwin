@@ -1,5 +1,6 @@
 import { CropTwinApiError } from "./errors";
 import type {
+  AdvanceOneDayResponse,
   CropType,
   DiseaseCategory,
   DiseasePredictionResponse,
@@ -244,6 +245,23 @@ export function parseUpdateTwinStateResponse(value: unknown): UpdateTwinStateRes
   throw malformedResponseError("The CropTwin API returned an unexpected twin-state update response.");
 }
 
+export function parseAdvanceOneDayResponse(value: unknown): AdvanceOneDayResponse {
+  if (
+    isRecord(value) &&
+    nonEmptyString(value.state_id) &&
+    nonEmptyString(value.advancement_id) &&
+    isDateOnly(value.target_date) &&
+    typeof value.advancement_created === "boolean"
+  ) {
+    return {
+      ...(value as unknown as Omit<AdvanceOneDayResponse, "water_state" | "twin_state">),
+      water_state: parseWaterStateResponse(value.water_state),
+      twin_state: parseUpdateTwinStateResponse(value.twin_state),
+    };
+  }
+  throw malformedResponseError("The CropTwin API returned an unexpected one-day advancement response.");
+}
+
 export function malformedResponseError(message: string): CropTwinApiError {
   return new CropTwinApiError({
     kind: "malformed",
@@ -319,6 +337,21 @@ function isOneOf<T extends string>(
 
 function isRecord(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isDateOnly(value: unknown): value is string {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return false;
+  }
+  const [, yearText, monthText, dayText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  return month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth(year, month);
 }
 
 function isValidTimestamp(value: unknown): value is string {

@@ -1,4 +1,5 @@
 import type {
+  AdvanceOneDayResponse,
   DiseasePredictionResponse,
   SessionResponse,
   SessionStateResponse,
@@ -17,6 +18,7 @@ export interface WorkflowState {
   systemInfo: SystemInfoResponse | null;
   disease: DiseasePredictionResponse | null;
   diseaseRequestPending: boolean;
+  activeDiseaseRequestId: string | null;
   weatherSnapshot: WeatherSnapshotResponse | null;
   weatherDraft: WeatherInput | null;
   weatherDate: string | null;
@@ -30,6 +32,14 @@ export interface WorkflowState {
   activeTwinSourceSignature: string | null;
   latestWaterObservationId: string | null;
   latestWaterSequence: number;
+  advancementPending: boolean;
+  activeAdvancementRequestId: string | null;
+  activeAdvancementRequestSignature: string | null;
+  latestAdvancement: AdvanceOneDayResponse | null;
+  retainedAdvancement: AdvanceOneDayResponse | null;
+  advancementNotice: string | null;
+  advancementTransitionKind: string | null;
+  advancementTwinRefreshStatus: "not_needed" | "succeeded" | "failed" | null;
 }
 
 export type WorkflowAction =
@@ -37,8 +47,8 @@ export type WorkflowAction =
   | { type: "sessionCreated"; session: SessionResponse }
   | { type: "sessionLoaded"; session: SessionStateResponse }
   | { type: "sessionCleared" }
-  | { type: "diseaseRequestStarted"; stateId: string }
-  | { type: "diseaseRequestFinished"; stateId: string }
+  | { type: "diseaseRequestStarted"; stateId: string; requestId: string }
+  | { type: "diseaseRequestFinished"; stateId: string; requestId: string }
   | {
       type: "diseaseReceived";
       stateId: string;
@@ -88,6 +98,29 @@ export type WorkflowAction =
   | {
       type: "twinInvalidated";
       stateId: string;
+    }
+  | {
+      type: "advancementStarted";
+      stateId: string;
+      requestId: string;
+      signature: string;
+    }
+  | {
+      type: "advancementFinished";
+      stateId: string;
+      requestId: string;
+    }
+  | {
+      type: "advancementApplied";
+      stateId: string;
+      requestId: string;
+      response: AdvanceOneDayResponse;
+      canonicalWater?: WaterStateResponse | null;
+      canonicalTwin?: UpdateTwinStateResponse | null;
+      retainedResponse: AdvanceOneDayResponse | null;
+      notice: string | null;
+      transitionKind: string;
+      twinRefreshStatus: "not_needed" | "succeeded" | "failed" | null;
     };
 
 export const initialWorkflowState: WorkflowState = {
@@ -97,6 +130,7 @@ export const initialWorkflowState: WorkflowState = {
   systemInfo: null,
   disease: null,
   diseaseRequestPending: false,
+  activeDiseaseRequestId: null,
   weatherSnapshot: null,
   weatherDraft: null,
   weatherDate: null,
@@ -110,4 +144,12 @@ export const initialWorkflowState: WorkflowState = {
   activeTwinSourceSignature: null,
   latestWaterObservationId: null,
   latestWaterSequence: 0,
+  advancementPending: false,
+  activeAdvancementRequestId: null,
+  activeAdvancementRequestSignature: null,
+  latestAdvancement: null,
+  retainedAdvancement: null,
+  advancementNotice: null,
+  advancementTransitionKind: null,
+  advancementTwinRefreshStatus: null,
 };
