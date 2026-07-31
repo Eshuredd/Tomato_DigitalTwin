@@ -19,6 +19,7 @@ import {
 import {
   detectWeatherOverrides,
   initialWeatherDate,
+  isOptionalWeatherInputField,
   parseWeatherDraft,
   WEATHER_FIELD_LABELS,
   WEATHER_INPUT_FIELDS,
@@ -46,9 +47,16 @@ export function WeatherPanel({
 }) {
   const defaultEndpoints = useMemo(() => createBrowserEndpoints(), []);
   const api = endpoints ?? defaultEndpoints;
-  const { activeStateId, session, weatherDraft, weatherSnapshot } = useWorkflowState();
+  const {
+    activeStateId,
+    session,
+    waterComputationPending,
+    weatherDraft,
+    weatherSnapshot,
+  } = useWorkflowState();
   const dispatch = useWorkflowDispatch();
   const activeStateRef = useRef(activeStateId);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const requestRef = useRef(0);
   const plantingDate = session?.planting_date;
   const [targetDate, setTargetDate] = useState(() => initialWeatherDate(plantingDate));
@@ -58,6 +66,8 @@ export function WeatherPanel({
   useEffect(() => {
     activeStateRef.current = activeStateId;
     requestRef.current += 1;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
     const timeoutId = window.setTimeout(() => {
       setPending(false);
       setError(null);
@@ -82,10 +92,15 @@ export function WeatherPanel({
     const requestId = requestRef.current + 1;
     requestRef.current = requestId;
     const requestStateId = activeStateId;
+    abortControllerRef.current?.abort();
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
     setPending(true);
     setError(null);
     try {
-      const snapshot = await api.getWeatherSnapshot(requestStateId, targetDate);
+      const snapshot = await api.getWeatherSnapshot(requestStateId, targetDate, {
+        signal: abortController.signal,
+      });
       if (activeStateRef.current !== requestStateId || requestRef.current !== requestId) {
         return;
       }
@@ -104,6 +119,9 @@ export function WeatherPanel({
         draft: weatherInputFromSnapshot(snapshot),
       });
     } catch (caught) {
+      if (caught instanceof CropTwinApiError && caught.kind === "abort") {
+        return;
+      }
       if (activeStateRef.current !== requestStateId || requestRef.current !== requestId) {
         return;
       }
@@ -115,6 +133,9 @@ export function WeatherPanel({
             : "Could not retrieve weather.",
       );
     } finally {
+      if (abortControllerRef.current === abortController) {
+        abortControllerRef.current = null;
+      }
       if (activeStateRef.current === requestStateId && requestRef.current === requestId) {
         setPending(false);
       }
@@ -145,13 +166,14 @@ export function WeatherPanel({
               <Input
                 id="weather_target_date"
                 min={plantingDate}
+                disabled={!activeStateId || pending || waterComputationPending}
                 onChange={(event) => setTargetDate(event.currentTarget.value)}
                 required
                 type="date"
                 value={targetDate}
               />
             </Field>
-            <Button type="submit" disabled={!activeStateId || pending}>
+            <Button type="submit" disabled={!activeStateId || pending || waterComputationPending}>
               {pending ? "Retrieving weather" : "Retrieve weather snapshot"}
             </Button>
           </form>
@@ -206,13 +228,24 @@ export function WeatherPanel({
       </div>
 
       <WeatherDraftForm
-        disabled={!activeStateId}
+        key={activeStateId ?? "inactive"}
+        disabled={!activeStateId || waterComputationPending}
         draft={weatherDraft}
-        onDraftChange={(draft) => dispatch({ type: "weatherDraftChanged", draft })}
+        onDraftChange={(draft) => {
+          if (activeStateId) {
+            dispatch({ type: "weatherDraftChanged", stateId: activeStateId, draft });
+          }
+        }}
+        onDraftInvalid={() => {
+          if (activeStateId) {
+            dispatch({ type: "weatherDraftInvalidated", stateId: activeStateId });
+          }
+        }}
         onReset={
           weatherSnapshot
             ? () => dispatch({
                 type: "weatherDraftChanged",
+                stateId: weatherSnapshot.state_id,
                 draft: weatherInputFromSnapshot(weatherSnapshot),
               })
             : undefined
@@ -236,11 +269,13 @@ function WeatherDraftForm({
   disabled,
   draft,
   onDraftChange,
+  onDraftInvalid,
   onReset,
 }: {
   disabled: boolean;
   draft: WeatherInput | null;
   onDraftChange: (draft: WeatherInput) => void;
+  onDraftInvalid: () => void;
   onReset?: () => void;
 }) {
   const [values, setValues] = useState<WeatherFormValues>(() =>
@@ -249,8 +284,11 @@ function WeatherDraftForm({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!draft) {
+      return;
+    }
     const timeoutId = window.setTimeout(() => {
-      setValues(draft ? valuesFromDraft(draft) : EMPTY_WEATHER_VALUES);
+      setValues(valuesFromDraft(draft));
     }, 0);
     return () => window.clearTimeout(timeoutId);
   }, [draft]);
@@ -264,7 +302,13 @@ function WeatherDraftForm({
       onDraftChange(nextDraft);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Weather values are invalid.");
+      onDraftInvalid();
     }
+  }
+
+  function resetToFetchedValues() {
+    setError(null);
+    onReset?.();
   }
 
   return (
@@ -272,7 +316,7 @@ function WeatherDraftForm({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h3 className="font-semibold">Reviewed weather inputs</h3>
         {onReset ? (
-          <Button type="button" variant="secondary" onClick={onReset} disabled={disabled}>
+          <Button type="button" variant="secondary" onClick={resetToFetchedValues} disabled={disabled}>
             Reset to fetched values
           </Button>
         ) : null}
@@ -286,7 +330,7 @@ function WeatherDraftForm({
               min={field === "humidity_pct" || field.endsWith("_mm") || field.includes("radiation") || field.includes("wind") ? 0 : undefined}
               max={field === "humidity_pct" ? 100 : undefined}
               onChange={(event) => updateField(field, event.currentTarget.value)}
-              required
+              required={!isOptionalWeatherInputField(field)}
               step="any"
               type="number"
               value={values[field]}
@@ -295,6 +339,11 @@ function WeatherDraftForm({
         ))}
       </div>
       {error ? <Notice tone="warning">{error}</Notice> : null}
+      <Notice>
+        When sunlight energy is left blank, the backend may use its fallback
+        ETo method. Reference ETo is optional and used by the backend only for
+        comparison when available.
+      </Notice>
     </div>
   );
 }

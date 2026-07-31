@@ -63,11 +63,13 @@ Disease evidence is rendered from backend response values. Confidence is shown a
 
 Weather is retrieved only when the user presses the weather snapshot button. The request uses `GET /sessions/{state_id}/weather-snapshot?target_date=YYYY-MM-DD`; components call the typed API wrapper rather than raw `fetch`.
 
-The fetched snapshot is mapped to the exact backend `WeatherInput` fields and can be edited before water submission. Zero rainfall is a valid value. Manual overrides are detected locally for display only and no unsupported `manual_overrides` field is sent to FastAPI.
+The fetched snapshot is mapped to the exact backend `WeatherInput` fields and can be edited before water submission. Minimum temperature, maximum temperature, humidity, wind speed and rainfall are required. Sunlight energy and reference ETo are optional; blank values are sent as `null`, allowing the backend to use its configured fallback ETo path when Penman-Monteith inputs are unavailable. Zero rainfall and zero optional values remain valid values. Manual overrides are detected locally for display only and no unsupported `manual_overrides` field is sent to FastAPI.
 
-Recent irrigation can be omitted, entered directly in millimetres, converted from litres over area, or converted from drip runtime. Positive events send `LastIrrigationEvent` with a stable event id for the unchanged payload. A zero-depth entry sends no irrigation event.
+Fetched weather snapshots default the water computation date to the snapshot `target_date`. If the user later changes the water date, the UI warns that the reviewed weather came from another date and does not automatically fetch another snapshot.
 
-Initial water computation is submitted only when the user presses the compute button. The request uses `POST /sessions/{state_id}/compute-water-state` with the active state id, current date, reviewed weather, optional irrigation event, and a retry-stable `water_update_id`. First observations omit base water fields; later observations include the latest accepted water observation id and sequence.
+Recent irrigation can be omitted, entered directly in millimetres, converted from litres over area, or converted from drip runtime. Positive events send `LastIrrigationEvent` with a stable event id for the unchanged payload. A zero-depth entry sends no irrigation event. Invalid irrigation input is tracked explicitly and disables water computation instead of being interpreted as no irrigation.
+
+Initial water computation is submitted only when the user presses the compute button. The request uses `POST /sessions/{state_id}/compute-water-state` with the active state id, current date, reviewed weather, optional irrigation event, and a retry-stable `water_update_id`. First observations omit base water fields; later observations include the latest accepted water observation id and sequence. Weather, water-date and irrigation controls are disabled while a water request is pending; late or changed-payload responses are discarded.
 
 ## Safety Boundaries
 

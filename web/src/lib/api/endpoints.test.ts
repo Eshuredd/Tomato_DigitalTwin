@@ -56,6 +56,64 @@ const diseaseResponse = {
   predicted_at: "2026-07-31T00:00:00Z",
 };
 
+const weatherResponse = {
+  state_id: "state 1/2",
+  target_date: "2026-07-31",
+  source: "open_meteo",
+  source_timezone: "UTC",
+  latitude: 17,
+  longitude: 78,
+  tmin_c: 20,
+  tmax_c: 31,
+  humidity_pct: 60,
+  wind_speed_mps: 2,
+  wind_source_height_m: 10,
+  wind_normalized_height_m: 2,
+  rainfall_mm: 0,
+  shortwave_radiation_sum_mj_m2: 18,
+  eto_reference_feed: 4.5,
+  fetched_at: "2026-07-31T00:00:00Z",
+};
+
+const waterResponse = {
+  state_id: "state 1/2",
+  water_observation_id: "water-observation-1",
+  water_sequence: 1,
+  base_water_observation_id: null,
+  base_water_sequence: 0,
+  previous_root_zone_depletion_mm: 0,
+  water_update_id: "water-update-1",
+  reported_irrigation_event_id: null,
+  applied_irrigation_event_id: null,
+  effective_irrigation_mm: 0,
+  irrigation_event_already_accounted_for: false,
+  crop_type: "tomato",
+  growth_stage: "development",
+  soil_texture: "sandy_loam",
+  eto_computed: 4,
+  eto_method: "penman_monteith",
+  eto_reference_feed: 4.5,
+  eto_delta_pct: null,
+  kc: 0.8,
+  etc: 3.2,
+  field_capacity_assumed: 0.22,
+  wilting_point_assumed: 0.1,
+  root_depth_assumed: 400,
+  taw: 48,
+  p_allowable: 0.5,
+  raw_threshold: 24,
+  raw_root_zone_depletion_mm: 0,
+  root_zone_depletion_mm: 0,
+  root_zone_depletion: 0,
+  water_surplus_mm: 0,
+  depletion_beyond_taw_mm: 0,
+  estimated_moisture_state: "adequate",
+  stress_band: "low",
+  observed_at: "2026-07-31T00:00:00Z",
+  computed_at: "2026-07-31T01:00:00Z",
+  observation_time_basis: "DATE_ONLY_UTC_START",
+};
+
 describe("CropTwinEndpoints", () => {
   it("URL encodes state IDs in endpoint paths", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ state_id: "state 1/2", history: [] }));
@@ -95,6 +153,58 @@ describe("CropTwinEndpoints", () => {
       expect.objectContaining({
         cache: "no-store",
         method: "POST",
+      }),
+    );
+  });
+
+  it("passes cancellation options to weather snapshot requests", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(weatherResponse));
+    const endpoints = new CropTwinEndpoints(new CropTwinApiClient({ baseUrl: "http://api", fetcher }));
+    const controller = new AbortController();
+
+    await endpoints.getWeatherSnapshot("state 1/2", "2026-07-31", {
+      signal: controller.signal,
+      timeoutMs: 5000,
+    });
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://api/sessions/state%201%2F2/weather-snapshot?target_date=2026-07-31",
+      expect.objectContaining({
+        method: "GET",
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it("passes cancellation options to water computation requests", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(waterResponse));
+    const endpoints = new CropTwinEndpoints(new CropTwinApiClient({ baseUrl: "http://api", fetcher }));
+    const controller = new AbortController();
+
+    await endpoints.computeWaterState(
+      "state 1/2",
+      {
+        water_update_id: "water-update-1",
+        current_date: "2026-07-31",
+        weather: {
+          tmin_c: 20,
+          tmax_c: 31,
+          humidity_pct: 60,
+          wind_speed_mps: 2,
+          shortwave_radiation_sum_mj_m2: null,
+          rainfall_mm: 0,
+          eto_reference_feed: null,
+        },
+        last_irrigation_event: null,
+      },
+      { signal: controller.signal, timeoutMs: 5000 },
+    );
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://api/sessions/state%201%2F2/compute-water-state",
+      expect.objectContaining({
+        method: "POST",
+        signal: expect.any(AbortSignal),
       }),
     );
   });

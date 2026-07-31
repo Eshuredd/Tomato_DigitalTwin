@@ -7,12 +7,12 @@ import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
 import { Panel } from "@/components/ui/panel";
 import { IrrigationInput } from "@/features/irrigation/irrigation-input";
+import type { IrrigationDraftResult } from "@/features/irrigation/irrigation-utils";
 import { createBrowserEndpoints } from "@/lib/api/browser";
 import { CropTwinApiError } from "@/lib/api/errors";
 import type { CropTwinEndpoints } from "@/lib/api/endpoints";
 import type {
   ComputeWaterStateRequest,
-  LastIrrigationEvent,
 } from "@/lib/types/api";
 import {
   useWorkflowDispatch,
@@ -28,6 +28,13 @@ import { WaterResult } from "./water-result";
 
 export type WaterPanelEndpoints = Pick<CropTwinEndpoints, "computeWaterState">;
 
+const NO_IRRIGATION_RESULT: IrrigationDraftResult = {
+  valid: true,
+  event: null,
+  signature: "none",
+  error: null,
+};
+
 export function WaterPanel({
   endpoints,
 }: {
@@ -41,10 +48,14 @@ export function WaterPanel({
     latestWaterSequence,
     session,
     water,
+    waterComputationPending,
     weatherDraft,
+    weatherDate,
   } = useWorkflowState();
   const dispatch = useWorkflowDispatch();
   const activeStateRef = useRef(activeStateId);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const currentRequestSignatureRef = useRef<string | null>(null);
   const requestRef = useRef(0);
   const waterIdentityRef = useRef<{ signature: string; waterUpdateId: string } | null>(
     null,
@@ -53,44 +64,93 @@ export function WaterPanel({
   const [currentDate, setCurrentDate] = useState(() =>
     initialWeatherDate(session?.planting_date),
   );
-  const [lastIrrigationEvent, setLastIrrigationEvent] =
-    useState<LastIrrigationEvent | null>(null);
-  const [pending, setPending] = useState(false);
+  const [irrigationDraft, setIrrigationDraft] =
+    useState<IrrigationDraftResult>(NO_IRRIGATION_RESULT);
   const [error, setError] = useState<CropTwinApiError | string | null>(null);
 
   useEffect(() => {
     activeStateRef.current = activeStateId;
     requestRef.current += 1;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    currentRequestSignatureRef.current = null;
     waterIdentityRef.current = null;
     lastIrrigationSignatureRef.current = "none";
     const timeoutId = window.setTimeout(() => {
-      setLastIrrigationEvent(null);
-      setPending(false);
+      setIrrigationDraft(NO_IRRIGATION_RESULT);
       setError(null);
       setCurrentDate(initialWeatherDate(session?.planting_date));
     }, 0);
     return () => window.clearTimeout(timeoutId);
   }, [activeStateId, session?.planting_date]);
 
+  useEffect(() => {
+    if (!weatherDate) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      setCurrentDate(weatherDate);
+    }, 0);
+    waterIdentityRef.current = null;
+    return () => window.clearTimeout(timeoutId);
+  }, [weatherDate]);
+
+  const currentRequestSignature = useMemo(() => {
+    if (!activeStateId || !weatherDraft || !currentDate || !irrigationDraft.valid) {
+      return null;
+    }
+    const payload: Omit<ComputeWaterStateRequest, "state_id" | "water_update_id"> = {
+      current_date: currentDate,
+      weather: weatherDraft,
+      last_irrigation_event: irrigationDraft.event,
+    };
+    if (latestWaterSequence > 0 && latestWaterObservationId) {
+      payload.base_water_observation_id = latestWaterObservationId;
+      payload.base_water_sequence = latestWaterSequence;
+    }
+    return waterUpdatePayloadSignature({
+      stateId: activeStateId,
+      payload,
+    });
+  }, [
+    activeStateId,
+    currentDate,
+    irrigationDraft,
+    latestWaterObservationId,
+    latestWaterSequence,
+    weatherDraft,
+  ]);
+
+  useEffect(() => {
+    currentRequestSignatureRef.current = currentRequestSignature;
+  }, [currentRequestSignature]);
+
   const handleIrrigationChange = useCallback(
-    (event: LastIrrigationEvent | null, signature: string) => {
-      setLastIrrigationEvent(event);
-      if (lastIrrigationSignatureRef.current !== signature) {
-        lastIrrigationSignatureRef.current = signature;
+    (result: IrrigationDraftResult) => {
+      setIrrigationDraft(result);
+      const nextSignature = result.valid ? result.signature : `invalid:${result.error ?? ""}`;
+      if (lastIrrigationSignatureRef.current !== nextSignature) {
+        lastIrrigationSignatureRef.current = nextSignature;
         waterIdentityRef.current = null;
-        dispatch({ type: "waterInvalidated" });
+        if (activeStateId) {
+          dispatch({ type: "waterInvalidated", stateId: activeStateId });
+        }
       }
     },
-    [dispatch],
+    [activeStateId, dispatch],
   );
 
   async function computeWater(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!activeStateId || pending) {
+    if (!activeStateId || waterComputationPending) {
       return;
     }
     if (!weatherDraft) {
       setError("Reviewed weather inputs are required before water computation.");
+      return;
+    }
+    if (!irrigationDraft.valid) {
+      setError(irrigationDraft.error ?? "Fix recent irrigation before computing water state.");
       return;
     }
     if (!currentDate) {
@@ -109,7 +169,7 @@ export function WaterPanel({
     > = {
       current_date: currentDate,
       weather: weatherDraft,
-      last_irrigation_event: lastIrrigationEvent,
+      last_irrigation_event: irrigationDraft.event,
     };
     if (latestWaterSequence > 0 && latestWaterObservationId) {
       payloadWithoutId.base_water_observation_id = latestWaterObservationId;
@@ -128,18 +188,33 @@ export function WaterPanel({
     const request = buildComputeWaterRequest({
       baseWaterObservationId: latestWaterObservationId,
       currentDate,
-      lastIrrigationEvent,
+      lastIrrigationEvent: irrigationDraft.event,
       latestWaterSequence,
       waterUpdateId: waterIdentityRef.current.waterUpdateId,
       weather: weatherDraft,
     });
-    const requestId = requestRef.current + 1;
-    requestRef.current = requestId;
-    setPending(true);
+    const requestId = `water-${requestRef.current + 1}`;
+    requestRef.current += 1;
+    abortControllerRef.current?.abort();
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+    currentRequestSignatureRef.current = signature;
+    dispatch({
+      type: "waterComputationStarted",
+      stateId: requestStateId,
+      requestId,
+      signature,
+    });
     setError(null);
     try {
-      const response = await api.computeWaterState(requestStateId, request);
-      if (activeStateRef.current !== requestStateId || requestRef.current !== requestId) {
+      const response = await api.computeWaterState(requestStateId, request, {
+        signal: abortController.signal,
+      });
+      if (
+        activeStateRef.current !== requestStateId ||
+        requestRef.current !== Number(requestId.replace("water-", "")) ||
+        currentRequestSignatureRef.current !== signature
+      ) {
         return;
       }
       if (response.state_id !== requestStateId) {
@@ -152,7 +227,16 @@ export function WaterPanel({
       }
       dispatch({ type: "waterReceived", stateId: requestStateId, water: response });
     } catch (caught) {
-      if (activeStateRef.current !== requestStateId || requestRef.current !== requestId) {
+      if (
+        caught instanceof CropTwinApiError &&
+        caught.kind === "abort"
+      ) {
+        return;
+      }
+      if (
+        activeStateRef.current !== requestStateId ||
+        requestRef.current !== Number(requestId.replace("water-", ""))
+      ) {
         return;
       }
       setError(
@@ -163,11 +247,18 @@ export function WaterPanel({
             : "Could not compute water state.",
       );
     } finally {
-      if (activeStateRef.current === requestStateId && requestRef.current === requestId) {
-        setPending(false);
+      if (abortControllerRef.current === abortController) {
+        abortControllerRef.current = null;
       }
+      dispatch({
+        type: "waterComputationFinished",
+        stateId: requestStateId,
+        requestId,
+      });
     }
   }
+
+  const dateMismatch = Boolean(weatherDate && currentDate && weatherDate !== currentDate);
 
   return (
     <Panel>
@@ -195,13 +286,15 @@ export function WaterPanel({
           <form className="mt-5 grid gap-5" onSubmit={computeWater}>
             <Field label="Water computation date" htmlFor="water_current_date">
               <Input
-                disabled={!activeStateId || pending}
+                disabled={!activeStateId || waterComputationPending}
                 id="water_current_date"
                 min={session?.planting_date}
                 onChange={(event) => {
                   setCurrentDate(event.currentTarget.value);
                   waterIdentityRef.current = null;
-                  dispatch({ type: "waterInvalidated" });
+                  if (activeStateId) {
+                    dispatch({ type: "waterInvalidated", stateId: activeStateId });
+                  }
                 }}
                 required
                 type="date"
@@ -209,14 +302,26 @@ export function WaterPanel({
               />
             </Field>
             <IrrigationInput
-              disabled={!activeStateId || pending}
+              key={activeStateId ?? "inactive"}
+              disabled={!activeStateId || waterComputationPending}
               onChange={handleIrrigationChange}
             />
+            {dateMismatch ? (
+              <Notice tone="warning">
+                Reviewed weather originated from {weatherDate}; this water request
+                will use {currentDate}.
+              </Notice>
+            ) : null}
             <Button
               type="submit"
-              disabled={!activeStateId || !weatherDraft || pending}
+              disabled={
+                !activeStateId ||
+                !weatherDraft ||
+                !irrigationDraft.valid ||
+                waterComputationPending
+              }
             >
-              {pending ? "Computing water state" : "Compute initial water state"}
+              {waterComputationPending ? "Computing water state" : "Compute initial water state"}
             </Button>
           </form>
           <div aria-live="polite" className="mt-4 grid gap-3">

@@ -68,7 +68,11 @@ function inactiveState(): WorkflowState {
     disease: null,
     weatherSnapshot: null,
     weatherDraft: null,
+    weatherDate: null,
     water: null,
+    waterComputationPending: false,
+    activeWaterRequestId: null,
+    activeWaterRequestSignature: null,
     latestWaterObservationId: null,
     latestWaterSequence: 0,
   };

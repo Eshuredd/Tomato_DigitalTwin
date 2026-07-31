@@ -88,20 +88,31 @@ export class CropTwinEndpoints {
   getWeatherSnapshot(
     stateId: string,
     targetDate: string,
+    options: { signal?: AbortSignal; timeoutMs?: number } = {},
   ): Promise<WeatherSnapshotResponse> {
     const query = new URLSearchParams({ target_date: targetDate });
     return this.client.request<unknown>(
       `/sessions/${encodePath(stateId)}/weather-snapshot?${query.toString()}`,
+      {
+        signal: options.signal,
+        timeoutMs: options.timeoutMs,
+      },
     ).then(parseWeatherSnapshotResponse);
   }
 
   computeWaterState(
     stateId: string,
     request: Omit<ComputeWaterStateRequest, "state_id">,
+    options: { signal?: AbortSignal; timeoutMs?: number } = {},
   ): Promise<WaterStateResponse> {
     return this.client.request<unknown, ComputeWaterStateRequest>(
       `/sessions/${encodePath(stateId)}/compute-water-state`,
-      { method: "POST", body: { state_id: stateId, ...request } },
+      {
+        method: "POST",
+        body: { state_id: stateId, ...request },
+        signal: options.signal,
+        timeoutMs: options.timeoutMs,
+      },
     ).then(parseWaterStateResponse);
   }
 

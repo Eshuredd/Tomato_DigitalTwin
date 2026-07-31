@@ -15,7 +15,11 @@ export interface WorkflowState {
   disease: DiseasePredictionResponse | null;
   weatherSnapshot: WeatherSnapshotResponse | null;
   weatherDraft: WeatherInput | null;
+  weatherDate: string | null;
   water: WaterStateResponse | null;
+  waterComputationPending: boolean;
+  activeWaterRequestId: string | null;
+  activeWaterRequestSignature: string | null;
   latestWaterObservationId: string | null;
   latestWaterSequence: number;
 }
@@ -36,8 +40,20 @@ export type WorkflowAction =
       snapshot: WeatherSnapshotResponse;
       draft: WeatherInput;
     }
-  | { type: "weatherDraftChanged"; draft: WeatherInput }
-  | { type: "waterInvalidated" }
+  | { type: "weatherDraftChanged"; stateId: string; draft: WeatherInput }
+  | { type: "weatherDraftInvalidated"; stateId: string }
+  | { type: "waterInvalidated"; stateId: string }
+  | {
+      type: "waterComputationStarted";
+      stateId: string;
+      requestId: string;
+      signature: string;
+    }
+  | {
+      type: "waterComputationFinished";
+      stateId: string;
+      requestId: string;
+    }
   | {
       type: "waterReceived";
       stateId: string;
@@ -51,7 +67,11 @@ export const initialWorkflowState: WorkflowState = {
   disease: null,
   weatherSnapshot: null,
   weatherDraft: null,
+  weatherDate: null,
   water: null,
+  waterComputationPending: false,
+  activeWaterRequestId: null,
+  activeWaterRequestSignature: null,
   latestWaterObservationId: null,
   latestWaterSequence: 0,
 };

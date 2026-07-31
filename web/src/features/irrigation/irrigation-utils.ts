@@ -2,6 +2,13 @@ import type { IrrigationEventSource, LastIrrigationEvent } from "@/lib/types/api
 
 export type IrrigationMode = "none" | "direct" | "litres_area" | "drip_runtime";
 
+export interface IrrigationDraftResult {
+  valid: boolean;
+  event: LastIrrigationEvent | null;
+  signature: string;
+  error: string | null;
+}
+
 export function irrigationDepthFromLitresArea({
   totalLitres,
   irrigatedAreaM2,

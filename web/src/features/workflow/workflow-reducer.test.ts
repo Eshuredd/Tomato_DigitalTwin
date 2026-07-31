@@ -231,6 +231,7 @@ describe("workflowReducer", () => {
     });
     expect(next.weatherSnapshot).toBe(weatherSnapshot);
     expect(next.weatherDraft).toBe(weatherDraft);
+    expect(next.weatherDate).toBe("2026-07-31");
     expect(workflowReducer(active, {
       type: "weatherSnapshotReceived",
       stateId: "state-b",
@@ -252,12 +253,97 @@ describe("workflowReducer", () => {
 
     const next = workflowReducer(previous, {
       type: "weatherDraftChanged",
+      stateId: "state-a",
       draft: { ...weatherDraft, rainfall_mm: 1 },
     });
 
     expect(next.water).toBeNull();
     expect(next.latestWaterObservationId).toBe("water-observation-1");
     expect(next.latestWaterSequence).toBe(1);
+  });
+
+  it("ignores stale weather draft changes", () => {
+    const previous: WorkflowState = {
+      ...initialWorkflowState,
+      activeStateId: "state-a",
+      session: sessionA,
+      weatherDraft,
+    };
+
+    expect(workflowReducer(previous, {
+      type: "weatherDraftChanged",
+      stateId: "state-b",
+      draft: { ...weatherDraft, rainfall_mm: 1 },
+    })).toBe(previous);
+  });
+
+  it("invalid weather clears the draft and displayed water but preserves lineage", () => {
+    const previous: WorkflowState = {
+      ...initialWorkflowState,
+      activeStateId: "state-a",
+      session: sessionA,
+      weatherSnapshot,
+      weatherDraft,
+      water: waterState,
+      latestWaterObservationId: "water-observation-1",
+      latestWaterSequence: 1,
+    };
+
+    const next = workflowReducer(previous, {
+      type: "weatherDraftInvalidated",
+      stateId: "state-a",
+    });
+
+    expect(next.weatherSnapshot).toBe(weatherSnapshot);
+    expect(next.weatherDraft).toBeNull();
+    expect(next.water).toBeNull();
+    expect(next.latestWaterObservationId).toBe("water-observation-1");
+    expect(next.latestWaterSequence).toBe(1);
+  });
+
+  it("ignores stale weather invalidation", () => {
+    const previous: WorkflowState = {
+      ...initialWorkflowState,
+      activeStateId: "state-a",
+      session: sessionA,
+      weatherDraft,
+    };
+
+    expect(workflowReducer(previous, {
+      type: "weatherDraftInvalidated",
+      stateId: "state-b",
+    })).toBe(previous);
+  });
+
+  it("tracks and clears matching water computation requests", () => {
+    const active = workflowReducer(initialWorkflowState, {
+      type: "sessionCreated",
+      session: sessionA,
+    });
+    const pending = workflowReducer(active, {
+      type: "waterComputationStarted",
+      stateId: "state-a",
+      requestId: "request-1",
+      signature: "signature-1",
+    });
+
+    expect(pending.waterComputationPending).toBe(true);
+    expect(pending.activeWaterRequestId).toBe("request-1");
+    expect(pending.activeWaterRequestSignature).toBe("signature-1");
+    expect(workflowReducer(pending, {
+      type: "waterComputationFinished",
+      stateId: "state-a",
+      requestId: "request-older",
+    })).toBe(pending);
+
+    const finished = workflowReducer(pending, {
+      type: "waterComputationFinished",
+      stateId: "state-a",
+      requestId: "request-1",
+    });
+    expect(finished.waterComputationPending).toBe(false);
+    expect(finished.activeWaterRequestId).toBeNull();
+    expect(finished.activeWaterRequestSignature).toBeNull();
   });
 
   it("updates latest water lineage from active water responses", () => {
@@ -271,6 +357,7 @@ describe("workflowReducer", () => {
       water: waterState,
     });
     expect(next.water).toBe(waterState);
+    expect(next.waterComputationPending).toBe(false);
     expect(next.latestWaterObservationId).toBe("water-observation-1");
     expect(next.latestWaterSequence).toBe(1);
     expect(workflowReducer(active, {
@@ -288,7 +375,11 @@ describe("workflowReducer", () => {
       disease: diseaseA,
       weatherSnapshot,
       weatherDraft,
+      weatherDate: weatherSnapshot.target_date,
       water: waterState,
+      waterComputationPending: true,
+      activeWaterRequestId: "request-1",
+      activeWaterRequestSignature: "signature-1",
       latestWaterObservationId: "water-observation-1",
       latestWaterSequence: 1,
     };
@@ -298,7 +389,11 @@ describe("workflowReducer", () => {
     expect(next.disease).toBeNull();
     expect(next.weatherSnapshot).toBeNull();
     expect(next.weatherDraft).toBeNull();
+    expect(next.weatherDate).toBeNull();
     expect(next.water).toBeNull();
+    expect(next.waterComputationPending).toBe(false);
+    expect(next.activeWaterRequestId).toBeNull();
+    expect(next.activeWaterRequestSignature).toBeNull();
     expect(next.latestWaterObservationId).toBeNull();
     expect(next.latestWaterSequence).toBe(0);
   });

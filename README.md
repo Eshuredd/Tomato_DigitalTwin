@@ -38,7 +38,7 @@ CropTwin does not treat model output as a confirmed diagnosis, and it does not r
 - Farmer-readable narration of an already-selected recommendation.
 - Session history.
 - Streamlit workflow interface.
-- Next.js migration UI for backend health, session creation/loading, disease evidence, weather review, recent irrigation, and initial water computation.
+- Next.js migration UI for backend health, session creation/loading, disease evidence, hardened weather review, recent irrigation, and initial water computation.
 - Direct FastAPI, Swagger, and ReDoc access.
 
 ## Problem Statement
@@ -163,10 +163,11 @@ agronomy calculations, disease inference, recommendations, narration,
 validation, and persistence; the browser submits requests and renders API
 responses only. The Next.js app now includes the app shell, health check,
 session creation/loading, active-session summary, disease-image evidence
-workflow, weather review, recent irrigation input, and initial water-state
-computation. Twin update, advancement, simulation, recommendation, narration,
-history, records, farms, and plots remain in Streamlit until later migration
-phases. Backend changes are deferred until Next.js reaches full
+workflow, weather review with nullable optional weather inputs, explicit recent
+irrigation validity, and initial water-state computation with pending-state and
+stale-response guards. Twin update, advancement, simulation, recommendation,
+narration, history, records, farms, and plots remain in Streamlit until later
+migration phases. Backend changes are deferred until Next.js reaches full
 Streamlit feature parity unless an existing API contract makes a frontend
 workflow impossible.
 

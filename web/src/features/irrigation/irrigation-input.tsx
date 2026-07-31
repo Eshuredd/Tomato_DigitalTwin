@@ -4,13 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
 import { Select } from "@/components/ui/select";
-import type { LastIrrigationEvent } from "@/lib/types/api";
 import {
   buildLastIrrigationEvent,
   dripRuntimeToLitresAndDepth,
   generateIrrigationEventId,
   irrigationDepthFromLitresArea,
   stableIrrigationSignature,
+  type IrrigationDraftResult,
   type IrrigationMode,
 } from "./irrigation-utils";
 
@@ -19,7 +19,7 @@ export function IrrigationInput({
   onChange,
 }: {
   disabled: boolean;
-  onChange: (event: LastIrrigationEvent | null, signature: string) => void;
+  onChange: (result: IrrigationDraftResult) => void;
 }) {
   const [mode, setMode] = useState<IrrigationMode>("none");
   const [timestamp, setTimestamp] = useState(defaultDateTimeLocal);
@@ -32,6 +32,7 @@ export function IrrigationInput({
   const [dripArea, setDripArea] = useState("0");
   const [error, setError] = useState<string | null>(null);
   const eventIdentityRef = useRef<{ signature: string; eventId: string } | null>(null);
+  const lastEmittedSignatureRef = useRef<string | null>(null);
 
   const currentAmountMm = useCallback((): number => {
     if (mode === "direct") {
@@ -60,9 +61,10 @@ export function IrrigationInput({
     totalLitres,
   ]);
 
-  const currentEvent = useCallback((): { event: LastIrrigationEvent | null; signature: string } => {
+  const currentEvent = useCallback((): IrrigationDraftResult => {
     if (mode === "none") {
-      return { event: null, signature: "none" };
+      eventIdentityRef.current = null;
+      return { valid: true, event: null, signature: "none", error: null };
     }
     const amountMm = currentAmountMm();
     const signature = stableIrrigationSignature({
@@ -71,7 +73,15 @@ export function IrrigationInput({
       timestamp,
     });
     if (amountMm === 0) {
-      return { event: null, signature };
+      eventIdentityRef.current = null;
+      return { valid: true, event: null, signature, error: null };
+    }
+    if (amountMm < 0) {
+      throw new Error("Irrigation depth (mm) must be >= 0.");
+    }
+    const timestampDate = new Date(timestamp);
+    if (Number.isNaN(timestampDate.valueOf())) {
+      throw new Error("Irrigation timestamp is invalid.");
     }
     if (eventIdentityRef.current?.signature !== signature) {
       eventIdentityRef.current = {
@@ -90,7 +100,7 @@ export function IrrigationInput({
             : "CONVERTED_FROM_DRIP_RUNTIME",
       timestamp,
     });
-    return { event, signature };
+    return { valid: true, event, signature, error: null };
   }, [
     currentAmountMm,
     mode,
@@ -98,19 +108,31 @@ export function IrrigationInput({
   ]);
 
   useEffect(() => {
-    let nextError: string | null = null;
+    let result: IrrigationDraftResult;
     try {
-      const result = currentEvent();
-      onChange(result.event, result.signature);
+      result = currentEvent();
     } catch (caught) {
-      nextError = caught instanceof Error ? caught.message : "Recent irrigation is invalid.";
-      onChange(null, "invalid");
+      eventIdentityRef.current = null;
+      const message = caught instanceof Error ? caught.message : "Recent irrigation is invalid.";
+      result = {
+        valid: false,
+        event: null,
+        signature: `invalid:${mode}`,
+        error: message,
+      };
     }
+    if (lastEmittedSignatureRef.current !== result.signature || error !== result.error) {
+      lastEmittedSignatureRef.current = result.signature;
+      onChange(result);
+    }
+    const nextError = result.error;
     const timeoutId = window.setTimeout(() => setError(nextError), 0);
     return () => window.clearTimeout(timeoutId);
   }, [
     currentEvent,
+    error,
     onChange,
+    mode,
   ]);
 
   return (
