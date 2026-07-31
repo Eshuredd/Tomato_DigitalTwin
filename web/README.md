@@ -1,6 +1,6 @@
 # CropTwin Next.js Frontend
 
-This is the Phase 2 Next.js frontend for CropTwin. It provides the application shell, typed FastAPI client, backend health status, shared active-session state, session creation/loading, and disease-image evidence submission/results.
+This is the Phase 3 Next.js frontend for CropTwin. It provides the application shell, typed FastAPI client, backend health status, shared active-session state, session creation/loading, disease-image evidence submission/results, weather review, recent irrigation input, and initial deterministic water-state computation.
 
 The FastAPI backend remains authoritative for agronomy, disease inference, recommendations, narration, validation, and persistence. The legacy Streamlit frontend in `../frontend/` remains operational while the migration proceeds.
 
@@ -53,11 +53,21 @@ The request body matches the existing FastAPI contract:
 {
   "state_id": "active-state-id",
   "image_base64": "raw-base64",
-  "model_version": "1.0"
+  "model_version": "from /system-info when available, otherwise 1.0"
 }
 ```
 
 Disease evidence is rendered from backend response values. Confidence is shown as a percentage with the raw value in technical details. Uncertainty remains visible, including high-uncertainty and `UNKNOWN` results. Technical details never include uploaded image bytes.
+
+## Weather And Initial Water Flow
+
+Weather is retrieved only when the user presses the weather snapshot button. The request uses `GET /sessions/{state_id}/weather-snapshot?target_date=YYYY-MM-DD`; components call the typed API wrapper rather than raw `fetch`.
+
+The fetched snapshot is mapped to the exact backend `WeatherInput` fields and can be edited before water submission. Zero rainfall is a valid value. Manual overrides are detected locally for display only and no unsupported `manual_overrides` field is sent to FastAPI.
+
+Recent irrigation can be omitted, entered directly in millimetres, converted from litres over area, or converted from drip runtime. Positive events send `LastIrrigationEvent` with a stable event id for the unchanged payload. A zero-depth entry sends no irrigation event.
+
+Initial water computation is submitted only when the user presses the compute button. The request uses `POST /sessions/{state_id}/compute-water-state` with the active state id, current date, reviewed weather, optional irrigation event, and a retry-stable `water_update_id`. First observations omit base water fields; later observations include the latest accepted water observation id and sequence.
 
 ## Safety Boundaries
 
@@ -70,8 +80,6 @@ Disease evidence is rendered from backend response values. Confidence is shown a
 
 Still in Streamlit until later phases:
 
-- Weather and irrigation inputs.
-- Initial water computation.
 - Twin update.
 - One-day advancement.
 - Simulation and recommendation.

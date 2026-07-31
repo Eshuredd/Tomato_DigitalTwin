@@ -1,6 +1,6 @@
 # Next.js Frontend Migration Plan
 
-This document tracks the staged migration from the legacy Streamlit UI to a Next.js frontend. Phase 2 introduces disease-image submission and disease-evidence rendering while keeping FastAPI as the authoritative backend.
+This document tracks the staged migration from the legacy Streamlit UI to a Next.js frontend. Phase 3 introduces weather review, recent irrigation input, and initial water-state computation while keeping FastAPI as the authoritative backend.
 
 ## Planned Architecture
 
@@ -54,15 +54,15 @@ web/
 1. Application shell and API client. **Implemented.**
 2. Session creation/loading. **Implemented.**
 3. Disease upload and results. **Implemented.**
-4. Weather and irrigation inputs.
-5. Initial water computation.
-6. Twin update.
-7. One-day advancement.
-8. Simulation and recommendation.
-9. Narration, history and actual actions.
-10. Streamlit removal after parity.
+4. Weather and irrigation inputs. **Implemented.**
+5. Initial water computation. **Implemented.**
+6. Twin update. **Not implemented.**
+7. One-day advancement. **Not implemented.**
+8. Simulation and recommendation. **Not implemented.**
+9. Narration, history and actual actions. **Not implemented.**
+10. Streamlit removal after parity. **Not implemented.**
 
-## Phase 1 And 2 Implementation Notes
+## Phase 1 Through 3 Implementation Notes
 
 The `web/` app uses Next.js App Router, TypeScript, Tailwind, npm, `src/`, and the `@/*` import alias. It includes no separate Git repository and no generated demo app content.
 
@@ -70,13 +70,19 @@ The API client is hand-typed for this phase rather than generated from OpenAPI. 
 
 `NEXT_PUBLIC_CROPTWIN_API_BASE_URL` configures the browser-visible FastAPI base URL and defaults to `http://127.0.0.1:8000`. It is intentionally public configuration only; secrets must not be added to `NEXT_PUBLIC_*` values.
 
-The frontend wrappers cover the existing backend routes listed below, but the current UI calls only `/health`, `/system-info`, `POST /sessions`, `GET /sessions/{state_id}`, and `POST /sessions/{state_id}/predict-disease`. Water, advancement, twin-update, simulation, recommendation, narration, history, and actual-action screens are intentionally left for later phases.
+The frontend wrappers cover the existing backend routes listed below, but the current UI calls only `/health`, `/system-info`, `POST /sessions`, `GET /sessions/{state_id}`, `POST /sessions/{state_id}/predict-disease`, `GET /sessions/{state_id}/weather-snapshot`, and `POST /sessions/{state_id}/compute-water-state`. Advancement, twin-update, simulation, recommendation, narration, history, and actual-action screens are intentionally left for later phases.
 
-Phase 2 adds a small React reducer/context boundary for active session state and disease evidence. It does not add Redux, React Query, URL persistence, localStorage persistence, or a frontend database.
+Phase 2 adds a small React reducer/context boundary for active session state and disease evidence. Phase 3 extends that state to system info, weather snapshots, reviewed weather drafts, water responses, and latest water lineage ids. It does not add Redux, React Query, URL persistence, localStorage persistence, or a frontend database.
 
 Disease image bytes are kept in component-local browser state only. The preview uses an object URL that is revoked when the file changes or the component unmounts. Base64 conversion happens only immediately before the FastAPI disease request and is not stored in workflow state.
 
-Browser-level Playwright coverage is not part of Phase 1. The current frontend test boundary is Vitest, jsdom, React Testing Library, and API-client unit coverage.
+Disease requests use the model version from `/system-info` when available and fall back to the documented compatibility value only when metadata is unavailable or malformed.
+
+Weather snapshots are fetched only on user action and are mapped to backend `WeatherInput` fields before review. Manual overrides are detected locally but not sent as a backend field. Weather or irrigation changes invalidate the displayed water response.
+
+Initial water-state requests use a stable `water_update_id` for unchanged payload retries, omit base water fields for the first observation, and include the latest accepted water observation id and sequence for subsequent initial/manual observations. The browser renders the returned deterministic water state and lineage values; it does not compute ETo, ETc, water balance, simulations, recommendations, or narration.
+
+Browser-level Playwright coverage is not part of Phase 1 through Phase 3. The current frontend test boundary is Vitest, jsdom, React Testing Library, API-client unit coverage, reducer tests, and pure conversion/signature tests.
 
 ## Daily Advancement Retry Semantics
 

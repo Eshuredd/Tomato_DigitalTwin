@@ -89,8 +89,8 @@ export function SessionPanel() {
         <div>
           <h2 className="text-xl font-semibold">Start a CropTwin session</h2>
           <p className="mt-2 text-sm text-[var(--color-muted)]">
-            This Phase 1 form only creates the base session record. FastAPI still
-            owns elevation validation, persistence and all agronomy decisions.
+            Create the base session record. FastAPI still owns elevation
+            validation, persistence and all agronomy decisions.
           </p>
           <form className="mt-5 grid gap-4" onSubmit={handleCreate}>
             <div className="grid gap-4 sm:grid-cols-2">

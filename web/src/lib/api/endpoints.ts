@@ -5,6 +5,8 @@ import {
   parseSessionResponse,
   parseSessionStateResponse,
   parseSystemInfoResponse,
+  parseWaterStateResponse,
+  parseWeatherSnapshotResponse,
 } from "./validators";
 import type {
   ActualActionCreateRequest,
@@ -88,19 +90,19 @@ export class CropTwinEndpoints {
     targetDate: string,
   ): Promise<WeatherSnapshotResponse> {
     const query = new URLSearchParams({ target_date: targetDate });
-    return this.client.request<WeatherSnapshotResponse>(
+    return this.client.request<unknown>(
       `/sessions/${encodePath(stateId)}/weather-snapshot?${query.toString()}`,
-    );
+    ).then(parseWeatherSnapshotResponse);
   }
 
   computeWaterState(
     stateId: string,
     request: Omit<ComputeWaterStateRequest, "state_id">,
   ): Promise<WaterStateResponse> {
-    return this.client.request<WaterStateResponse, ComputeWaterStateRequest>(
+    return this.client.request<unknown, ComputeWaterStateRequest>(
       `/sessions/${encodePath(stateId)}/compute-water-state`,
       { method: "POST", body: { state_id: stateId, ...request } },
-    );
+    ).then(parseWaterStateResponse);
   }
 
   advanceOneDay(

@@ -29,38 +29,51 @@ export function DiseasePanel({
 }) {
   const defaultEndpoints = useMemo(() => createBrowserEndpoints(), []);
   const api = endpoints ?? defaultEndpoints;
-  const { activeStateId, disease } = useWorkflowState();
+  const { activeStateId, disease, systemInfo } = useWorkflowState();
   const dispatch = useWorkflowDispatch();
   const activeStateRef = useRef(activeStateId);
   const abortRef = useRef<AbortController | null>(null);
-  const [modelInfo, setModelInfo] = useState<SystemInfoResponse["disease_model"] | null>(null);
+  const requestedSystemInfoRef = useRef(false);
+  const [fetchedModelInfo, setFetchedModelInfo] = useState<SystemInfoResponse["disease_model"] | null>(null);
+  const modelInfo = systemInfo?.disease_model ?? fetchedModelInfo;
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<CropTwinApiError | string | null>(null);
 
   useEffect(() => {
     activeStateRef.current = activeStateId;
     abortRef.current?.abort();
-    const timeoutId = window.setTimeout(() => setPending(false), 0);
+    const timeoutId = window.setTimeout(() => {
+      setPending(false);
+      setError(null);
+    }, 0);
     return () => window.clearTimeout(timeoutId);
   }, [activeStateId]);
 
   useEffect(() => {
+    if (systemInfo) {
+      return;
+    }
+    if (requestedSystemInfoRef.current) {
+      return;
+    }
+    requestedSystemInfoRef.current = true;
     let ignore = false;
     api.getSystemInfo()
       .then((response) => {
         if (!ignore) {
-          setModelInfo(response.disease_model);
+          setFetchedModelInfo(response.disease_model);
+          dispatch({ type: "systemInfoLoaded", systemInfo: response });
         }
       })
       .catch(() => {
         if (!ignore) {
-          setModelInfo(null);
+          setFetchedModelInfo(null);
         }
       });
     return () => {
       ignore = true;
     };
-  }, [api]);
+  }, [api, dispatch, systemInfo]);
 
   async function submitDisease(file: File) {
     if (!activeStateId || pending) {
@@ -77,7 +90,7 @@ export function DiseasePanel({
         requestStateId,
         {
           image_base64: imageBase64,
-          model_version: DISEASE_MODEL_VERSION,
+          model_version: modelInfo?.model_version ?? DISEASE_MODEL_VERSION,
         },
         {
           signal: controller.signal,
@@ -86,6 +99,14 @@ export function DiseasePanel({
       );
       if (activeStateRef.current !== requestStateId) {
         return;
+      }
+      if (response.state_id !== requestStateId) {
+        throw new CropTwinApiError({
+          kind: "malformed",
+          status: null,
+          code: "FRONTEND_MALFORMED_RESPONSE",
+          message: "The backend returned disease evidence for a different session.",
+        });
       }
       dispatch({
         type: "diseaseReceived",
@@ -132,6 +153,7 @@ export function DiseasePanel({
               disabled={!activeStateId}
               onSubmit={(file) => void submitDisease(file)}
               pending={pending}
+              resetKey={activeStateId}
             />
           </div>
           <div aria-live="polite" className="mt-4">

@@ -14,21 +14,40 @@ export function DiseaseUploadForm({
   disabled,
   onSubmit,
   pending,
+  resetKey,
 }: {
   disabled: boolean;
   onSubmit: (file: File) => void;
   pending: boolean;
+  resetKey?: string | null;
 }) {
   const fileInputId = useId();
   const errorId = useId();
   const [file, setFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const previewUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     return () => revokePreviewUrl();
   }, []);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setFile(null);
+      setError(null);
+      if (previewUrlRef.current) {
+        URL.revokeObjectURL(previewUrlRef.current);
+        previewUrlRef.current = null;
+      }
+      setPreviewUrl(null);
+      if (inputRef.current) {
+        inputRef.current.value = "";
+      }
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [resetKey]);
 
   function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const selected = Array.from(event.currentTarget.files ?? []);
@@ -39,9 +58,7 @@ export function DiseaseUploadForm({
   }
 
   function removeFile() {
-    setFile(null);
-    setError(null);
-    replacePreviewUrl(null);
+    clearSelection();
   }
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -65,6 +82,7 @@ export function DiseaseUploadForm({
           className="min-h-11 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm"
           disabled={disabled || pending}
           id={fileInputId}
+          ref={inputRef}
           name="disease_image"
           onChange={handleFileChange}
           type="file"
@@ -131,6 +149,15 @@ export function DiseaseUploadForm({
     if (previewUrlRef.current) {
       URL.revokeObjectURL(previewUrlRef.current);
       previewUrlRef.current = null;
+    }
+  }
+
+  function clearSelection() {
+    setFile(null);
+    setError(null);
+    replacePreviewUrl(null);
+    if (inputRef.current) {
+      inputRef.current.value = "";
     }
   }
 }

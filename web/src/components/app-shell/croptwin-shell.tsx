@@ -5,6 +5,8 @@ import { SessionPanel } from "@/features/session/session-panel";
 import { WorkflowProvider } from "@/features/workflow/workflow-context";
 import { ActiveSessionSummary } from "@/features/workflow/active-session-summary";
 import { DiseasePanel } from "@/features/disease/disease-panel";
+import { WeatherPanel } from "@/features/weather/weather-panel";
+import { WaterPanel } from "@/features/water/water-panel";
 
 export function CropTwinShell() {
   return (
@@ -41,10 +43,10 @@ export function CropTwinShell() {
             <Panel>
               <h2 className="text-xl font-semibold">Migration phase</h2>
               <p className="mt-3 text-sm leading-6 text-[var(--color-muted)]">
-                Phase 2 adds active-session state and disease evidence upload
-                to the Next.js migration. Weather, water computation, twin
-                updates, simulations, recommendations and narration remain in
-                Streamlit until their workflow screens are migrated deliberately.
+                Phase 3 adds weather review, recent irrigation input and the
+                initial deterministic water computation. Twin updates,
+                simulation, recommendations and narration remain in Streamlit
+                until their workflow screens are migrated deliberately.
               </p>
             </Panel>
           </section>
@@ -52,6 +54,8 @@ export function CropTwinShell() {
           <SessionPanel />
           <ActiveSessionSummary />
           <DiseasePanel />
+          <WeatherPanel />
+          <WaterPanel />
         </WorkflowProvider>
       </div>
     </main>

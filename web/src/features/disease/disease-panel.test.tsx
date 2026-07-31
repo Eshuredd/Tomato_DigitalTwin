@@ -54,9 +54,9 @@ const systemInfo = {
 
 function activeState(session: SessionResponse = sessionA): WorkflowState {
   return {
+    ...inactiveState(),
     activeStateId: session.state_id,
     session,
-    disease: null,
   };
 }
 
@@ -64,7 +64,13 @@ function inactiveState(): WorkflowState {
   return {
     activeStateId: null,
     session: null,
+    systemInfo: null,
     disease: null,
+    weatherSnapshot: null,
+    weatherDraft: null,
+    water: null,
+    latestWaterObservationId: null,
+    latestWaterSequence: 0,
   };
 }
 
@@ -203,6 +209,64 @@ describe("DiseasePanel", () => {
     expect(endpoints.recommend).not.toHaveBeenCalled();
   });
 
+  it("uses system-info model version when available", async () => {
+    const endpoints = fakeEndpoints({
+      getSystemInfo: vi.fn().mockResolvedValue({
+        ...systemInfo,
+        disease_model: {
+          ...systemInfo.disease_model,
+          model_version: "2.3.4",
+        },
+      }),
+    });
+    const user = userEvent.setup();
+    renderDiseasePanel(endpoints);
+
+    await waitFor(() => expect(endpoints.getSystemInfo).toHaveBeenCalled());
+    await user.upload(screen.getByLabelText("Tomato leaf image"), imageFile());
+    await user.click(screen.getByRole("button", { name: "Submit disease evidence" }));
+
+    expect(endpoints.predictDisease).toHaveBeenCalledWith(
+      "state-a",
+      expect.objectContaining({ model_version: "2.3.4" }),
+      expect.anything(),
+    );
+  });
+
+  it("falls back when system info is malformed or unavailable", async () => {
+    const endpoints = fakeEndpoints({
+      getSystemInfo: vi.fn().mockRejectedValue(new Error("malformed")),
+    });
+    const user = userEvent.setup();
+    renderDiseasePanel(endpoints);
+
+    await user.upload(screen.getByLabelText("Tomato leaf image"), imageFile());
+    await user.click(screen.getByRole("button", { name: "Submit disease evidence" }));
+
+    expect(endpoints.predictDisease).toHaveBeenCalledWith(
+      "state-a",
+      expect.objectContaining({ model_version: "1.0" }),
+      expect.anything(),
+    );
+  });
+
+  it("rejects disease responses for a different state", async () => {
+    const endpoints = fakeEndpoints({
+      predictDisease: vi.fn().mockResolvedValue({
+        ...diseaseResponse,
+        state_id: "state-b",
+      }),
+    });
+    const user = userEvent.setup();
+    renderDiseasePanel(endpoints);
+
+    await user.upload(screen.getByLabelText("Tomato leaf image"), imageFile());
+    await user.click(screen.getByRole("button", { name: "Submit disease evidence" }));
+
+    expect(await screen.findByText("The backend returned disease evidence for a different session.")).toBeInTheDocument();
+    expect(screen.queryByText("Late blight")).not.toBeInTheDocument();
+  });
+
   it("keeps high uncertainty and unknown evidence visible", async () => {
     const highUnknown = {
       ...diseaseResponse,
@@ -301,5 +365,63 @@ describe("DiseasePanel", () => {
     deferred.resolve(diseaseResponse);
 
     await waitFor(() => expect(screen.queryByText("Late blight")).not.toBeInTheDocument());
+  });
+
+  it("clears selected files, previews and API errors on active session change", async () => {
+    const endpoints = fakeEndpoints({
+      predictDisease: vi.fn().mockRejectedValue(new CropTwinApiError({
+        kind: "api",
+        status: 422,
+        code: "INVALID_DISEASE_IMAGE",
+        message: "Invalid tomato-leaf image.",
+        details: {},
+      })),
+    });
+    const user = userEvent.setup();
+
+    function Harness() {
+      const dispatch = useWorkflowDispatch();
+      return (
+        <>
+          <button type="button" onClick={() => dispatch({ type: "sessionCreated", session: sessionB })}>
+            Switch session
+          </button>
+          <DiseasePanel endpoints={endpoints} />
+        </>
+      );
+    }
+
+    render(
+      <WorkflowProvider initialState={activeState()}>
+        <Harness />
+      </WorkflowProvider>,
+    );
+
+    const input = screen.getByLabelText("Tomato leaf image") as HTMLInputElement;
+    await user.upload(input, imageFile());
+    await user.click(screen.getByRole("button", { name: "Submit disease evidence" }));
+    expect(await screen.findByText("Invalid tomato-leaf image.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Switch session" }));
+
+    await waitFor(() => expect(screen.queryByText("Invalid tomato-leaf image.")).not.toBeInTheDocument());
+    expect(screen.queryByText("leaf.jpg")).not.toBeInTheDocument();
+    expect(input.value).toBe("");
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:leaf.jpg");
+  });
+
+  it("resets the native input when removing an image so the same file can be selected again", async () => {
+    const user = userEvent.setup();
+    renderDiseasePanel();
+    const input = screen.getByLabelText("Tomato leaf image") as HTMLInputElement;
+    const file = imageFile();
+
+    await user.upload(input, file);
+    expect(screen.getByText("leaf.jpg")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Remove image" }));
+    expect(input.value).toBe("");
+    await user.upload(input, file);
+
+    expect(screen.getByText("leaf.jpg")).toBeInTheDocument();
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(2);
   });
 });
