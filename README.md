@@ -167,7 +167,8 @@ session creation/loading, active-session summary, disease-image evidence
 workflow, weather review with nullable optional weather inputs, explicit recent
 irrigation validity, water-state computation, canonical twin-state update, and
 one-day advancement with pending-state, stale-response, idempotent-retry, and
-authoritative-twin refresh guards. Simulation, recommendation, narration,
+authoritative-twin refresh, canonical-lineage, and weather-provenance guards.
+Simulation, recommendation, narration,
 history, records, farms, and plots remain in Streamlit until later migration
 phases. Backend changes are deferred until Next.js reaches full Streamlit
 feature parity unless an existing API contract makes a frontend workflow

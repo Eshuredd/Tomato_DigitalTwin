@@ -227,6 +227,22 @@ describe("WeatherPanel", () => {
     expect(screen.getByLabelText("Minimum temperature (C)")).toBeDisabled();
   });
 
+  it("disables weather retrieval and editing while advancement is pending", () => {
+    render(
+      <WorkflowProvider initialState={activeState({
+        advancementPending: true,
+        activeAdvancementRequestId: "advancement-1",
+        activeAdvancementRequestSignature: "signature-1",
+      })}>
+        <WeatherPanel endpoints={fakeWeatherEndpoints()} />
+      </WorkflowProvider>,
+    );
+
+    expect(screen.getByLabelText("Weather date")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Retrieve weather snapshot" })).toBeDisabled();
+    expect(screen.getByLabelText("Minimum temperature (C)")).toBeDisabled();
+  });
+
   it("aborts weather requests on unmount and does not store late responses", async () => {
     const deferred = deferredWeather();
     let signal: AbortSignal | undefined;

@@ -253,10 +253,17 @@ export function parseAdvanceOneDayResponse(value: unknown): AdvanceOneDayRespons
     isDateOnly(value.target_date) &&
     typeof value.advancement_created === "boolean"
   ) {
+    const water_state = parseWaterStateResponse(value.water_state);
+    const twin_state = parseUpdateTwinStateResponse(value.twin_state);
+    if (water_state.state_id !== value.state_id || twin_state.state_id !== value.state_id) {
+      throw malformedResponseError(
+        "The CropTwin API returned an advancement response with mismatched nested state IDs.",
+      );
+    }
     return {
       ...(value as unknown as Omit<AdvanceOneDayResponse, "water_state" | "twin_state">),
-      water_state: parseWaterStateResponse(value.water_state),
-      twin_state: parseUpdateTwinStateResponse(value.twin_state),
+      water_state,
+      twin_state,
     };
   }
   throw malformedResponseError("The CropTwin API returned an unexpected one-day advancement response.");

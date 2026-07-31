@@ -233,14 +233,40 @@ function deferredAdvancement() {
 }
 
 function StateMarker() {
-  const { latestWaterSequence, retainedAdvancement, twin: acceptedTwin, water: acceptedWater } = useWorkflowState();
+  const {
+    latestWaterObservationId,
+    latestWaterSequence,
+    retainedAdvancement,
+    twin: acceptedTwin,
+    water: acceptedWater,
+    weatherSnapshot: acceptedWeatherSnapshot,
+  } = useWorkflowState();
   return (
     <div>
+      <span>lineage:{latestWaterObservationId ?? "none"}</span>
       <span>sequence:{latestWaterSequence}</span>
       <span>water:{acceptedWater?.water_observation_id ?? "none"}</span>
       <span>snapshot:{acceptedTwin?.snapshot_id ?? "none"}</span>
+      <span>weather-target:{acceptedWeatherSnapshot?.target_date ?? "none"}</span>
       <span>retained:{retainedAdvancement?.advancement_id ?? "none"}</span>
     </div>
+  );
+}
+
+function LoadNextDayWeather() {
+  const dispatch = useWorkflowDispatch();
+  return (
+    <Button
+      type="button"
+      onClick={() => dispatch({
+        type: "weatherSnapshotReceived",
+        stateId: "state-a",
+        snapshot: weatherSnapshot,
+        draft: weather,
+      })}
+    >
+      Load next-day weather
+    </Button>
   );
 }
 
@@ -279,8 +305,38 @@ describe("AdvancementPanel", () => {
       }),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+    expect(await screen.findByText("Advanced the canonical twin by one day.")).toBeInTheDocument();
     expect(await screen.findByText("new advancement")).toBeInTheDocument();
     expect(screen.getByText("2")).toBeInTheDocument();
+  });
+
+  it("advances after reducer weather retrieval clears transient water but keeps canonical lineage", async () => {
+    const endpoints = fakeEndpoints();
+    const user = userEvent.setup();
+    render(
+      <WorkflowProvider initialState={activeState({
+        weatherSnapshot: null,
+        weatherDraft: null,
+        weatherDate: null,
+      })}>
+        <StateMarker />
+        <LoadNextDayWeather />
+        <AdvancementPanel endpoints={endpoints} />
+      </WorkflowProvider>,
+    );
+
+    expect(screen.getByText("water:water-1")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Load next-day weather" }));
+
+    expect(screen.getByText("lineage:water-1")).toBeInTheDocument();
+    expect(screen.getByText("sequence:1")).toBeInTheDocument();
+    expect(screen.getByText("water:none")).toBeInTheDocument();
+    expect(screen.getByText("snapshot:snapshot-1")).toBeInTheDocument();
+    expect(screen.getByText("weather-target:2026-08-01")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Advance one day" }));
+
+    await waitFor(() => expect(endpoints.advanceOneDay).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText("Advanced the canonical twin by one day.")).toBeInTheDocument();
   });
 
   it("reuses the same advancement ID for unchanged user-triggered retries", async () => {
@@ -305,6 +361,33 @@ describe("AdvancementPanel", () => {
     const endpoints = fakeEndpoints();
     const user = userEvent.setup();
     renderAdvancementPanel(endpoints, activeState({
+      weatherSnapshot: null,
+      weatherDate: null,
+      weatherDraft: weather,
+    }));
+
+    expect(screen.getByRole("button", { name: "Advance one day" })).toBeDisabled();
+    await user.click(screen.getByLabelText(/acknowledge/i));
+    await user.click(screen.getByRole("button", { name: "Advance one day" }));
+
+    await waitFor(() => expect(endpoints.advanceOneDay).toHaveBeenCalledTimes(1));
+  });
+
+  it("allows unchanged fetched weather for the required date without acknowledgement", async () => {
+    const endpoints = fakeEndpoints();
+    const user = userEvent.setup();
+    renderAdvancementPanel(endpoints);
+
+    expect(screen.queryByLabelText(/acknowledge/i)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Advance one day" }));
+
+    await waitFor(() => expect(endpoints.advanceOneDay).toHaveBeenCalledTimes(1));
+  });
+
+  it("requires explicit acknowledgement for edited fetched weather on the required date", async () => {
+    const endpoints = fakeEndpoints();
+    const user = userEvent.setup();
+    renderAdvancementPanel(endpoints, activeState({
       weatherDraft: { ...weather, rainfall_mm: 2 },
     }));
 
@@ -313,6 +396,76 @@ describe("AdvancementPanel", () => {
     await user.click(screen.getByRole("button", { name: "Advance one day" }));
 
     await waitFor(() => expect(endpoints.advanceOneDay).toHaveBeenCalledTimes(1));
+  });
+
+  it("blocks fetched weather for a different date even after manual acknowledgement would otherwise apply", async () => {
+    const endpoints = fakeEndpoints();
+    const user = userEvent.setup();
+    renderAdvancementPanel(endpoints, activeState({
+      weatherSnapshot: { ...weatherSnapshot, target_date: "2026-07-30" },
+      weatherDate: "2026-07-30",
+      weatherDraft: weather,
+    }));
+
+    expect(screen.getByText("Retrieve weather for 2026-08-01 before advancing.")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/acknowledge/i)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Advance one day" }));
+
+    expect(endpoints.advanceOneDay).not.toHaveBeenCalled();
+  });
+
+  it("blocks inconsistent canonical water lineage", () => {
+    renderAdvancementPanel(fakeEndpoints(), activeState({
+      latestWaterObservationId: null,
+      latestWaterSequence: 1,
+      water: null,
+    }));
+
+    expect(screen.getByText("Canonical water lineage is incomplete; recompute water state before advancing.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Advance one day" })).toBeDisabled();
+  });
+
+  it("blocks missing canonical water sequence for an existing observation ID", () => {
+    renderAdvancementPanel(fakeEndpoints(), activeState({
+      latestWaterObservationId: "water-1",
+      latestWaterSequence: 0,
+      water: null,
+    }));
+
+    expect(screen.getByText("Canonical water lineage is incomplete; recompute water state before advancing.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Advance one day" })).toBeDisabled();
+  });
+
+  it("keeps the same advancement ID after a request failure and unchanged retry", async () => {
+    const randomUUID = vi.mocked(crypto.randomUUID);
+    randomUUID.mockReturnValueOnce("advancement-fixed").mockReturnValueOnce("advancement-new");
+    const endpoints = {
+      advanceOneDay: vi.fn()
+        .mockRejectedValueOnce(new CropTwinApiError({
+          kind: "api",
+          status: 503,
+          code: "SERVICE_UNAVAILABLE",
+          message: "Temporary failure.",
+          details: {},
+        }))
+        .mockResolvedValueOnce(advancement),
+      updateTwinState: vi.fn(),
+    };
+    const user = userEvent.setup();
+    renderAdvancementPanel(endpoints);
+
+    await user.click(screen.getByRole("button", { name: "Advance one day" }));
+    expect(await screen.findByText("Temporary failure.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Advance one day" }));
+
+    await waitFor(() => expect(endpoints.advanceOneDay).toHaveBeenCalledTimes(2));
+    expect(endpoints.advanceOneDay).toHaveBeenNthCalledWith(
+      2,
+      "state-a",
+      expect.objectContaining({ advancement_id: "advancement-fixed" }),
+      expect.anything(),
+    );
+    expect(randomUUID).toHaveBeenCalledTimes(1);
   });
 
   it("prevents duplicate submission while pending", async () => {

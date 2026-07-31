@@ -5,6 +5,7 @@ import {
   parseUpdateTwinStateResponse,
   parseWaterStateResponse,
 } from "./validators";
+import { CropTwinApiError } from "./errors";
 import type { GrowthStage } from "@/lib/types/api";
 
 const currentState = {
@@ -302,5 +303,35 @@ describe("advancement validators", () => {
       ...advancementResponse,
       twin_state: { ...advancementResponse.twin_state, snapshot_created: "yes" },
     })).toThrow("twin-state update");
+  });
+
+  it("rejects mismatched nested water state IDs", () => {
+    try {
+      parseAdvanceOneDayResponse({
+        ...advancementResponse,
+        water_state: { ...advancementResponse.water_state, state_id: "state-b" },
+      });
+      throw new Error("Expected mismatched water state ID to fail.");
+    } catch (error) {
+      expect(error).toBeInstanceOf(CropTwinApiError);
+      expect((error as CropTwinApiError).kind).toBe("malformed");
+      expect((error as CropTwinApiError).code).toBe("FRONTEND_MALFORMED_RESPONSE");
+      expect((error as CropTwinApiError).message).toContain("mismatched nested state IDs");
+    }
+  });
+
+  it("rejects mismatched nested twin state IDs", () => {
+    try {
+      parseAdvanceOneDayResponse({
+        ...advancementResponse,
+        twin_state: { ...advancementResponse.twin_state, state_id: "state-b" },
+      });
+      throw new Error("Expected mismatched twin state ID to fail.");
+    } catch (error) {
+      expect(error).toBeInstanceOf(CropTwinApiError);
+      expect((error as CropTwinApiError).kind).toBe("malformed");
+      expect((error as CropTwinApiError).code).toBe("FRONTEND_MALFORMED_RESPONSE");
+      expect((error as CropTwinApiError).message).toContain("mismatched nested state IDs");
+    }
   });
 });

@@ -30,6 +30,8 @@ export const ADVANCEMENT_REUSED_NOTICE =
   "This daily advancement was already completed; reused the original result.";
 export const ADVANCEMENT_CATCH_UP_NOTICE =
   "The advancement already existed. CropTwin refreshed the local workflow to the latest canonical state.";
+export const ADVANCEMENT_CREATED_NOTICE =
+  "Advanced the canonical twin by one day.";
 export const ADVANCEMENT_TWIN_REFRESH_FAILED_NOTICE =
   "The canonical water state was updated, but CropTwin could not refresh the current twin. Retry the canonical twin update before advancing again.";
 
@@ -112,7 +114,7 @@ export function evaluateAdvancementTransition({
       invalidateCurrentTwin: false,
       retainResponse: false,
       advanceNextDate: true,
-      notice: null,
+      notice: ADVANCEMENT_CREATED_NOTICE,
     };
   }
 

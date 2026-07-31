@@ -240,6 +240,16 @@ describe("TwinPanel", () => {
     expect(screen.getByRole("button", { name: "Update canonical twin state" })).toBeDisabled();
   });
 
+  it("disables twin update while advancement is pending", () => {
+    renderTwinPanel(fakeEndpoints(), activeState({
+      advancementPending: true,
+      activeAdvancementRequestId: "advancement-1",
+      activeAdvancementRequestSignature: "signature-1",
+    }));
+
+    expect(screen.getByRole("button", { name: "Update canonical twin state" })).toBeDisabled();
+  });
+
   it("enables update when prerequisites are complete and calls the endpoint layer", async () => {
     const endpoints = fakeEndpoints();
     const user = userEvent.setup();

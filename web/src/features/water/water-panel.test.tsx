@@ -222,6 +222,18 @@ describe("WaterPanel", () => {
     );
   });
 
+  it("disables water computation controls while advancement is pending", () => {
+    renderWaterPanel(fakeEndpoints(), activeState({
+      advancementPending: true,
+      activeAdvancementRequestId: "advancement-1",
+      activeAdvancementRequestSignature: "signature-1",
+    }));
+
+    expect(screen.getByLabelText("Water computation date")).toBeDisabled();
+    expect(screen.getByLabelText("Input mode")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Compute water state" })).toBeDisabled();
+  });
+
   it("prevents invalid litres-over-area from submitting", async () => {
     const endpoints = fakeEndpoints();
     const user = userEvent.setup();

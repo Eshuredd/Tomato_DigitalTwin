@@ -161,6 +161,18 @@ describe("DiseasePanel", () => {
     expect(screen.getByRole("button", { name: "Submit disease evidence" })).toBeDisabled();
   });
 
+  it("disables disease evidence controls while advancement is pending", () => {
+    renderDiseasePanel(fakeEndpoints(), {
+      ...activeState(),
+      advancementPending: true,
+      activeAdvancementRequestId: "advancement-1",
+      activeAdvancementRequestSignature: "signature-1",
+    });
+
+    expect(screen.getByLabelText("Tomato leaf image")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Submit disease evidence" })).toBeDisabled();
+  });
+
   it("selecting a valid file shows metadata and a preview", async () => {
     const user = userEvent.setup();
     renderDiseasePanel();

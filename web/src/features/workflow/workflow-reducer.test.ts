@@ -351,6 +351,7 @@ describe("workflowReducer", () => {
       water: waterState,
       latestWaterObservationId: "water-observation-1",
       latestWaterSequence: 1,
+      twin: twinState,
     };
 
     const next = workflowReducer(previous, {
@@ -362,6 +363,32 @@ describe("workflowReducer", () => {
     expect(next.water).toBeNull();
     expect(next.latestWaterObservationId).toBe("water-observation-1");
     expect(next.latestWaterSequence).toBe(1);
+    expect(next.twin).toBe(twinState);
+  });
+
+  it("stores weather snapshots while preserving canonical lineage and twin", () => {
+    const previous: WorkflowState = {
+      ...initialWorkflowState,
+      activeStateId: "state-a",
+      session: sessionA,
+      weatherDraft,
+      water: waterState,
+      latestWaterObservationId: "water-observation-1",
+      latestWaterSequence: 1,
+      twin: twinState,
+    };
+
+    const next = workflowReducer(previous, {
+      type: "weatherSnapshotReceived",
+      stateId: "state-a",
+      snapshot: { ...weatherSnapshot, target_date: "2026-08-01" },
+      draft: { ...weatherDraft, rainfall_mm: 2 },
+    });
+
+    expect(next.water).toBeNull();
+    expect(next.latestWaterObservationId).toBe("water-observation-1");
+    expect(next.latestWaterSequence).toBe(1);
+    expect(next.twin).toBe(twinState);
   });
 
   it("ignores stale weather draft changes", () => {
@@ -389,6 +416,7 @@ describe("workflowReducer", () => {
       water: waterState,
       latestWaterObservationId: "water-observation-1",
       latestWaterSequence: 1,
+      twin: twinState,
     };
 
     const next = workflowReducer(previous, {
@@ -401,6 +429,7 @@ describe("workflowReducer", () => {
     expect(next.water).toBeNull();
     expect(next.latestWaterObservationId).toBe("water-observation-1");
     expect(next.latestWaterSequence).toBe(1);
+    expect(next.twin).toBe(twinState);
   });
 
   it("ignores stale weather invalidation", () => {

@@ -56,6 +56,7 @@ export function AdvancementPanel({
     disease,
     diseaseRequestPending,
     latestAdvancement,
+    latestWaterObservationId,
     latestWaterSequence,
     retainedAdvancement,
     twin,
@@ -76,28 +77,42 @@ export function AdvancementPanel({
   const currentSequenceRef = useRef(latestWaterSequence);
   const currentSnapshotIdRef = useRef<string | null>(twin?.snapshot_id ?? null);
   const requiredDate = twin ? deriveNextAdvancementDate(twin.current_state.observed_at) : null;
-  const canonicalWaterDate = water?.observed_at.slice(0, 10) ?? null;
+  const canonicalWaterDate =
+    twin?.current_state.observed_at.slice(0, 10) ?? water?.observed_at.slice(0, 10) ?? null;
+  const hasCanonicalWaterLineage = Boolean(latestWaterObservationId && latestWaterSequence > 0);
+  const inconsistentWaterLineage = Boolean(
+    (latestWaterSequence > 0 && !latestWaterObservationId) ||
+      (latestWaterObservationId && latestWaterSequence === 0),
+  );
   const [irrigationDraft, setIrrigationDraft] =
     useState<IrrigationDraftResult>(NO_IRRIGATION_RESULT);
   const [manualWeatherAccepted, setManualWeatherAccepted] = useState(false);
   const [error, setError] = useState<CropTwinApiError | string | null>(null);
 
-  const fetchedWeatherMatchesRequiredDate = Boolean(
+  const fetchedWeatherForRequiredDate = Boolean(
     weatherSnapshot &&
       requiredDate &&
       weatherDate === requiredDate &&
       weatherSnapshot.target_date === requiredDate,
   );
+  const fetchedWeatherForWrongDate = Boolean(
+    weatherSnapshot &&
+      requiredDate &&
+      (weatherDate !== requiredDate || weatherSnapshot.target_date !== requiredDate),
+  );
   const fetchedWeatherUnchanged = Boolean(
-    fetchedWeatherMatchesRequiredDate &&
+    fetchedWeatherForRequiredDate &&
       weatherDraft &&
       weatherSnapshot &&
       weatherSignature(weatherDraft) === weatherSignature(weatherInputFromSnapshot(weatherSnapshot)),
   );
-  const manualWeatherRequired = Boolean(weatherDraft && !fetchedWeatherUnchanged);
+  const manualWeatherRequired = Boolean(
+    weatherDraft && !fetchedWeatherUnchanged && !fetchedWeatherForWrongDate,
+  );
   const weatherAccepted = Boolean(
     weatherDraft &&
       requiredDate &&
+      !fetchedWeatherForWrongDate &&
       (fetchedWeatherUnchanged || (manualWeatherRequired && manualWeatherAccepted)),
   );
 
@@ -180,7 +195,8 @@ export function AdvancementPanel({
   const canAdvance = Boolean(
     activeStateId &&
       disease &&
-      water &&
+      hasCanonicalWaterLineage &&
+      !inconsistentWaterLineage &&
       latestWaterSequence > 0 &&
       twin &&
       requiredDate &&
@@ -197,7 +213,8 @@ export function AdvancementPanel({
     event.preventDefault();
     if (
       !activeStateId ||
-      !water ||
+      !hasCanonicalWaterLineage ||
+      inconsistentWaterLineage ||
       !twin ||
       !requiredDate ||
       !weatherDraft ||
@@ -373,14 +390,24 @@ export function AdvancementPanel({
           <div className="mt-4 grid gap-3">
             {!activeStateId ? <Notice tone="warning">Create or load an active session before advancing.</Notice> : null}
             {activeStateId && !disease ? <Notice tone="warning">Submit disease evidence before advancing.</Notice> : null}
-            {activeStateId && disease && !water ? <Notice tone="warning">Compute canonical water state before advancing.</Notice> : null}
-            {activeStateId && disease && water && !twin ? <Notice tone="warning">Update canonical twin state before advancing.</Notice> : null}
+            {activeStateId && disease && !hasCanonicalWaterLineage && !inconsistentWaterLineage ? (
+              <Notice tone="warning">Compute canonical water state before advancing.</Notice>
+            ) : null}
+            {inconsistentWaterLineage ? (
+              <Notice tone="warning">Canonical water lineage is incomplete; recompute water state before advancing.</Notice>
+            ) : null}
+            {activeStateId && disease && hasCanonicalWaterLineage && !twin ? (
+              <Notice tone="warning">Update canonical twin state before advancing.</Notice>
+            ) : null}
             {twin && !requiredDate ? <Notice tone="warning">The current twin timestamp cannot derive the required next date.</Notice> : null}
             {requiredDate && !weatherDraft ? <Notice tone="warning">Review weather for {requiredDate} before advancing.</Notice> : null}
-            {requiredDate && weatherDraft && !fetchedWeatherUnchanged ? (
+            {requiredDate && fetchedWeatherForWrongDate ? (
+              <Notice tone="warning">Retrieve weather for {requiredDate} before advancing.</Notice>
+            ) : null}
+            {requiredDate && weatherDraft && manualWeatherRequired ? (
               <Notice tone="warning">
-                Fetched weather does not exactly match {requiredDate}, or reviewed
-                values were edited. Acknowledge manual next-day weather before advancing.
+                Reviewed weather values were manually entered or edited for {requiredDate}.
+                Acknowledge manual next-day weather before advancing.
               </Notice>
             ) : null}
           </div>
