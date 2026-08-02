@@ -1,8 +1,10 @@
 import type {
   AdvanceOneDayResponse,
+  RecommendationResponse,
   DiseasePredictionResponse,
   SessionResponse,
   SessionStateResponse,
+  SimulateActionsResponse,
   SystemInfoResponse,
   TwinCurrentState,
   UpdateTwinStateResponse,
@@ -10,6 +12,10 @@ import type {
   WeatherInput,
   WeatherSnapshotResponse,
 } from "@/lib/types/api";
+import type {
+  AdvancementTransitionKind,
+  TwinRefreshStatus,
+} from "./workflow-domain-types";
 
 export interface WorkflowState {
   activeStateId: string | null;
@@ -38,8 +44,16 @@ export interface WorkflowState {
   latestAdvancement: AdvanceOneDayResponse | null;
   retainedAdvancement: AdvanceOneDayResponse | null;
   advancementNotice: string | null;
-  advancementTransitionKind: string | null;
-  advancementTwinRefreshStatus: "not_needed" | "succeeded" | "failed" | null;
+  advancementTransitionKind: AdvancementTransitionKind | null;
+  advancementTwinRefreshStatus: TwinRefreshStatus | null;
+  simulation: SimulateActionsResponse | null;
+  simulationPending: boolean;
+  activeSimulationRequestId: string | null;
+  activeSimulationSourceSignature: string | null;
+  recommendation: RecommendationResponse | null;
+  recommendationPending: boolean;
+  activeRecommendationRequestId: string | null;
+  activeRecommendationSourceSignature: string | null;
 }
 
 export type WorkflowAction =
@@ -119,8 +133,50 @@ export type WorkflowAction =
       canonicalTwin?: UpdateTwinStateResponse | null;
       retainedResponse: AdvanceOneDayResponse | null;
       notice: string | null;
-      transitionKind: string;
-      twinRefreshStatus: "not_needed" | "succeeded" | "failed" | null;
+      transitionKind: AdvancementTransitionKind;
+      twinRefreshStatus: TwinRefreshStatus | null;
+    }
+  | {
+      type: "simulationStarted";
+      stateId: string;
+      requestId: string;
+      sourceSignature: string;
+    }
+  | {
+      type: "simulationFinished";
+      stateId: string;
+      requestId: string;
+    }
+  | {
+      type: "simulationReceived";
+      stateId: string;
+      requestId: string;
+      simulation: SimulateActionsResponse;
+    }
+  | {
+      type: "simulationInvalidated";
+      stateId: string;
+    }
+  | {
+      type: "recommendationStarted";
+      stateId: string;
+      requestId: string;
+      sourceSignature: string;
+    }
+  | {
+      type: "recommendationFinished";
+      stateId: string;
+      requestId: string;
+    }
+  | {
+      type: "recommendationReceived";
+      stateId: string;
+      requestId: string;
+      recommendation: RecommendationResponse;
+    }
+  | {
+      type: "recommendationInvalidated";
+      stateId: string;
     };
 
 export const initialWorkflowState: WorkflowState = {
@@ -152,4 +208,12 @@ export const initialWorkflowState: WorkflowState = {
   advancementNotice: null,
   advancementTransitionKind: null,
   advancementTwinRefreshStatus: null,
+  simulation: null,
+  simulationPending: false,
+  activeSimulationRequestId: null,
+  activeSimulationSourceSignature: null,
+  recommendation: null,
+  recommendationPending: false,
+  activeRecommendationRequestId: null,
+  activeRecommendationSourceSignature: null,
 };

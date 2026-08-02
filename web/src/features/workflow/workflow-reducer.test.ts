@@ -4,8 +4,10 @@ import { initialWorkflowState, type WorkflowAction, type WorkflowState } from ".
 import type {
   AdvanceOneDayResponse,
   DiseasePredictionResponse,
+  RecommendationResponse,
   SessionResponse,
   SessionStateResponse,
+  SimulateActionsResponse,
   UpdateTwinStateResponse,
   WaterStateResponse,
   WeatherInput,
@@ -187,6 +189,32 @@ const advancementState: AdvanceOneDayResponse = {
   },
 };
 
+const simulationState: SimulateActionsResponse = {
+  state_id: "state-a",
+  simulated_at: "2026-07-31T02:00:00Z",
+  simulations: [
+    {
+      action: "IRRIGATE_NOW",
+      projected_root_zone_depletion: 3.2,
+      projected_raw_crossing: false,
+      projected_stress_band: "low",
+      projected_water_use: 10,
+      disease_wetness_risk_note: "note",
+    },
+  ],
+};
+
+const recommendationState: RecommendationResponse = {
+  state_id: "state-a",
+  chosen_action: "IRRIGATE_NOW",
+  irrigation_constraint: "NONE",
+  inspection_advisory: false,
+  decision_reason_codes: ["CURRENT_DEPLETION_EXCEEDS_RAW"],
+  caution_reasons: [],
+  evidence_summary_structured: {},
+  recommended_at: "2026-07-31T02:10:00Z",
+};
+
 describe("workflowReducer", () => {
   it("starts with no twin state", () => {
     expect(initialWorkflowState.twin).toBeNull();
@@ -196,6 +224,10 @@ describe("workflowReducer", () => {
     expect(initialWorkflowState.advancementPending).toBe(false);
     expect(initialWorkflowState.latestAdvancement).toBeNull();
     expect(initialWorkflowState.retainedAdvancement).toBeNull();
+    expect(initialWorkflowState.simulation).toBeNull();
+    expect(initialWorkflowState.simulationPending).toBe(false);
+    expect(initialWorkflowState.recommendation).toBeNull();
+    expect(initialWorkflowState.recommendationPending).toBe(false);
   });
 
   it("uses request IDs so old disease requests cannot clear newer pending state", () => {
@@ -823,5 +855,202 @@ describe("workflowReducer", () => {
     expect(next.latestWaterSequence).toBe(3);
     expect(next.retainedAdvancement).toBe(advancementState);
     expect(next.advancementNotice).toBe("reused");
+  });
+
+  it("tracks matching simulation requests and ignores stale finishes", () => {
+    const active = workflowReducer(initialWorkflowState, {
+      type: "sessionCreated",
+      session: sessionA,
+    });
+    const pending = workflowReducer(active, {
+      type: "simulationStarted",
+      stateId: "state-a",
+      requestId: "simulation-1",
+      sourceSignature: "source-1",
+    });
+
+    expect(pending.simulationPending).toBe(true);
+    expect(workflowReducer(pending, {
+      type: "simulationStarted",
+      stateId: "state-b",
+      requestId: "simulation-b",
+      sourceSignature: "source-b",
+    })).toBe(pending);
+    expect(workflowReducer(pending, {
+      type: "simulationFinished",
+      stateId: "state-a",
+      requestId: "older",
+    })).toBe(pending);
+    expect(workflowReducer(pending, {
+      type: "simulationFinished",
+      stateId: "state-a",
+      requestId: "simulation-1",
+    }).simulationPending).toBe(false);
+  });
+
+  it("stores simulation and clears a previous recommendation", () => {
+    const pending: WorkflowState = {
+      ...initialWorkflowState,
+      activeStateId: "state-a",
+      session: sessionA,
+      recommendation: recommendationState,
+      recommendationPending: true,
+      activeRecommendationRequestId: "recommendation-1",
+      activeRecommendationSourceSignature: "recommendation-source",
+      simulationPending: true,
+      activeSimulationRequestId: "simulation-1",
+      activeSimulationSourceSignature: "simulation-source",
+    };
+
+    const next = workflowReducer(pending, {
+      type: "simulationReceived",
+      stateId: "state-a",
+      requestId: "simulation-1",
+      simulation: simulationState,
+    });
+
+    expect(next.simulation).toBe(simulationState);
+    expect(next.simulationPending).toBe(false);
+    expect(next.recommendation).toBeNull();
+    expect(next.recommendationPending).toBe(false);
+    expect(workflowReducer(pending, {
+      type: "simulationReceived",
+      stateId: "state-a",
+      requestId: "older",
+      simulation: simulationState,
+    })).toBe(pending);
+    expect(workflowReducer(pending, {
+      type: "simulationReceived",
+      stateId: "state-b",
+      requestId: "simulation-1",
+      simulation: { ...simulationState, state_id: "state-b" },
+    })).toBe(pending);
+  });
+
+  it("invalidates simulation and recommendation together", () => {
+    const previous: WorkflowState = {
+      ...initialWorkflowState,
+      activeStateId: "state-a",
+      session: sessionA,
+      simulation: simulationState,
+      recommendation: recommendationState,
+    };
+
+    const next = workflowReducer(previous, {
+      type: "simulationInvalidated",
+      stateId: "state-a",
+    });
+
+    expect(next.simulation).toBeNull();
+    expect(next.recommendation).toBeNull();
+  });
+
+  it("tracks and stores recommendation without clearing simulation", () => {
+    const pending: WorkflowState = {
+      ...initialWorkflowState,
+      activeStateId: "state-a",
+      session: sessionA,
+      simulation: simulationState,
+      recommendationPending: true,
+      activeRecommendationRequestId: "recommendation-1",
+      activeRecommendationSourceSignature: "source-1",
+    };
+
+    expect(workflowReducer(pending, {
+      type: "recommendationStarted",
+      stateId: "state-b",
+      requestId: "recommendation-b",
+      sourceSignature: "source-b",
+    })).toBe(pending);
+    expect(workflowReducer(pending, {
+      type: "recommendationFinished",
+      stateId: "state-a",
+      requestId: "older",
+    })).toBe(pending);
+
+    const next = workflowReducer(pending, {
+      type: "recommendationReceived",
+      stateId: "state-a",
+      requestId: "recommendation-1",
+      recommendation: recommendationState,
+    });
+
+    expect(next.recommendation).toBe(recommendationState);
+    expect(next.simulation).toBe(simulationState);
+    expect(next.recommendationPending).toBe(false);
+    expect(workflowReducer(pending, {
+      type: "recommendationReceived",
+      stateId: "state-b",
+      requestId: "recommendation-1",
+      recommendation: { ...recommendationState, state_id: "state-b" },
+    })).toBe(pending);
+  });
+
+  it("recommendation invalidation preserves accepted simulation", () => {
+    const previous: WorkflowState = {
+      ...initialWorkflowState,
+      activeStateId: "state-a",
+      session: sessionA,
+      simulation: simulationState,
+      recommendation: recommendationState,
+    };
+
+    const next = workflowReducer(previous, {
+      type: "recommendationInvalidated",
+      stateId: "state-a",
+    });
+
+    expect(next.simulation).toBe(simulationState);
+    expect(next.recommendation).toBeNull();
+  });
+
+  it("canonical disease, water, twin and session changes clear decision state", () => {
+    const previous: WorkflowState = {
+      ...initialWorkflowState,
+      activeStateId: "state-a",
+      session: sessionA,
+      twin: twinState,
+      simulation: simulationState,
+      recommendation: recommendationState,
+    };
+
+    expect(workflowReducer(previous, {
+      type: "diseaseReceived",
+      stateId: "state-a",
+      disease: diseaseA,
+    }).simulation).toBeNull();
+    expect(workflowReducer(previous, {
+      type: "waterReceived",
+      stateId: "state-a",
+      water: waterState,
+    }).recommendation).toBeNull();
+    expect(workflowReducer(previous, {
+      type: "twinInvalidated",
+      stateId: "state-a",
+    }).simulation).toBeNull();
+    expect(workflowReducer(previous, {
+      type: "sessionLoaded",
+      session: sessionB,
+    }).recommendation).toBeNull();
+  });
+
+  it("unsubmitted weather draft edits preserve decision state when canonical twin is unchanged", () => {
+    const previous: WorkflowState = {
+      ...initialWorkflowState,
+      activeStateId: "state-a",
+      session: sessionA,
+      weatherDraft,
+      simulation: simulationState,
+      recommendation: recommendationState,
+    };
+
+    const next = workflowReducer(previous, {
+      type: "weatherDraftChanged",
+      stateId: "state-a",
+      draft: { ...weatherDraft, rainfall_mm: 1 },
+    });
+
+    expect(next.simulation).toBe(simulationState);
+    expect(next.recommendation).toBe(recommendationState);
   });
 });

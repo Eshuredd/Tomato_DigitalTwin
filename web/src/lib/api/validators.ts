@@ -1,14 +1,20 @@
 import { CropTwinApiError } from "./errors";
 import type {
   AdvanceOneDayResponse,
+  ActionEnum,
+  CautionReason,
   CropType,
   DiseaseCategory,
   DiseasePredictionResponse,
   GrowthStage,
   HealthResponse,
+  IrrigationConstraint,
   Location,
+  RecommendationResponse,
   SessionResponse,
   SessionStateResponse,
+  SimulatedActionResult,
+  SimulateActionsResponse,
   SoilTexture,
   SystemInfoResponse,
   TwinCurrentState,
@@ -40,6 +46,21 @@ const UNCERTAINTY_BANDS = ["low", "medium", "high"] as const satisfies readonly 
 const ETO_METHODS = ["penman_monteith", "hargreaves_samani"] as const;
 const MOISTURE_STATES = ["adequate", "moderate_deficit", "depleted"] as const;
 const STRESS_BANDS = ["low", "medium", "high"] as const;
+const ACTIONS = [
+  "IRRIGATE_NOW",
+  "IRRIGATE_IN_6H",
+  "IRRIGATE_TOMORROW_AM",
+  "NO_IRRIGATION_24H",
+] as const satisfies readonly ActionEnum[];
+const IRRIGATION_CONSTRAINTS = [
+  "NONE",
+  "AVOID_OVERHEAD_IRRIGATION",
+  "PREFER_EARLY_MORNING_WINDOW",
+] as const satisfies readonly IrrigationConstraint[];
+const CAUTION_REASONS = [
+  "HIGH_UNCERTAINTY",
+  "FUNGAL_DISEASE_RISK",
+] as const satisfies readonly CautionReason[];
 const OBSERVATION_TIME_BASES = [
   "EXPLICIT",
   "DATE_ONLY_UTC_START",
@@ -269,6 +290,54 @@ export function parseAdvanceOneDayResponse(value: unknown): AdvanceOneDayRespons
   throw malformedResponseError("The CropTwin API returned an unexpected one-day advancement response.");
 }
 
+export function parseSimulatedActionResult(value: unknown): SimulatedActionResult {
+  if (
+    isRecord(value) &&
+    isOneOf(value.action, ACTIONS) &&
+    isFiniteNumber(value.projected_root_zone_depletion) &&
+    typeof value.projected_raw_crossing === "boolean" &&
+    isOneOf(value.projected_stress_band, STRESS_BANDS) &&
+    isFiniteNumber(value.projected_water_use) &&
+    typeof value.disease_wetness_risk_note === "string"
+  ) {
+    return value as unknown as SimulatedActionResult;
+  }
+  throw malformedResponseError("The CropTwin API returned an unexpected simulation result.");
+}
+
+export function parseSimulateActionsResponse(value: unknown): SimulateActionsResponse {
+  if (
+    isRecord(value) &&
+    nonEmptyString(value.state_id) &&
+    Array.isArray(value.simulations) &&
+    isValidTimestamp(value.simulated_at)
+  ) {
+    return {
+      ...(value as unknown as Omit<SimulateActionsResponse, "simulations">),
+      simulations: value.simulations.map(parseSimulatedActionResult),
+    };
+  }
+  throw malformedResponseError("The CropTwin API returned an unexpected simulation response.");
+}
+
+export function parseRecommendationResponse(value: unknown): RecommendationResponse {
+  if (
+    isRecord(value) &&
+    optionalNonEmptyString(value.recommendation_id) &&
+    nonEmptyString(value.state_id) &&
+    isOneOf(value.chosen_action, ACTIONS) &&
+    isOneOf(value.irrigation_constraint, IRRIGATION_CONSTRAINTS) &&
+    typeof value.inspection_advisory === "boolean" &&
+    isStringArray(value.decision_reason_codes) &&
+    isCautionReasonArray(value.caution_reasons) &&
+    isRecord(value.evidence_summary_structured) &&
+    isValidTimestamp(value.recommended_at)
+  ) {
+    return value as unknown as RecommendationResponse;
+  }
+  throw malformedResponseError("The CropTwin API returned an unexpected recommendation response.");
+}
+
 export function malformedResponseError(message: string): CropTwinApiError {
   return new CropTwinApiError({
     kind: "malformed",
@@ -313,6 +382,14 @@ function isClassProbabilities(value: unknown): value is Record<string, number> {
     return false;
   }
   return Object.values(value).every(isFiniteNumber);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isCautionReasonArray(value: unknown): value is CautionReason[] {
+  return Array.isArray(value) && value.every((item) => isOneOf(item, CAUTION_REASONS));
 }
 
 function isFiniteNumber(value: unknown): value is number {

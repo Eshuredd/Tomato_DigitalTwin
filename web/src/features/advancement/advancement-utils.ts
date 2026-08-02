@@ -5,15 +5,11 @@ import type {
   UpdateTwinStateResponse,
   WeatherInput,
 } from "@/lib/types/api";
-
-export type AdvancementTransitionKind =
-  | "new_advancement"
-  | "catch_up_retry"
-  | "current_retry"
-  | "historical_retry"
-  | "malformed_retry";
-
-export type TwinRefreshStatus = "not_needed" | "succeeded" | "failed";
+import type {
+  AdvancementTransitionKind,
+  TwinRefreshStatus,
+} from "@/features/workflow/workflow-domain-types";
+export type { AdvancementTransitionKind, TwinRefreshStatus };
 
 export interface AdvancementTransition {
   kind: AdvancementTransitionKind;

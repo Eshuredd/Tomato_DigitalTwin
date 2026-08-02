@@ -73,6 +73,7 @@ export function workflowReducer(
         activeTwinRequestId: null,
         activeTwinSourceSignature: null,
         ...clearAdvancementLocalState(),
+        ...clearDecisionLocalState(),
       };
     case "weatherSnapshotReceived":
       if (
@@ -158,6 +159,7 @@ export function workflowReducer(
         activeTwinRequestId: null,
         activeTwinSourceSignature: null,
         ...clearAdvancementLocalState(),
+        ...clearDecisionLocalState(),
         latestWaterObservationId: action.water.water_observation_id ?? null,
         latestWaterSequence: action.water.water_sequence,
       };
@@ -198,6 +200,7 @@ export function workflowReducer(
         activeTwinRequestId: null,
         activeTwinSourceSignature: null,
         ...clearAdvancementLocalState(),
+        ...clearDecisionLocalState(),
       };
     case "twinInvalidated":
       if (state.activeStateId !== action.stateId) {
@@ -207,6 +210,7 @@ export function workflowReducer(
         ...state,
         twin: null,
         ...clearAdvancementLocalState(),
+        ...clearDecisionLocalState(),
       };
     case "advancementStarted":
       if (state.activeStateId !== action.stateId) {
@@ -262,6 +266,100 @@ export function workflowReducer(
         advancementNotice: action.notice,
         advancementTransitionKind: action.transitionKind,
         advancementTwinRefreshStatus: action.twinRefreshStatus,
+        ...(action.canonicalTwin ? clearDecisionLocalState() : {}),
+      };
+    case "simulationStarted":
+      if (state.activeStateId !== action.stateId) {
+        return state;
+      }
+      return {
+        ...state,
+        simulationPending: true,
+        activeSimulationRequestId: action.requestId,
+        activeSimulationSourceSignature: action.sourceSignature,
+      };
+    case "simulationFinished":
+      if (
+        state.activeStateId !== action.stateId ||
+        state.activeSimulationRequestId !== action.requestId
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        simulationPending: false,
+        activeSimulationRequestId: null,
+        activeSimulationSourceSignature: null,
+      };
+    case "simulationReceived":
+      if (
+        state.activeStateId !== action.stateId ||
+        state.activeSimulationRequestId !== action.requestId ||
+        action.simulation.state_id !== action.stateId
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        simulation: action.simulation,
+        simulationPending: false,
+        activeSimulationRequestId: null,
+        activeSimulationSourceSignature: null,
+        ...clearRecommendationLocalState(),
+      };
+    case "simulationInvalidated":
+      if (state.activeStateId !== action.stateId) {
+        return state;
+      }
+      return {
+        ...state,
+        ...clearDecisionLocalState(),
+      };
+    case "recommendationStarted":
+      if (state.activeStateId !== action.stateId) {
+        return state;
+      }
+      return {
+        ...state,
+        recommendationPending: true,
+        activeRecommendationRequestId: action.requestId,
+        activeRecommendationSourceSignature: action.sourceSignature,
+      };
+    case "recommendationFinished":
+      if (
+        state.activeStateId !== action.stateId ||
+        state.activeRecommendationRequestId !== action.requestId
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        recommendationPending: false,
+        activeRecommendationRequestId: null,
+        activeRecommendationSourceSignature: null,
+      };
+    case "recommendationReceived":
+      if (
+        state.activeStateId !== action.stateId ||
+        state.activeRecommendationRequestId !== action.requestId ||
+        action.recommendation.state_id !== action.stateId
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        recommendation: action.recommendation,
+        recommendationPending: false,
+        activeRecommendationRequestId: null,
+        activeRecommendationSourceSignature: null,
+      };
+    case "recommendationInvalidated":
+      if (state.activeStateId !== action.stateId) {
+        return state;
+      }
+      return {
+        ...state,
+        ...clearRecommendationLocalState(),
       };
     default:
       return state;
@@ -291,6 +389,7 @@ function clearActiveSessionData(state: WorkflowState): WorkflowState {
     latestWaterObservationId: null,
     latestWaterSequence: 0,
     ...clearAdvancementLocalState(),
+    ...clearDecisionLocalState(),
   };
 }
 
@@ -314,5 +413,40 @@ function clearAdvancementLocalState() {
     | "advancementNotice"
     | "advancementTransitionKind"
     | "advancementTwinRefreshStatus"
+  >;
+}
+
+function clearDecisionLocalState() {
+  return {
+    simulation: null,
+    simulationPending: false,
+    activeSimulationRequestId: null,
+    activeSimulationSourceSignature: null,
+    ...clearRecommendationLocalState(),
+  } satisfies Pick<
+    WorkflowState,
+    | "simulation"
+    | "simulationPending"
+    | "activeSimulationRequestId"
+    | "activeSimulationSourceSignature"
+    | "recommendation"
+    | "recommendationPending"
+    | "activeRecommendationRequestId"
+    | "activeRecommendationSourceSignature"
+  >;
+}
+
+function clearRecommendationLocalState() {
+  return {
+    recommendation: null,
+    recommendationPending: false,
+    activeRecommendationRequestId: null,
+    activeRecommendationSourceSignature: null,
+  } satisfies Pick<
+    WorkflowState,
+    | "recommendation"
+    | "recommendationPending"
+    | "activeRecommendationRequestId"
+    | "activeRecommendationSourceSignature"
   >;
 }

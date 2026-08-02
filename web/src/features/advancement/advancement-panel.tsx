@@ -59,6 +59,8 @@ export function AdvancementPanel({
     latestWaterObservationId,
     latestWaterSequence,
     retainedAdvancement,
+    recommendationPending,
+    simulationPending,
     twin,
     twinUpdatePending,
     water,
@@ -206,6 +208,8 @@ export function AdvancementPanel({
       !diseaseRequestPending &&
       !waterComputationPending &&
       !twinUpdatePending &&
+      !simulationPending &&
+      !recommendationPending &&
       !advancementPending,
   );
 
@@ -422,7 +426,7 @@ export function AdvancementPanel({
 
             <IrrigationInput
               key={activeStateId ?? "inactive"}
-              disabled={advancementPending}
+              disabled={advancementPending || simulationPending || recommendationPending}
               onChange={handleIrrigationChange}
             />
 
@@ -430,7 +434,7 @@ export function AdvancementPanel({
               <label className="flex gap-3 text-sm text-[var(--color-muted)]">
                 <input
                   checked={manualWeatherAccepted}
-                  disabled={advancementPending}
+                  disabled={advancementPending || simulationPending || recommendationPending}
                   onChange={(event) => setManualWeatherAccepted(event.currentTarget.checked)}
                   type="checkbox"
                 />

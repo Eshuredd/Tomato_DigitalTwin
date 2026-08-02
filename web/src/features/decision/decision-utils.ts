@@ -1,0 +1,201 @@
+import { CropTwinApiError } from "@/lib/api/errors";
+import type {
+  ActionEnum,
+  RecommendationResponse,
+  SimulatedActionResult,
+  SimulateActionsResponse,
+  UpdateTwinStateResponse,
+} from "@/lib/types/api";
+
+export const ACTION_ORDER = [
+  "IRRIGATE_NOW",
+  "IRRIGATE_IN_6H",
+  "IRRIGATE_TOMORROW_AM",
+  "NO_IRRIGATION_24H",
+] as const satisfies readonly ActionEnum[];
+
+export const ACTION_LABELS: Record<ActionEnum, string> = {
+  IRRIGATE_NOW: "Irrigate now",
+  IRRIGATE_IN_6H: "Irrigate in 6 hours",
+  IRRIGATE_TOMORROW_AM: "Irrigate tomorrow morning",
+  NO_IRRIGATION_24H: "No irrigation for 24 hours",
+};
+
+export const IRRIGATION_CONSTRAINT_LABELS = {
+  NONE: "No irrigation constraint",
+  AVOID_OVERHEAD_IRRIGATION: "Avoid overhead irrigation",
+  PREFER_EARLY_MORNING_WINDOW: "Prefer early morning irrigation",
+} as const;
+
+export const CAUTION_REASON_LABELS = {
+  HIGH_UNCERTAINTY: "High uncertainty",
+  FUNGAL_DISEASE_RISK: "Fungal disease risk",
+} as const;
+
+export function normalizeRequestedActions(actions: ActionEnum[]): ActionEnum[] {
+  assertNoDuplicateActions(actions, "Requested simulation actions contain duplicates.");
+  const selected = new Set(actions);
+  const normalized = ACTION_ORDER.filter((action) => selected.has(action));
+  if (normalized.length === 0) {
+    throw malformedDecisionError("Select at least one candidate action to simulate.");
+  }
+  return normalized;
+}
+
+export function canonicalTwinDecisionSignature({
+  stateId,
+  twin,
+}: {
+  stateId: string;
+  twin: UpdateTwinStateResponse;
+}): string {
+  return stableStringify({
+    state_id: stateId,
+    snapshot_id: twin.snapshot_id ?? null,
+    current_state: {
+      observed_at: twin.current_state.observed_at,
+      computed_at: twin.current_state.computed_at,
+      last_update_time: twin.current_state.last_update_time,
+      growth_stage: twin.current_state.growth_stage,
+      predicted_label: twin.current_state.predicted_label,
+      disease_category: twin.current_state.disease_category,
+      confidence_calibrated: twin.current_state.confidence_calibrated,
+      uncertainty_score: twin.current_state.uncertainty_score,
+      uncertainty_band: twin.current_state.uncertainty_band,
+      eto_computed: twin.current_state.eto_computed,
+      etc: twin.current_state.etc,
+      taw: twin.current_state.taw,
+      raw_threshold: twin.current_state.raw_threshold,
+      root_zone_depletion: twin.current_state.root_zone_depletion,
+      stress_band: twin.current_state.stress_band,
+    },
+  });
+}
+
+export function simulationSourceSignature({
+  actions,
+  stateId,
+  twin,
+}: {
+  actions: ActionEnum[];
+  stateId: string;
+  twin: UpdateTwinStateResponse;
+}): string {
+  return stableStringify({
+    actions: normalizeRequestedActions(actions),
+    twin: canonicalTwinDecisionSignature({ stateId, twin }),
+  });
+}
+
+export function recommendationSourceSignature({
+  simulation,
+  stateId,
+  twin,
+}: {
+  simulation: SimulateActionsResponse;
+  stateId: string;
+  twin: UpdateTwinStateResponse;
+}): string {
+  return stableStringify({
+    simulation: {
+      state_id: simulation.state_id,
+      simulated_at: simulation.simulated_at,
+      simulations: simulation.simulations,
+    },
+    twin: canonicalTwinDecisionSignature({ stateId, twin }),
+  });
+}
+
+export function validateSimulationForRequestedActions({
+  expectedStateId,
+  requestedActions,
+  response,
+}: {
+  response: SimulateActionsResponse;
+  requestedActions: ActionEnum[];
+  expectedStateId: string;
+}): SimulateActionsResponse {
+  if (response.state_id !== expectedStateId) {
+    throw malformedDecisionError("The backend returned simulation data for a different session.");
+  }
+  const normalizedActions = normalizeRequestedActions(requestedActions);
+  assertNoDuplicateActions(response.simulations.map((result) => result.action), "The backend returned a duplicate simulated action.");
+
+  const byAction = new Map<ActionEnum, SimulatedActionResult>();
+  for (const result of response.simulations) {
+    byAction.set(result.action, result);
+  }
+  for (const action of normalizedActions) {
+    if (!byAction.has(action)) {
+      throw malformedDecisionError("The backend simulation omitted a requested action.");
+    }
+  }
+  for (const action of byAction.keys()) {
+    if (!normalizedActions.includes(action)) {
+      throw malformedDecisionError("The backend simulation included an unexpected action.");
+    }
+  }
+  return {
+    ...response,
+    simulations: normalizedActions.map((action) => byAction.get(action)!),
+  };
+}
+
+export function validateRecommendationAgainstSimulation({
+  expectedStateId,
+  recommendation,
+  simulation,
+}: {
+  recommendation: RecommendationResponse;
+  simulation: SimulateActionsResponse;
+  expectedStateId: string;
+}): RecommendationResponse {
+  if (recommendation.state_id !== expectedStateId || simulation.state_id !== expectedStateId) {
+    throw malformedDecisionError("The backend returned recommendation data for a different session.");
+  }
+  if (simulation.simulations.length === 0) {
+    throw malformedDecisionError("A recommendation requires at least one accepted simulation result.");
+  }
+  if (!simulation.simulations.some((result) => result.action === recommendation.chosen_action)) {
+    throw malformedDecisionError("The backend recommended an action that was not in the accepted simulation.");
+  }
+  return recommendation;
+}
+
+export function malformedDecisionError(message: string): CropTwinApiError {
+  return new CropTwinApiError({
+    kind: "malformed",
+    status: null,
+    code: "FRONTEND_MALFORMED_RESPONSE",
+    message,
+  });
+}
+
+function assertNoDuplicateActions(actions: ActionEnum[], message: string): void {
+  const seen = new Set<ActionEnum>();
+  for (const action of actions) {
+    if (seen.has(action)) {
+      throw malformedDecisionError(message);
+    }
+    seen.add(action);
+  }
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(sortValue(value));
+}
+
+function sortValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortValue);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([, entryValue]) => entryValue !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entryValue]) => [key, sortValue(entryValue)]),
+    );
+  }
+  return value;
+}

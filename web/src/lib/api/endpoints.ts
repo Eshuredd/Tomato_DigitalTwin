@@ -3,8 +3,10 @@ import {
   parseAdvanceOneDayResponse,
   parseDiseasePredictionResponse,
   parseHealthResponse,
+  parseRecommendationResponse,
   parseSessionResponse,
   parseSessionStateResponse,
+  parseSimulateActionsResponse,
   parseSystemInfoResponse,
   parseUpdateTwinStateResponse,
   parseWaterStateResponse,
@@ -152,18 +154,31 @@ export class CropTwinEndpoints {
   simulateActions(
     stateId: string,
     request: Omit<SimulateActionsRequest, "state_id">,
+    options: { signal?: AbortSignal; timeoutMs?: number } = {},
   ): Promise<SimulateActionsResponse> {
-    return this.client.request<SimulateActionsResponse, SimulateActionsRequest>(
+    return this.client.request<unknown, SimulateActionsRequest>(
       `/sessions/${encodePath(stateId)}/simulate-actions`,
-      { method: "POST", body: { state_id: stateId, ...request } },
-    );
+      {
+        method: "POST",
+        body: { state_id: stateId, ...request },
+        signal: options.signal,
+        timeoutMs: options.timeoutMs,
+      },
+    ).then(parseSimulateActionsResponse);
   }
 
-  recommend(stateId: string): Promise<RecommendationResponse> {
-    return this.client.request<RecommendationResponse>(
+  recommend(
+    stateId: string,
+    options: { signal?: AbortSignal; timeoutMs?: number } = {},
+  ): Promise<RecommendationResponse> {
+    return this.client.request<unknown>(
       `/sessions/${encodePath(stateId)}/recommend`,
-      { method: "POST" },
-    );
+      {
+        method: "POST",
+        signal: options.signal,
+        timeoutMs: options.timeoutMs,
+      },
+    ).then(parseRecommendationResponse);
   }
 
   narrate(stateId: string): Promise<NarrationResponse> {

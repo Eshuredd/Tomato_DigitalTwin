@@ -156,6 +156,33 @@ const advancementResponse = {
   },
 };
 
+const simulationResponse = {
+  state_id: "state 1/2",
+  simulations: [
+    {
+      action: "IRRIGATE_NOW",
+      projected_root_zone_depletion: 3.2,
+      projected_raw_crossing: false,
+      projected_stress_band: "low",
+      projected_water_use: 10,
+      disease_wetness_risk_note: "no_fungal_wetness_risk_flagged",
+    },
+  ],
+  simulated_at: "2026-07-31T02:00:00Z",
+};
+
+const recommendationResponse = {
+  recommendation_id: "recommendation-1",
+  state_id: "state 1/2",
+  chosen_action: "IRRIGATE_NOW",
+  irrigation_constraint: "NONE",
+  inspection_advisory: false,
+  decision_reason_codes: ["CURRENT_DEPLETION_EXCEEDS_RAW"],
+  caution_reasons: [],
+  evidence_summary_structured: { chosen_action: "IRRIGATE_NOW" },
+  recommended_at: "2026-07-31T02:10:00Z",
+};
+
 describe("CropTwinEndpoints", () => {
   it("URL encodes state IDs in endpoint paths", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ state_id: "state 1/2", history: [] }));
@@ -456,5 +483,119 @@ describe("CropTwinEndpoints", () => {
       code: "FRONTEND_NETWORK_ERROR",
     });
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("posts exact simulation path, method and body with encoded state ID", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(simulationResponse));
+    const endpoints = new CropTwinEndpoints(new CropTwinApiClient({ baseUrl: "http://api", fetcher }));
+
+    await endpoints.simulateActions("state 1/2", { actions: ["IRRIGATE_NOW"] });
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://api/sessions/state%201%2F2/simulate-actions",
+      expect.objectContaining({
+        cache: "no-store",
+        method: "POST",
+        body: JSON.stringify({
+          state_id: "state 1/2",
+          actions: ["IRRIGATE_NOW"],
+        }),
+      }),
+    );
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes signal and timeout options to simulation requests", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(simulationResponse));
+    const endpoints = new CropTwinEndpoints(new CropTwinApiClient({ baseUrl: "http://api", fetcher }));
+    const controller = new AbortController();
+
+    await endpoints.simulateActions("state 1/2", { actions: ["IRRIGATE_NOW"] }, {
+      signal: controller.signal,
+      timeoutMs: 5000,
+    });
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://api/sessions/state%201%2F2/simulate-actions",
+      expect.objectContaining({
+        method: "POST",
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it("parses simulation responses and preserves structured errors", async () => {
+    const malformedFetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({
+      ...simulationResponse,
+      simulations: [{ ...simulationResponse.simulations[0], action: "WAIT" }],
+    }));
+    const malformedEndpoints = new CropTwinEndpoints(new CropTwinApiClient({ baseUrl: "http://api", fetcher: malformedFetcher }));
+    await expect(malformedEndpoints.simulateActions("state 1/2", { actions: ["IRRIGATE_NOW"] })).rejects.toMatchObject({
+      code: "FRONTEND_MALFORMED_RESPONSE",
+      kind: "malformed",
+    });
+
+    const errorFetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      error: { code: "CURRENT_STATE_NOT_FOUND", message: "Current state missing.", details: {} },
+    }), { status: 404 }));
+    const errorEndpoints = new CropTwinEndpoints(new CropTwinApiClient({ baseUrl: "http://api", fetcher: errorFetcher }));
+    await expect(errorEndpoints.simulateActions("state 1/2", { actions: ["IRRIGATE_NOW"] })).rejects.toMatchObject({
+      code: "CURRENT_STATE_NOT_FOUND",
+      kind: "api",
+    });
+  });
+
+  it("posts recommendation without an unsupported body", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(recommendationResponse));
+    const endpoints = new CropTwinEndpoints(new CropTwinApiClient({ baseUrl: "http://api", fetcher }));
+
+    await endpoints.recommend("state 1/2");
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://api/sessions/state%201%2F2/recommend",
+      expect.objectContaining({
+        cache: "no-store",
+        method: "POST",
+        body: undefined,
+      }),
+    );
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes signal and timeout options to recommendation requests", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(recommendationResponse));
+    const endpoints = new CropTwinEndpoints(new CropTwinApiClient({ baseUrl: "http://api", fetcher }));
+    const controller = new AbortController();
+
+    await endpoints.recommend("state 1/2", { signal: controller.signal, timeoutMs: 5000 });
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://api/sessions/state%201%2F2/recommend",
+      expect.objectContaining({
+        method: "POST",
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it("parses recommendation responses and preserves structured errors", async () => {
+    const malformedFetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({
+      ...recommendationResponse,
+      irrigation_constraint: "ANYTIME",
+    }));
+    const malformedEndpoints = new CropTwinEndpoints(new CropTwinApiClient({ baseUrl: "http://api", fetcher: malformedFetcher }));
+    await expect(malformedEndpoints.recommend("state 1/2")).rejects.toMatchObject({
+      code: "FRONTEND_MALFORMED_RESPONSE",
+      kind: "malformed",
+    });
+
+    const errorFetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      error: { code: "RELATED_SIMULATION_NOT_FOUND", message: "Simulation missing.", details: {} },
+    }), { status: 404 }));
+    const errorEndpoints = new CropTwinEndpoints(new CropTwinApiClient({ baseUrl: "http://api", fetcher: errorFetcher }));
+    await expect(errorEndpoints.recommend("state 1/2")).rejects.toMatchObject({
+      code: "RELATED_SIMULATION_NOT_FOUND",
+      kind: "api",
+    });
   });
 });

@@ -29,7 +29,15 @@ export function DiseasePanel({
 }) {
   const defaultEndpoints = useMemo(() => createBrowserEndpoints(), []);
   const api = endpoints ?? defaultEndpoints;
-  const { activeStateId, advancementPending, disease, systemInfo, twinUpdatePending } = useWorkflowState();
+  const {
+    activeStateId,
+    advancementPending,
+    disease,
+    recommendationPending,
+    simulationPending,
+    systemInfo,
+    twinUpdatePending,
+  } = useWorkflowState();
   const dispatch = useWorkflowDispatch();
   const activeStateRef = useRef(activeStateId);
   const abortRef = useRef<AbortController | null>(null);
@@ -157,7 +165,7 @@ export function DiseasePanel({
           ) : null}
           <div className="mt-5">
             <DiseaseUploadForm
-              disabled={!activeStateId || twinUpdatePending || advancementPending}
+              disabled={!activeStateId || twinUpdatePending || advancementPending || simulationPending || recommendationPending}
               onSubmit={(file) => void submitDisease(file)}
               pending={pending}
               resetKey={activeStateId}

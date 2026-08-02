@@ -18,7 +18,7 @@ import type {
   WaterStateResponse,
   WeatherInput,
 } from "@/lib/types/api";
-import type { WorkflowState } from "@/features/workflow/workflow-types";
+import { initialWorkflowState, type WorkflowState } from "@/features/workflow/workflow-types";
 import { TwinPanel, type TwinPanelEndpoints } from "./twin-panel";
 
 const sessionA: SessionResponse = {
@@ -139,34 +139,14 @@ const twin: UpdateTwinStateResponse = {
 
 function activeState(overrides: Partial<WorkflowState> = {}): WorkflowState {
   const state: WorkflowState = {
+    ...initialWorkflowState,
     activeStateId: "state-a",
     session: sessionA,
-    loadedCurrentState: null,
-    systemInfo: null,
     disease,
-    diseaseRequestPending: false,
-    activeDiseaseRequestId: null,
-    weatherSnapshot: null,
     weatherDraft,
-    weatherDate: null,
     water,
-    waterComputationPending: false,
-    activeWaterRequestId: null,
-    activeWaterRequestSignature: null,
-    twin: null,
-    twinUpdatePending: false,
-    activeTwinRequestId: null,
-    activeTwinSourceSignature: null,
     latestWaterObservationId: water.water_observation_id ?? null,
     latestWaterSequence: water.water_sequence,
-    advancementPending: false,
-    activeAdvancementRequestId: null,
-    activeAdvancementRequestSignature: null,
-    latestAdvancement: null,
-    retainedAdvancement: null,
-    advancementNotice: null,
-    advancementTransitionKind: null,
-    advancementTwinRefreshStatus: null,
     ...overrides,
   };
   return state;

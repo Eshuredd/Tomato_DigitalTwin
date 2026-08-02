@@ -17,7 +17,7 @@ CropTwin does not treat model output as a confirmed diagnosis, and it does not r
 | Tomato disease classifier | Implemented |
 | Temperature calibration | Implemented |
 | Streamlit frontend | Implemented |
-| Next.js frontend | Phase 5 one-day advancement workflow implemented |
+| Next.js frontend | Simulation and deterministic recommendation workflow implemented |
 | Automated tests | Implemented |
 | Persistent database | Implemented |
 | Public deployment | Not yet implemented |
@@ -38,7 +38,7 @@ CropTwin does not treat model output as a confirmed diagnosis, and it does not r
 - Farmer-readable narration of an already-selected recommendation.
 - Session history.
 - Streamlit workflow interface.
-- Next.js migration UI for backend health, session creation/loading, disease evidence, hardened weather review, recent irrigation, water computation, canonical twin-state update, and one-day advancement.
+- Next.js migration UI for backend health, session creation/loading, disease evidence, hardened weather review, recent irrigation, water computation, canonical twin-state update, one-day advancement, candidate simulation, and deterministic recommendation.
 - Direct FastAPI, Swagger, and ReDoc access.
 
 ## Problem Statement
@@ -101,8 +101,10 @@ explicit in the operation modules. The Streamlit entrypoint remains
 migration is underway in `web/` and documented in
 `docs/nextjs-frontend-migration.md`; it now covers session, disease evidence,
 weather review, recent irrigation input, water-state computation, canonical
-twin-state update, and one-day advancement
-workflows but does not yet provide full Streamlit feature parity.
+twin-state update, one-day advancement, candidate action simulation, and
+deterministic recommendation workflows. Backend and Streamlit remain unchanged,
+and narration, history, action recording, farm management, plot management, and
+crop-cycle workflows remain in Streamlit until later migration phases.
 
 ## End-to-End Workflow
 

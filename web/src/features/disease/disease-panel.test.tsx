@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CropTwinApiError } from "@/lib/api/errors";
 import type { DiseasePredictionResponse, SessionResponse, SystemInfoResponse } from "@/lib/types/api";
 import { WorkflowProvider, useWorkflowDispatch, useWorkflowState } from "@/features/workflow/workflow-context";
-import type { WorkflowState } from "@/features/workflow/workflow-types";
+import { initialWorkflowState, type WorkflowState } from "@/features/workflow/workflow-types";
 import { DiseasePanel, type DiseasePanelEndpoints } from "./disease-panel";
 
 const sessionA: SessionResponse = {
@@ -62,34 +62,7 @@ function activeState(session: SessionResponse = sessionA): WorkflowState {
 
 function inactiveState(): WorkflowState {
   return {
-    activeStateId: null,
-    session: null,
-    loadedCurrentState: null,
-    systemInfo: null,
-    disease: null,
-    diseaseRequestPending: false,
-    activeDiseaseRequestId: null,
-    weatherSnapshot: null,
-    weatherDraft: null,
-    weatherDate: null,
-    water: null,
-    waterComputationPending: false,
-    activeWaterRequestId: null,
-    activeWaterRequestSignature: null,
-    twin: null,
-    twinUpdatePending: false,
-    activeTwinRequestId: null,
-    activeTwinSourceSignature: null,
-    latestWaterObservationId: null,
-    latestWaterSequence: 0,
-    advancementPending: false,
-    activeAdvancementRequestId: null,
-    activeAdvancementRequestSignature: null,
-    latestAdvancement: null,
-    retainedAdvancement: null,
-    advancementNotice: null,
-    advancementTransitionKind: null,
-    advancementTwinRefreshStatus: null,
+    ...initialWorkflowState,
   };
 }
 

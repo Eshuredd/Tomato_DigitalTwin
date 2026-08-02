@@ -1,6 +1,6 @@
 # CropTwin Next.js Frontend
 
-This is the Phase 5 Next.js frontend for CropTwin. It provides the application shell, typed FastAPI client, backend health status, shared active-session state, session creation/loading, disease-image evidence submission/results, weather review, recent irrigation input, deterministic water-state computation, canonical twin-state update, and one-day advancement.
+This is the CropTwin Next.js frontend migration. It provides the application shell, typed FastAPI client, backend health status, shared active-session state, session creation/loading, disease-image evidence submission/results, weather review, recent irrigation input, deterministic water-state computation, canonical twin-state update, one-day advancement, candidate action simulation, and deterministic recommendation.
 
 The FastAPI backend remains authoritative for agronomy, disease inference, recommendations, narration, validation, and persistence. The legacy Streamlit frontend in `../frontend/` remains operational while the migration proceeds.
 
@@ -75,6 +75,16 @@ Canonical twin update is submitted only after the active session has accepted di
 
 One-day advancement is submitted only after accepted disease evidence, accepted canonical water lineage, and accepted canonical twin state are present. The browser derives the only allowed target date from `twin.current_state.observed_at + 1 day`, uses the twin timestamp as the canonical water date when transient displayed water has been cleared by later weather review, requires reviewed next-day weather and valid recent-irrigation input, and sends `POST /sessions/{state_id}/advance-one-day` with a stable `advancement_id` for unchanged retries. Fetched weather must be for the derived next date; same-date edits and fully manual weather require explicit acknowledgement, but a wrong-date fetched snapshot remains blocked until weather is retrieved for the required date. Reused advancement responses are treated conservatively: catch-up retries refresh the authoritative twin through `update-twin-state`, current retries preserve newer local twin state, and historical retries remain technical data only.
 
+## Simulation And Recommendation Flow
+
+Candidate action simulation requires an active session and an accepted canonical twin snapshot. All four supported candidate actions are selected by default: `IRRIGATE_NOW`, `IRRIGATE_IN_6H`, `IRRIGATE_TOMORROW_AM`, and `NO_IRRIGATION_24H`. The user may submit any non-empty subset explicitly through `POST /sessions/{state_id}/simulate-actions`; the browser sends only `{ "state_id": stateId, "actions": [...] }`.
+
+Simulation results are deterministic backend projections. The browser validates the response shape, verifies the response `state_id`, checks that returned actions exactly match the submitted set, and renders results in the submitted workflow order. It does not calculate projections, rank actions, choose an action, or automatically request a recommendation.
+
+Deterministic recommendation requires an accepted simulation for the same canonical twin. It is requested only when the user presses the recommendation button, using `POST /sessions/{state_id}/recommend` without a request body. FastAPI remains authoritative for action selection, irrigation constraints, caution reasons, inspection advisories, validation, persistence, and recommendation caching. The browser verifies the response `state_id` and confirms the chosen action appears in the accepted simulation before storing it.
+
+Decision requests use AbortSignal cancellation, stale-response guards, request IDs, and source signatures. Canonical disease, water, twin, or advancement changes invalidate simulation and recommendation. A newly accepted simulation clears the previous recommendation. Unsubmitted weather draft edits do not directly invalidate accepted decision outputs unless they lead to a changed canonical twin source.
+
 ## Safety Boundaries
 
 - Disease evidence does not determine irrigation.
@@ -86,6 +96,5 @@ One-day advancement is submitted only after accepted disease evidence, accepted 
 
 Still in Streamlit until later phases:
 
-- Simulation and recommendation.
 - Narration, history, and actual actions.
 - Farm and plot management.

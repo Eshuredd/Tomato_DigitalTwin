@@ -47,7 +47,9 @@ export function WaterPanel({
     advancementPending,
     latestWaterObservationId,
     latestWaterSequence,
+    recommendationPending,
     session,
+    simulationPending,
     twinUpdatePending,
     water,
     waterComputationPending,
@@ -161,7 +163,7 @@ export function WaterPanel({
 
   async function computeWater(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!activeStateId || waterComputationPending || twinUpdatePending || advancementPending) {
+    if (!activeStateId || waterComputationPending || twinUpdatePending || advancementPending || simulationPending || recommendationPending) {
       return;
     }
     if (!weatherDraft) {
@@ -320,7 +322,7 @@ export function WaterPanel({
           <form className="mt-5 grid gap-5" onSubmit={computeWater}>
             <Field label="Water computation date" htmlFor="water_current_date">
               <Input
-                disabled={!activeStateId || waterComputationPending || twinUpdatePending || advancementPending}
+                disabled={!activeStateId || waterComputationPending || twinUpdatePending || advancementPending || simulationPending || recommendationPending}
                 id="water_current_date"
                 min={session?.planting_date}
                 onChange={(event) => {
@@ -337,7 +339,7 @@ export function WaterPanel({
             </Field>
             <IrrigationInput
               key={activeStateId ?? "inactive"}
-              disabled={!activeStateId || waterComputationPending || twinUpdatePending || advancementPending}
+              disabled={!activeStateId || waterComputationPending || twinUpdatePending || advancementPending || simulationPending || recommendationPending}
               onChange={handleIrrigationChange}
             />
             {dateMismatch ? (
@@ -354,7 +356,9 @@ export function WaterPanel({
                 !irrigationDraft.valid ||
                 waterComputationPending ||
                 twinUpdatePending ||
-                advancementPending
+                advancementPending ||
+                simulationPending ||
+                recommendationPending
               }
             >
               {waterComputationPending ? "Computing water state" : "Compute water state"}

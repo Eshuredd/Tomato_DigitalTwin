@@ -30,6 +30,8 @@ export function TwinPanel({
     disease,
     diseaseRequestPending,
     loadedCurrentState,
+    recommendationPending,
+    simulationPending,
     twin,
     twinUpdatePending,
     water,
@@ -95,6 +97,8 @@ export function TwinPanel({
       !diseaseRequestPending &&
       !waterComputationPending &&
       !advancementPending &&
+      !simulationPending &&
+      !recommendationPending &&
       !twinUpdatePending,
   );
 

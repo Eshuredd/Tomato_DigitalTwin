@@ -17,7 +17,7 @@ import type {
   WeatherInput,
   WeatherSnapshotResponse,
 } from "@/lib/types/api";
-import type { WorkflowState } from "@/features/workflow/workflow-types";
+import { initialWorkflowState, type WorkflowState } from "@/features/workflow/workflow-types";
 import { AdvancementPanel, type AdvancementPanelEndpoints } from "./advancement-panel";
 
 const session: SessionResponse = {
@@ -169,34 +169,17 @@ const advancement: AdvanceOneDayResponse = {
 
 function activeState(overrides: Partial<WorkflowState> = {}): WorkflowState {
   return {
+    ...initialWorkflowState,
     activeStateId: "state-a",
     session,
-    loadedCurrentState: null,
-    systemInfo: null,
     disease,
-    diseaseRequestPending: false,
-    activeDiseaseRequestId: null,
     weatherSnapshot,
     weatherDraft: weather,
     weatherDate: "2026-08-01",
     water,
-    waterComputationPending: false,
-    activeWaterRequestId: null,
-    activeWaterRequestSignature: null,
     twin,
-    twinUpdatePending: false,
-    activeTwinRequestId: null,
-    activeTwinSourceSignature: null,
     latestWaterObservationId: "water-1",
     latestWaterSequence: 1,
-    advancementPending: false,
-    activeAdvancementRequestId: null,
-    activeAdvancementRequestSignature: null,
-    latestAdvancement: null,
-    retainedAdvancement: null,
-    advancementNotice: null,
-    advancementTransitionKind: null,
-    advancementTwinRefreshStatus: null,
     ...overrides,
   };
 }

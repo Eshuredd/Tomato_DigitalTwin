@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   parseAdvanceOneDayResponse,
+  parseRecommendationResponse,
+  parseSimulateActionsResponse,
+  parseSimulatedActionResult,
   parseTwinCurrentState,
   parseUpdateTwinStateResponse,
   parseWaterStateResponse,
@@ -105,6 +108,60 @@ const advancementResponse = {
       last_update_time: "2026-08-01T01:00:00Z",
     },
   },
+};
+
+const simulationResponse = {
+  state_id: "state-a",
+  simulations: [
+    {
+      action: "IRRIGATE_NOW",
+      projected_root_zone_depletion: 3.2,
+      projected_raw_crossing: false,
+      projected_stress_band: "low",
+      projected_water_use: 10,
+      disease_wetness_risk_note: "no_fungal_wetness_risk_flagged",
+    },
+    {
+      action: "IRRIGATE_IN_6H",
+      projected_root_zone_depletion: 2.4,
+      projected_raw_crossing: false,
+      projected_stress_band: "low",
+      projected_water_use: 12,
+      disease_wetness_risk_note: "no_fungal_wetness_risk_flagged",
+    },
+    {
+      action: "IRRIGATE_TOMORROW_AM",
+      projected_root_zone_depletion: 0,
+      projected_raw_crossing: true,
+      projected_stress_band: "low",
+      projected_water_use: 14,
+      disease_wetness_risk_note: "no_fungal_wetness_risk_flagged",
+    },
+    {
+      action: "NO_IRRIGATION_24H",
+      projected_root_zone_depletion: 18,
+      projected_raw_crossing: false,
+      projected_stress_band: "medium",
+      projected_water_use: 0,
+      disease_wetness_risk_note: "no_irrigation_wetness_added",
+    },
+  ],
+  simulated_at: "2026-07-31T02:00:00Z",
+};
+
+const recommendationResponse = {
+  recommendation_id: "recommendation-1",
+  state_id: "state-a",
+  chosen_action: "NO_IRRIGATION_24H",
+  irrigation_constraint: "NONE",
+  inspection_advisory: false,
+  decision_reason_codes: ["NO_IRRIGATION_SAFE_24H"],
+  caution_reasons: [],
+  evidence_summary_structured: {
+    chosen_action: "NO_IRRIGATION_24H",
+    available_actions: ["NO_IRRIGATION_24H"],
+  },
+  recommended_at: "2026-07-31T02:10:00Z",
 };
 
 describe("parseWaterStateResponse", () => {
@@ -333,5 +390,66 @@ describe("advancement validators", () => {
       expect((error as CropTwinApiError).code).toBe("FRONTEND_MALFORMED_RESPONSE");
       expect((error as CropTwinApiError).message).toContain("mismatched nested state IDs");
     }
+  });
+});
+
+describe("simulation validators", () => {
+  it("accepts valid full, subset and empty simulation responses", () => {
+    expect(parseSimulateActionsResponse(simulationResponse).simulations).toHaveLength(4);
+    expect(parseSimulateActionsResponse({
+      ...simulationResponse,
+      simulations: [simulationResponse.simulations[0]],
+    }).simulations).toHaveLength(1);
+    expect(parseSimulateActionsResponse({
+      ...simulationResponse,
+      simulations: [],
+    }).simulations).toHaveLength(0);
+  });
+
+  it("accepts additional simulation fields", () => {
+    expect(parseSimulateActionsResponse({ ...simulationResponse, extra: "kept" })).toMatchObject({ extra: "kept" });
+  });
+
+  it("rejects malformed simulation envelopes", () => {
+    expect(() => parseSimulateActionsResponse({ ...simulationResponse, state_id: "" })).toThrow("simulation response");
+    expect(() => parseSimulateActionsResponse({ ...simulationResponse, simulations: {} })).toThrow("simulation response");
+    expect(() => parseSimulateActionsResponse({ ...simulationResponse, simulated_at: "2026-07-31T02:00:00" })).toThrow("simulation response");
+  });
+
+  it("rejects malformed simulation results", () => {
+    const result = simulationResponse.simulations[0];
+    expect(() => parseSimulatedActionResult({ ...result, action: "WAIT" })).toThrow("simulation result");
+    expect(() => parseSimulatedActionResult({ ...result, projected_stress_band: "severe" })).toThrow("simulation result");
+    expect(() => parseSimulatedActionResult({ ...result, projected_raw_crossing: "false" })).toThrow("simulation result");
+    expect(() => parseSimulatedActionResult({ ...result, projected_root_zone_depletion: NaN })).toThrow("simulation result");
+    expect(() => parseSimulatedActionResult({ ...result, projected_water_use: Infinity })).toThrow("simulation result");
+    expect(() => parseSimulatedActionResult({ ...result, disease_wetness_risk_note: undefined })).toThrow("simulation result");
+  });
+});
+
+describe("recommendation validators", () => {
+  it("accepts valid recommendation IDs", () => {
+    expect(parseRecommendationResponse(recommendationResponse).recommendation_id).toBe("recommendation-1");
+    expect(parseRecommendationResponse({ ...recommendationResponse, recommendation_id: null }).recommendation_id).toBeNull();
+    const withoutId: Partial<typeof recommendationResponse> = { ...recommendationResponse };
+    delete withoutId.recommendation_id;
+    expect(parseRecommendationResponse(withoutId).recommendation_id).toBeUndefined();
+  });
+
+  it("accepts additional recommendation fields", () => {
+    expect(parseRecommendationResponse({ ...recommendationResponse, extra: "kept" })).toMatchObject({ extra: "kept" });
+  });
+
+  it("rejects malformed recommendation values", () => {
+    expect(() => parseRecommendationResponse({ ...recommendationResponse, chosen_action: "WAIT" })).toThrow("recommendation");
+    expect(() => parseRecommendationResponse({ ...recommendationResponse, irrigation_constraint: "WATER_ANYTIME" })).toThrow("recommendation");
+    expect(() => parseRecommendationResponse({ ...recommendationResponse, caution_reasons: ["OTHER"] })).toThrow("recommendation");
+    expect(() => parseRecommendationResponse({ ...recommendationResponse, inspection_advisory: "no" })).toThrow("recommendation");
+    expect(() => parseRecommendationResponse({ ...recommendationResponse, decision_reason_codes: "NO_IRRIGATION_SAFE_24H" })).toThrow("recommendation");
+    expect(() => parseRecommendationResponse({ ...recommendationResponse, decision_reason_codes: [1] })).toThrow("recommendation");
+    expect(() => parseRecommendationResponse({ ...recommendationResponse, evidence_summary_structured: [] })).toThrow("recommendation");
+    expect(() => parseRecommendationResponse({ ...recommendationResponse, evidence_summary_structured: null })).toThrow("recommendation");
+    expect(() => parseRecommendationResponse({ ...recommendationResponse, recommended_at: "2026-07-31T02:10:00" })).toThrow("recommendation");
+    expect(() => parseRecommendationResponse({ ...recommendationResponse, recommendation_id: " " })).toThrow("recommendation");
   });
 });
