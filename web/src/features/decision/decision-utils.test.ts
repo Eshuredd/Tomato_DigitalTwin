@@ -8,6 +8,7 @@ import {
   ACTION_ORDER,
   canonicalTwinDecisionSignature,
   normalizeRequestedActions,
+  proveAcceptedSimulationSource,
   recommendationSourceSignature,
   simulationSourceSignature,
   validateRecommendationAgainstSimulation,
@@ -168,5 +169,94 @@ describe("decision utilities", () => {
       simulation,
       expectedStateId: "state-a",
     })).toThrow("different session");
+  });
+
+  it("proves accepted simulation source for equivalent action sets and normalized backend order", () => {
+    const acceptedSourceSignature = simulationSourceSignature({
+      actions: ["NO_IRRIGATION_24H", "IRRIGATE_NOW"],
+      stateId: "state-a",
+      twin,
+    });
+
+    expect(proveAcceptedSimulationSource({
+      acceptedActions: ["NO_IRRIGATION_24H", "IRRIGATE_NOW"],
+      acceptedSourceSignature,
+      simulation: { ...simulation, simulations: [...simulation.simulations].reverse() },
+      stateId: "state-a",
+      twin,
+    })).toMatchObject({
+      actions: ["IRRIGATE_NOW", "NO_IRRIGATION_24H"],
+      sourceSignature: acceptedSourceSignature,
+      simulation: {
+        simulations: [
+          { action: "IRRIGATE_NOW" },
+          { action: "NO_IRRIGATION_24H" },
+        ],
+      },
+    });
+  });
+
+  it("rejects inconsistent accepted simulation source metadata", () => {
+    const acceptedSourceSignature = simulationSourceSignature({
+      actions: ["IRRIGATE_NOW", "NO_IRRIGATION_24H"],
+      stateId: "state-a",
+      twin,
+    });
+    const proofInput = {
+      acceptedActions: ["IRRIGATE_NOW", "NO_IRRIGATION_24H"],
+      acceptedSourceSignature,
+      simulation,
+      stateId: "state-a",
+      twin,
+    } as const;
+
+    expect(proveAcceptedSimulationSource({
+      ...proofInput,
+      acceptedActions: ["IRRIGATE_NOW"],
+    })).toBeNull();
+    expect(proveAcceptedSimulationSource({
+      ...proofInput,
+      acceptedSourceSignature: simulationSourceSignature({
+        actions: ["IRRIGATE_NOW", "NO_IRRIGATION_24H"],
+        stateId: "state-a",
+        twin: { ...twin, snapshot_id: "snapshot-2" },
+      }),
+    })).toBeNull();
+    expect(proveAcceptedSimulationSource({
+      ...proofInput,
+      simulation: { ...simulation, state_id: "state-b" },
+    })).toBeNull();
+    expect(proveAcceptedSimulationSource({
+      ...proofInput,
+      acceptedActions: ["IRRIGATE_NOW", "IRRIGATE_NOW"],
+    })).toBeNull();
+    expect(proveAcceptedSimulationSource({
+      ...proofInput,
+      simulation: { ...simulation, simulations: [simulation.simulations[0]] },
+    })).toBeNull();
+    expect(proveAcceptedSimulationSource({
+      ...proofInput,
+      simulation: {
+        ...simulation,
+        simulations: [
+          ...simulation.simulations,
+          {
+            action: "IRRIGATE_IN_6H",
+            projected_root_zone_depletion: 5,
+            projected_raw_crossing: false,
+            projected_stress_band: "low",
+            projected_water_use: 10,
+            disease_wetness_risk_note: "note",
+          },
+        ],
+      },
+    })).toBeNull();
+    expect(proveAcceptedSimulationSource({
+      ...proofInput,
+      simulation: {
+        ...simulation,
+        simulations: [simulation.simulations[0], simulation.simulations[0]],
+      },
+    })).toBeNull();
   });
 });

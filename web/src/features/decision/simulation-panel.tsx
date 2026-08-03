@@ -15,6 +15,7 @@ import {
   ACTION_ORDER,
   canonicalTwinDecisionSignature,
   normalizeRequestedActions,
+  proveAcceptedSimulationSource,
   simulationSourceSignature,
   validateSimulationForRequestedActions,
 } from "./decision-utils";
@@ -36,13 +37,13 @@ export function SimulationPanel({
     recommendationPending,
     simulation,
     acceptedSimulationActions,
+    acceptedSimulationSourceSignature,
     simulationPending,
     twin,
     twinUpdatePending,
     waterComputationPending,
   } = useWorkflowState();
   const dispatch = useWorkflowDispatch();
-  const [selectedActions, setSelectedActions] = useState<ActionEnum[]>([...ACTION_ORDER]);
   const [error, setError] = useState<CropTwinApiError | string | null>(null);
   const activeStateRef = useRef(activeStateId);
   const requestRef = useRef(0);
@@ -58,6 +59,25 @@ export function SimulationPanel({
     return canonicalTwinDecisionSignature({ stateId: activeStateId, twin });
   }, [activeStateId, twin]);
 
+  const acceptedSimulationProof = useMemo(() => proveAcceptedSimulationSource({
+    acceptedActions: acceptedSimulationActions,
+    acceptedSourceSignature: acceptedSimulationSourceSignature,
+    simulation,
+    stateId: activeStateId,
+    twin,
+  }), [
+    acceptedSimulationActions,
+    acceptedSimulationSourceSignature,
+    activeStateId,
+    simulation,
+    twin,
+  ]);
+  const acceptedSimulationProofRef = useRef(acceptedSimulationProof);
+
+  const [selectedActions, setSelectedActions] = useState<ActionEnum[]>(
+    () => [...(acceptedSimulationProof?.actions ?? ACTION_ORDER)],
+  );
+
   const sourceSignature = useMemo(() => {
     if (!activeStateId || !twin || selectedActions.length === 0) {
       return null;
@@ -68,6 +88,10 @@ export function SimulationPanel({
       twin,
     });
   }, [activeStateId, selectedActions, twin]);
+
+  useEffect(() => {
+    acceptedSimulationProofRef.current = acceptedSimulationProof;
+  }, [acceptedSimulationProof]);
 
   useEffect(() => {
     activeStateRef.current = activeStateId;
@@ -85,7 +109,7 @@ export function SimulationPanel({
     currentRequestRef.current = null;
     const timeoutId = window.setTimeout(() => {
       setError(null);
-      setSelectedActions([...ACTION_ORDER]);
+      setSelectedActions([...(acceptedSimulationProofRef.current?.actions ?? ACTION_ORDER)]);
     }, 0);
     return () => window.clearTimeout(timeoutId);
   }, [activeStateId, dispatch, twinSignature]);
@@ -128,11 +152,11 @@ export function SimulationPanel({
       const selected = current.includes(action)
         ? current.filter((item) => item !== action)
         : [...current, action];
-      const normalized = ACTION_ORDER.filter((item) => selected.includes(item));
+      const normalized = [...ACTION_ORDER].filter((item) => selected.includes(item));
       if (
         activeStateId &&
         simulation &&
-        !sameActionSet(normalized, acceptedSimulationActions)
+        !sameActionSet(normalized, acceptedSimulationProof?.actions ?? [])
       ) {
         dispatch({ type: "simulationInvalidated", stateId: activeStateId });
       }
@@ -271,14 +295,14 @@ export function SimulationPanel({
           </div>
         </div>
         <div className="min-w-0">
-          <SimulationResult result={simulation} />
+          <SimulationResult result={acceptedSimulationProof?.simulation ?? null} />
         </div>
       </div>
     </Panel>
   );
 }
 
-function sameActionSet(left: ActionEnum[], right: ActionEnum[]): boolean {
+function sameActionSet(left: readonly ActionEnum[], right: readonly ActionEnum[]): boolean {
   const normalizedLeft = ACTION_ORDER.filter((action) => left.includes(action));
   const normalizedRight = ACTION_ORDER.filter((action) => right.includes(action));
   return normalizedLeft.length === normalizedRight.length &&

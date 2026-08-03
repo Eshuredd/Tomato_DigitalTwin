@@ -11,8 +11,8 @@ import { CropTwinApiError } from "@/lib/api/errors";
 import type { CropTwinEndpoints } from "@/lib/api/endpoints";
 import {
   canonicalTwinDecisionSignature,
+  proveAcceptedSimulationSource,
   recommendationSourceSignature,
-  simulationSourceSignature,
   validateRecommendationAgainstSimulation,
 } from "./decision-utils";
 import { RecommendationResult } from "./recommendation-result";
@@ -29,6 +29,7 @@ export function RecommendationPanel({
   const {
     activeStateId,
     advancementPending,
+    acceptedRecommendationSourceSignature,
     diseaseRequestPending,
     recommendation,
     recommendationPending,
@@ -58,39 +59,57 @@ export function RecommendationPanel({
     return canonicalTwinDecisionSignature({ stateId: activeStateId, twin });
   }, [activeStateId, twin]);
 
-  const simulationSourceProof = useMemo(() => {
-    if (
-      !activeStateId ||
-      !twin ||
-      !simulation ||
-      simulation.state_id !== activeStateId ||
-      simulation.simulations.length === 0 ||
-      !acceptedSimulationSourceSignature ||
-      acceptedSimulationActions.length === 0
-    ) {
-      return null;
-    }
-    const currentSimulationSource = simulationSourceSignature({
-      actions: acceptedSimulationActions,
-      stateId: activeStateId,
-      twin,
-    });
-    const simulationActions = simulation.simulations.map((result) => result.action);
-    if (
-      currentSimulationSource !== acceptedSimulationSourceSignature ||
-      !sameActionList(simulationActions, acceptedSimulationActions)
-    ) {
-      return null;
-    }
-    return currentSimulationSource;
-  }, [acceptedSimulationActions, acceptedSimulationSourceSignature, activeStateId, simulation, twin]);
+  const simulationSourceProof = useMemo(() => proveAcceptedSimulationSource({
+    acceptedActions: acceptedSimulationActions,
+    acceptedSourceSignature: acceptedSimulationSourceSignature,
+    simulation,
+    stateId: activeStateId,
+    twin,
+  }), [
+    acceptedSimulationActions,
+    acceptedSimulationSourceSignature,
+    activeStateId,
+    simulation,
+    twin,
+  ]);
 
   const sourceSignature = useMemo(() => {
     if (!activeStateId || !twin || !simulation || !simulationSourceProof) {
       return null;
     }
-    return recommendationSourceSignature({ stateId: activeStateId, twin, simulation });
+    return recommendationSourceSignature({
+      stateId: activeStateId,
+      twin,
+      simulation: simulationSourceProof.simulation,
+    });
   }, [activeStateId, simulation, simulationSourceProof, twin]);
+
+  const displayRecommendation = useMemo(() => {
+    if (
+      !activeStateId ||
+      !recommendation ||
+      !sourceSignature ||
+      !simulationSourceProof ||
+      acceptedRecommendationSourceSignature !== sourceSignature
+    ) {
+      return null;
+    }
+    try {
+      return validateRecommendationAgainstSimulation({
+        expectedStateId: activeStateId,
+        recommendation,
+        simulation: simulationSourceProof.simulation,
+      });
+    } catch {
+      return null;
+    }
+  }, [
+    acceptedRecommendationSourceSignature,
+    activeStateId,
+    recommendation,
+    simulationSourceProof,
+    sourceSignature,
+  ]);
 
   useEffect(() => {
     activeStateRef.current = activeStateId;
@@ -123,8 +142,8 @@ export function RecommendationPanel({
   }, [simulation]);
 
   useEffect(() => {
-    acceptedSimulationSourceRef.current = acceptedSimulationSourceSignature;
-  }, [acceptedSimulationSourceSignature]);
+    acceptedSimulationSourceRef.current = simulationSourceProof?.sourceSignature ?? null;
+  }, [simulationSourceProof]);
 
   useEffect(() => {
     return () => {
@@ -153,7 +172,7 @@ export function RecommendationPanel({
 
   async function submitRecommendation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!activeStateId || !simulation || !sourceSignature || !acceptedSimulationSourceSignature || disabledByPending) {
+    if (!activeStateId || !simulation || !sourceSignature || !simulationSourceProof || disabledByPending) {
       return;
     }
 
@@ -163,7 +182,7 @@ export function RecommendationPanel({
     const requestSignature = sourceSignature;
     const requestTwinSignature = twinSignature;
     const requestSimulation = simulation;
-    const requestSimulationSourceSignature = acceptedSimulationSourceSignature;
+    const requestSimulationSourceSignature = simulationSourceProof.sourceSignature;
     requestRef.current = requestNumber;
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -194,7 +213,7 @@ export function RecommendationPanel({
       }
       const accepted = validateRecommendationAgainstSimulation({
         recommendation: response,
-        simulation,
+        simulation: simulationSourceProof.simulation,
         expectedStateId: requestStateId,
       });
       dispatch({
@@ -265,13 +284,9 @@ export function RecommendationPanel({
           </div>
         </div>
         <div className="min-w-0">
-          <RecommendationResult result={recommendation} />
+          <RecommendationResult result={displayRecommendation} />
         </div>
       </div>
     </Panel>
   );
-}
-
-function sameActionList(left: string[], right: string[]): boolean {
-  return left.length === right.length && left.every((action, index) => action === right[index]);
 }

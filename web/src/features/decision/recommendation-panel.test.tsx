@@ -1,7 +1,12 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { WorkflowProvider } from "@/features/workflow/workflow-context";
+import { Button } from "@/components/ui/button";
+import {
+  useWorkflowDispatch,
+  useWorkflowState,
+  WorkflowProvider,
+} from "@/features/workflow/workflow-context";
 import { initialWorkflowState } from "@/features/workflow/workflow-types";
 import { CropTwinApiError } from "@/lib/api/errors";
 import type {
@@ -94,6 +99,14 @@ function endpoints(response: RecommendationResponse = recommendation): Recommend
   };
 }
 
+function deferredRecommendation() {
+  let resolve!: (response: RecommendationResponse) => void;
+  const promise = new Promise<RecommendationResponse>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
 function renderPanel(api = endpoints(), overrides = {}) {
   return {
     api,
@@ -124,6 +137,51 @@ function renderPanel(api = endpoints(), overrides = {}) {
   };
 }
 
+function DecisionMarker() {
+  const { recommendation: acceptedRecommendation, recommendationPending, simulation: acceptedSimulation } = useWorkflowState();
+  return (
+    <div>
+      <span>{recommendationPending ? "recommendation-pending" : "recommendation-idle"}</span>
+      <span>simulation:{acceptedSimulation?.simulations.length ?? 0}</span>
+      <span>recommendation:{acceptedRecommendation?.chosen_action ?? "none"}</span>
+    </div>
+  );
+}
+
+function InvalidateSimulationButton() {
+  const dispatch = useWorkflowDispatch();
+  return (
+    <Button
+      type="button"
+      onClick={() => dispatch({ type: "simulationInvalidated", stateId: "state-a" })}
+    >
+      Invalidate simulation
+    </Button>
+  );
+}
+
+function MeaningfulTwinChangeButton() {
+  const dispatch = useWorkflowDispatch();
+  return (
+    <Button
+      type="button"
+      onClick={() => dispatch({
+        type: "twinReceived",
+        stateId: "state-a",
+        twin: {
+          ...twin,
+          current_state: {
+            ...twin.current_state,
+            root_zone_depletion: twin.current_state.root_zone_depletion + 1,
+          },
+        },
+      })}
+    >
+      Meaningful twin change
+    </Button>
+  );
+}
+
 describe("RecommendationPanel", () => {
   it("requires explicit submission and sends no chosen action", async () => {
     const user = userEvent.setup();
@@ -151,6 +209,65 @@ describe("RecommendationPanel", () => {
 
     expect(screen.getByText("Simulate candidate actions before recommendation.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Generate deterministic recommendation" })).toBeDisabled();
+    expect(api.recommend).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "accepted actions do not match results",
+      { acceptedSimulationActions: ["IRRIGATE_NOW", "NO_IRRIGATION_24H"] },
+    ],
+    [
+      "accepted source signature does not match current twin",
+      { acceptedSimulationSourceSignature: simulationSourceSignature({
+        actions: [...acceptedSimulationActions],
+        stateId: "state-a",
+        twin: { ...twin, snapshot_id: "snapshot-2" },
+      }) },
+    ],
+    [
+      "simulation state ID differs",
+      { simulation: { ...simulation, state_id: "state-b" } },
+    ],
+    [
+      "accepted actions contain duplicates",
+      { acceptedSimulationActions: ["IRRIGATE_NOW", "IRRIGATE_NOW"] },
+    ],
+    [
+      "simulation has duplicate results",
+      { simulation: { ...simulation, simulations: [simulation.simulations[0], simulation.simulations[0]] } },
+    ],
+    [
+      "simulation is missing a result",
+      { simulation: { ...simulation, simulations: [] } },
+    ],
+    [
+      "simulation has an unexpected result",
+      { simulation: {
+        ...simulation,
+        simulations: [
+          ...simulation.simulations,
+          {
+            action: "NO_IRRIGATION_24H",
+            projected_root_zone_depletion: 18,
+            projected_raw_crossing: false,
+            projected_stress_band: "medium",
+            projected_water_use: 0,
+            disease_wetness_risk_note: "note",
+          },
+        ],
+      } },
+    ],
+  ])("blocks recommendation when %s", (_label, overrides) => {
+    const { api } = renderPanel(endpoints(), {
+      recommendation,
+      acceptedRecommendationSourceSignature,
+      ...overrides,
+    });
+
+    expect(screen.getByText("Run candidate-action simulation for the current canonical twin before requesting a recommendation.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Generate deterministic recommendation" })).toBeDisabled();
+    expect(screen.getByRole("heading", { name: "No recommendation yet" })).toBeInTheDocument();
     expect(api.recommend).not.toHaveBeenCalled();
   });
 
@@ -185,5 +302,99 @@ describe("RecommendationPanel", () => {
       message: "Simulation missing.",
     }));
     expect(await screen.findByText("Simulation missing.")).toBeInTheDocument();
+  });
+
+  it("ignores late recommendation responses after accepted simulation invalidation", async () => {
+    const deferred = deferredRecommendation();
+    let signal: AbortSignal | undefined;
+    const api = {
+      recommend: vi.fn((_stateId, options?: { signal?: AbortSignal }) => {
+        signal = options?.signal;
+        return deferred.promise;
+      }),
+    };
+    const user = userEvent.setup();
+    render(
+      <WorkflowProvider
+        initialState={{
+          ...initialWorkflowState,
+          activeStateId: "state-a",
+          session: {
+            state_id: "state-a",
+            crop_type: "tomato",
+            planting_date: "2026-07-01",
+            location: { name: "Farm", latitude: 17, longitude: 78 },
+            soil_texture: "sandy_loam",
+            created_at: "2026-07-31T00:00:00Z",
+          },
+          twin,
+          simulation,
+          acceptedSimulationActions: [...acceptedSimulationActions],
+          acceptedSimulationSourceSignature,
+        }}
+      >
+        <InvalidateSimulationButton />
+        <DecisionMarker />
+        <RecommendationPanel endpoints={api} />
+      </WorkflowProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Generate deterministic recommendation" }));
+    expect(screen.getByText("recommendation-pending")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Invalidate simulation" }));
+    expect(signal?.aborted).toBe(true);
+    deferred.resolve(recommendation);
+
+    await waitFor(() => expect(screen.getByText("recommendation-idle")).toBeInTheDocument());
+    expect(screen.getByText("simulation:0")).toBeInTheDocument();
+    expect(screen.getByText("recommendation:none")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "No recommendation yet" })).toBeInTheDocument();
+  });
+
+  it("ignores late recommendation responses after canonical twin source changes", async () => {
+    const deferred = deferredRecommendation();
+    let signal: AbortSignal | undefined;
+    const api = {
+      recommend: vi.fn((_stateId, options?: { signal?: AbortSignal }) => {
+        signal = options?.signal;
+        return deferred.promise;
+      }),
+    };
+    const user = userEvent.setup();
+    render(
+      <WorkflowProvider
+        initialState={{
+          ...initialWorkflowState,
+          activeStateId: "state-a",
+          session: {
+            state_id: "state-a",
+            crop_type: "tomato",
+            planting_date: "2026-07-01",
+            location: { name: "Farm", latitude: 17, longitude: 78 },
+            soil_texture: "sandy_loam",
+            created_at: "2026-07-31T00:00:00Z",
+          },
+          twin,
+          simulation,
+          acceptedSimulationActions: [...acceptedSimulationActions],
+          acceptedSimulationSourceSignature,
+        }}
+      >
+        <MeaningfulTwinChangeButton />
+        <DecisionMarker />
+        <RecommendationPanel endpoints={api} />
+      </WorkflowProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Generate deterministic recommendation" }));
+    expect(screen.getByText("recommendation-pending")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Meaningful twin change" }));
+    expect(signal?.aborted).toBe(true);
+    deferred.resolve(recommendation);
+
+    await waitFor(() => expect(screen.getByText("recommendation-idle")).toBeInTheDocument());
+    expect(screen.getByText("simulation:0")).toBeInTheDocument();
+    expect(screen.getByText("recommendation:none")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "No recommendation yet" })).toBeInTheDocument();
   });
 });

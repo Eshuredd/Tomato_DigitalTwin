@@ -35,7 +35,7 @@ export const CAUTION_REASON_LABELS = {
   FUNGAL_DISEASE_RISK: "Fungal disease risk",
 } as const;
 
-export function normalizeRequestedActions(actions: ActionEnum[]): ActionEnum[] {
+export function normalizeRequestedActions(actions: readonly ActionEnum[]): ActionEnum[] {
   assertNoDuplicateActions(actions, "Requested simulation actions contain duplicates.");
   const selected = new Set(actions);
   const normalized = ACTION_ORDER.filter((action) => selected.has(action));
@@ -50,7 +50,7 @@ export function simulationSourceSignature({
   stateId,
   twin,
 }: {
-  actions: ActionEnum[];
+  actions: readonly ActionEnum[];
   stateId: string;
   twin: UpdateTwinStateResponse;
 }): string {
@@ -85,7 +85,7 @@ export function validateSimulationForRequestedActions({
   response,
 }: {
   response: SimulateActionsResponse;
-  requestedActions: ActionEnum[];
+  requestedActions: readonly ActionEnum[];
   expectedStateId: string;
 }): SimulateActionsResponse {
   if (response.state_id !== expectedStateId) {
@@ -135,6 +135,54 @@ export function validateRecommendationAgainstSimulation({
   return recommendation;
 }
 
+export interface AcceptedSimulationSourceProof {
+  actions: readonly ActionEnum[];
+  simulation: SimulateActionsResponse;
+  sourceSignature: string;
+}
+
+export function proveAcceptedSimulationSource({
+  acceptedActions,
+  acceptedSourceSignature,
+  simulation,
+  stateId,
+  twin,
+}: {
+  acceptedActions: readonly ActionEnum[];
+  acceptedSourceSignature: string | null;
+  simulation: SimulateActionsResponse | null;
+  stateId: string | null;
+  twin: UpdateTwinStateResponse | null;
+}): AcceptedSimulationSourceProof | null {
+  if (
+    !stateId ||
+    !twin ||
+    !simulation ||
+    !acceptedSourceSignature ||
+    acceptedActions.length === 0
+  ) {
+    return null;
+  }
+  try {
+    const actions = normalizeRequestedActions(acceptedActions);
+    const sourceSignature = simulationSourceSignature({ actions, stateId, twin });
+    if (sourceSignature !== acceptedSourceSignature) {
+      return null;
+    }
+    return {
+      actions,
+      simulation: validateSimulationForRequestedActions({
+        expectedStateId: stateId,
+        requestedActions: actions,
+        response: simulation,
+      }),
+      sourceSignature,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function malformedDecisionError(message: string): CropTwinApiError {
   return new CropTwinApiError({
     kind: "malformed",
@@ -144,7 +192,7 @@ export function malformedDecisionError(message: string): CropTwinApiError {
   });
 }
 
-function assertNoDuplicateActions(actions: ActionEnum[], message: string): void {
+function assertNoDuplicateActions(actions: readonly ActionEnum[], message: string): void {
   const seen = new Set<ActionEnum>();
   for (const action of actions) {
     if (seen.has(action)) {

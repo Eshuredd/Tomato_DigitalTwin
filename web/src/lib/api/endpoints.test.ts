@@ -545,6 +545,17 @@ describe("CropTwinEndpoints", () => {
     });
   });
 
+  it("does not automatically retry failed simulation POST requests", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockRejectedValue(new TypeError("offline"));
+    const endpoints = new CropTwinEndpoints(new CropTwinApiClient({ baseUrl: "http://api", fetcher }));
+
+    await expect(endpoints.simulateActions("state 1/2", { actions: ["IRRIGATE_NOW"] })).rejects.toMatchObject({
+      code: "FRONTEND_NETWORK_ERROR",
+      kind: "network",
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it("posts recommendation without an unsupported body", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(recommendationResponse));
     const endpoints = new CropTwinEndpoints(new CropTwinApiClient({ baseUrl: "http://api", fetcher }));
@@ -597,5 +608,16 @@ describe("CropTwinEndpoints", () => {
       code: "RELATED_SIMULATION_NOT_FOUND",
       kind: "api",
     });
+  });
+
+  it("does not automatically retry failed recommendation POST requests", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockRejectedValue(new TypeError("offline"));
+    const endpoints = new CropTwinEndpoints(new CropTwinApiClient({ baseUrl: "http://api", fetcher }));
+
+    await expect(endpoints.recommend("state 1/2")).rejects.toMatchObject({
+      code: "FRONTEND_NETWORK_ERROR",
+      kind: "network",
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 });
