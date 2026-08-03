@@ -99,12 +99,12 @@ domain under `app.persistence.store`, with transaction-owning methods kept
 explicit in the operation modules. The Streamlit entrypoint remains
 `frontend/app.py` and is retained as the temporary legacy frontend. A Next.js
 migration is underway in `web/` and documented in
-`docs/nextjs-frontend-migration.md`; it now covers session, disease evidence,
-weather review, recent irrigation input, water-state computation, canonical
-twin-state update, one-day advancement, candidate action simulation, and
-deterministic recommendation workflows. Backend and Streamlit remain unchanged,
-and narration, history, action recording, farm management, plot management, and
-crop-cycle workflows remain in Streamlit until later migration phases.
+`docs/nextjs-frontend-migration.md`. Its fresh Milestone 1 foundation provides
+the generated OpenAPI contract workflow, centralized API transport, custom
+design system, route-based desktop shell, navigation, workflow-stepper
+foundation, and shared UI states. It intentionally does not implement feature
+workflows or claim parity. Backend and Streamlit remain unchanged and fully
+available while later milestones restore browser-tested capabilities.
 
 ## End-to-End Workflow
 
@@ -138,7 +138,7 @@ Supported simulation actions:
 | Disease model runtime | PyTorch / Torchvision |
 | Model architecture | MobileNetV3-Small |
 | Image handling | Pillow |
-| Frontend | Streamlit, Next.js Phase 5 |
+| Frontend | Streamlit, Next.js rebuild foundation |
 | HTTP client | httpx |
 | Testing | pytest |
 | State storage | SQLAlchemy persistent store, optional in-memory store |
@@ -160,21 +160,17 @@ npm ci
 npm run dev
 ```
 
-Set `NEXT_PUBLIC_CROPTWIN_API_BASE_URL` in `web/.env.local` when the FastAPI
+Set `NEXT_PUBLIC_API_BASE_URL` in `web/.env.local` when the FastAPI
 server is not available at `http://127.0.0.1:8000`. The FastAPI app controls all
 agronomy calculations, disease inference, recommendations, narration,
 validation, and persistence; the browser submits requests and renders API
-responses only. The Next.js app now includes the app shell, health check,
-session creation/loading, active-session summary, disease-image evidence
-workflow, weather review with nullable optional weather inputs, explicit recent
-irrigation validity, water-state computation, canonical twin-state update, and
-one-day advancement with pending-state, stale-response, idempotent-retry, and
-authoritative-twin refresh, canonical-lineage, and weather-provenance guards.
-Simulation, recommendation, narration,
-history, records, farms, and plots remain in Streamlit until later migration
-phases. Backend changes are deferred until Next.js reaches full Streamlit
-feature parity unless an existing API contract makes a frontend workflow
-impossible.
+responses only. The Next.js rebuild currently contains foundation and neutral
+route placeholders only. Farms, plots, crop cycles, session, disease, weather,
+water, twin advancement, simulation, recommendation, narration, history, and
+actual-action workflows remain available through Streamlit and are tracked for
+later browser-tested restoration in `docs/nextjs-parity-checklist.md`. Backend
+changes remain deferred unless an existing API contract makes a later frontend
+workflow impossible.
 
 ## Persistence
 

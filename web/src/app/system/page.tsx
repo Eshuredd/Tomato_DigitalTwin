@@ -1,0 +1,2 @@
+import { PlaceholderPage } from "@/components/app-shell/placeholder-page";
+export default function SystemPage() { return <PlaceholderPage eyebrow="Runtime transparency" title="System information" description="Inspect API, model, calibration, growth-stage, water-model, and narration-policy metadata." laterMilestone="Live health and system-information queries will be implemented in a later milestone" />; }

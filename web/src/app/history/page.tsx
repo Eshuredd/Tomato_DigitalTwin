@@ -1,0 +1,2 @@
+import { PlaceholderPage } from "@/components/app-shell/placeholder-page";
+export default function HistoryPage() { return <PlaceholderPage eyebrow="Authoritative records" title="History" description="Review immutable twin snapshots and evidence lineage without mixing them into the prerequisite sequence." laterMilestone="History retrieval and populated state tables will be implemented in a later milestone" />; }

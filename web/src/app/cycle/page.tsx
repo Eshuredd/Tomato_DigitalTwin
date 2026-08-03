@@ -1,0 +1,2 @@
+import { PlaceholderPage } from "@/components/app-shell/placeholder-page";
+export default function CyclePage() { return <PlaceholderPage eyebrow="Current context" title="Active crop cycle" description="A future workspace for the selected plot-backed or standalone tomato crop cycle and its authoritative current state." laterMilestone="Session selection and crop-cycle context will be implemented in a later milestone" />; }
