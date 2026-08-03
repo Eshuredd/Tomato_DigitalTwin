@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { workflowReducer } from "./workflow-reducer";
 import { initialWorkflowState, type WorkflowAction, type WorkflowState } from "./workflow-types";
+import {
+  recommendationSourceSignature,
+  simulationSourceSignature,
+} from "@/features/decision/decision-utils";
 import type {
   AdvanceOneDayResponse,
   DiseasePredictionResponse,
@@ -215,6 +219,18 @@ const recommendationState: RecommendationResponse = {
   recommended_at: "2026-07-31T02:10:00Z",
 };
 
+const acceptedSimulationActions = ["IRRIGATE_NOW"] as const;
+const acceptedSimulationSourceSignature = simulationSourceSignature({
+  actions: [...acceptedSimulationActions],
+  stateId: "state-a",
+  twin: twinState,
+});
+const acceptedRecommendationSourceSignature = recommendationSourceSignature({
+  simulation: simulationState,
+  stateId: "state-a",
+  twin: twinState,
+});
+
 describe("workflowReducer", () => {
   it("starts with no twin state", () => {
     expect(initialWorkflowState.twin).toBeNull();
@@ -225,8 +241,11 @@ describe("workflowReducer", () => {
     expect(initialWorkflowState.latestAdvancement).toBeNull();
     expect(initialWorkflowState.retainedAdvancement).toBeNull();
     expect(initialWorkflowState.simulation).toBeNull();
+    expect(initialWorkflowState.acceptedSimulationSourceSignature).toBeNull();
+    expect(initialWorkflowState.acceptedSimulationActions).toEqual([]);
     expect(initialWorkflowState.simulationPending).toBe(false);
     expect(initialWorkflowState.recommendation).toBeNull();
+    expect(initialWorkflowState.acceptedRecommendationSourceSignature).toBeNull();
     expect(initialWorkflowState.recommendationPending).toBe(false);
   });
 
@@ -899,7 +918,7 @@ describe("workflowReducer", () => {
       activeRecommendationSourceSignature: "recommendation-source",
       simulationPending: true,
       activeSimulationRequestId: "simulation-1",
-      activeSimulationSourceSignature: "simulation-source",
+      activeSimulationSourceSignature: acceptedSimulationSourceSignature,
     };
 
     const next = workflowReducer(pending, {
@@ -907,9 +926,13 @@ describe("workflowReducer", () => {
       stateId: "state-a",
       requestId: "simulation-1",
       simulation: simulationState,
+      actions: [...acceptedSimulationActions],
+      sourceSignature: acceptedSimulationSourceSignature,
     });
 
     expect(next.simulation).toBe(simulationState);
+    expect(next.acceptedSimulationSourceSignature).toBe(acceptedSimulationSourceSignature);
+    expect(next.acceptedSimulationActions).toEqual([...acceptedSimulationActions]);
     expect(next.simulationPending).toBe(false);
     expect(next.recommendation).toBeNull();
     expect(next.recommendationPending).toBe(false);
@@ -918,12 +941,24 @@ describe("workflowReducer", () => {
       stateId: "state-a",
       requestId: "older",
       simulation: simulationState,
+      actions: [...acceptedSimulationActions],
+      sourceSignature: acceptedSimulationSourceSignature,
     })).toBe(pending);
     expect(workflowReducer(pending, {
       type: "simulationReceived",
       stateId: "state-b",
       requestId: "simulation-1",
       simulation: { ...simulationState, state_id: "state-b" },
+      actions: [...acceptedSimulationActions],
+      sourceSignature: acceptedSimulationSourceSignature,
+    })).toBe(pending);
+    expect(workflowReducer(pending, {
+      type: "simulationReceived",
+      stateId: "state-a",
+      requestId: "simulation-1",
+      simulation: simulationState,
+      actions: [...acceptedSimulationActions],
+      sourceSignature: "wrong-source",
     })).toBe(pending);
   });
 
@@ -933,7 +968,10 @@ describe("workflowReducer", () => {
       activeStateId: "state-a",
       session: sessionA,
       simulation: simulationState,
+      acceptedSimulationSourceSignature,
+      acceptedSimulationActions: [...acceptedSimulationActions],
       recommendation: recommendationState,
+      acceptedRecommendationSourceSignature,
     };
 
     const next = workflowReducer(previous, {
@@ -942,7 +980,10 @@ describe("workflowReducer", () => {
     });
 
     expect(next.simulation).toBeNull();
+    expect(next.acceptedSimulationSourceSignature).toBeNull();
+    expect(next.acceptedSimulationActions).toEqual([]);
     expect(next.recommendation).toBeNull();
+    expect(next.acceptedRecommendationSourceSignature).toBeNull();
   });
 
   it("tracks and stores recommendation without clearing simulation", () => {
@@ -951,9 +992,11 @@ describe("workflowReducer", () => {
       activeStateId: "state-a",
       session: sessionA,
       simulation: simulationState,
+      acceptedSimulationSourceSignature,
+      acceptedSimulationActions: [...acceptedSimulationActions],
       recommendationPending: true,
       activeRecommendationRequestId: "recommendation-1",
-      activeRecommendationSourceSignature: "source-1",
+      activeRecommendationSourceSignature: acceptedRecommendationSourceSignature,
     };
 
     expect(workflowReducer(pending, {
@@ -973,9 +1016,11 @@ describe("workflowReducer", () => {
       stateId: "state-a",
       requestId: "recommendation-1",
       recommendation: recommendationState,
+      sourceSignature: acceptedRecommendationSourceSignature,
     });
 
     expect(next.recommendation).toBe(recommendationState);
+    expect(next.acceptedRecommendationSourceSignature).toBe(acceptedRecommendationSourceSignature);
     expect(next.simulation).toBe(simulationState);
     expect(next.recommendationPending).toBe(false);
     expect(workflowReducer(pending, {
@@ -983,6 +1028,14 @@ describe("workflowReducer", () => {
       stateId: "state-b",
       requestId: "recommendation-1",
       recommendation: { ...recommendationState, state_id: "state-b" },
+      sourceSignature: acceptedRecommendationSourceSignature,
+    })).toBe(pending);
+    expect(workflowReducer(pending, {
+      type: "recommendationReceived",
+      stateId: "state-a",
+      requestId: "recommendation-1",
+      recommendation: recommendationState,
+      sourceSignature: "wrong-source",
     })).toBe(pending);
   });
 
@@ -992,7 +1045,10 @@ describe("workflowReducer", () => {
       activeStateId: "state-a",
       session: sessionA,
       simulation: simulationState,
+      acceptedSimulationSourceSignature,
+      acceptedSimulationActions: [...acceptedSimulationActions],
       recommendation: recommendationState,
+      acceptedRecommendationSourceSignature,
     };
 
     const next = workflowReducer(previous, {
@@ -1001,7 +1057,9 @@ describe("workflowReducer", () => {
     });
 
     expect(next.simulation).toBe(simulationState);
+    expect(next.acceptedSimulationSourceSignature).toBe(acceptedSimulationSourceSignature);
     expect(next.recommendation).toBeNull();
+    expect(next.acceptedRecommendationSourceSignature).toBeNull();
   });
 
   it("canonical disease, water, twin and session changes clear decision state", () => {
@@ -1052,5 +1110,105 @@ describe("workflowReducer", () => {
 
     expect(next.simulation).toBe(simulationState);
     expect(next.recommendation).toBe(recommendationState);
+  });
+
+  it("preserves accepted decisions across equivalent canonical twin refreshes", () => {
+    const previous: WorkflowState = {
+      ...initialWorkflowState,
+      activeStateId: "state-a",
+      session: sessionA,
+      twin: twinState,
+      simulation: simulationState,
+      acceptedSimulationSourceSignature,
+      acceptedSimulationActions: [...acceptedSimulationActions],
+      recommendation: recommendationState,
+      acceptedRecommendationSourceSignature,
+    };
+
+    const equivalentTwin = {
+      ...twinState,
+      snapshot_created: false,
+      current_state: { ...twinState.current_state },
+    };
+    const next = workflowReducer(previous, {
+      type: "twinReceived",
+      stateId: "state-a",
+      twin: equivalentTwin,
+    });
+
+    expect(next.twin).toBe(equivalentTwin);
+    expect(next.simulation).toBe(simulationState);
+    expect(next.acceptedSimulationSourceSignature).toBe(acceptedSimulationSourceSignature);
+    expect(next.recommendation).toBe(recommendationState);
+    expect(next.acceptedRecommendationSourceSignature).toBe(acceptedRecommendationSourceSignature);
+  });
+
+  it("clears accepted decisions when canonical twin decision source changes", () => {
+    const previous: WorkflowState = {
+      ...initialWorkflowState,
+      activeStateId: "state-a",
+      session: sessionA,
+      twin: twinState,
+      simulation: simulationState,
+      acceptedSimulationSourceSignature,
+      acceptedSimulationActions: [...acceptedSimulationActions],
+      recommendation: recommendationState,
+      acceptedRecommendationSourceSignature,
+    };
+
+    const next = workflowReducer(previous, {
+      type: "twinReceived",
+      stateId: "state-a",
+      twin: {
+        ...twinState,
+        current_state: {
+          ...twinState.current_state,
+          root_zone_depletion: twinState.current_state.root_zone_depletion + 1,
+        },
+      },
+    });
+
+    expect(next.simulation).toBeNull();
+    expect(next.acceptedSimulationSourceSignature).toBeNull();
+    expect(next.acceptedSimulationActions).toEqual([]);
+    expect(next.recommendation).toBeNull();
+    expect(next.acceptedRecommendationSourceSignature).toBeNull();
+  });
+
+  it("clears accepted decisions when catch-up refresh fails and canonical twin is intentionally null", () => {
+    const previous: WorkflowState = {
+      ...initialWorkflowState,
+      activeStateId: "state-a",
+      session: sessionA,
+      water: waterState,
+      twin: twinState,
+      simulation: simulationState,
+      acceptedSimulationSourceSignature,
+      acceptedSimulationActions: [...acceptedSimulationActions],
+      recommendation: recommendationState,
+      acceptedRecommendationSourceSignature,
+      advancementPending: true,
+      activeAdvancementRequestId: "advancement-1",
+    };
+
+    const next = workflowReducer(previous, {
+      type: "advancementApplied",
+      stateId: "state-a",
+      requestId: "advancement-1",
+      response: advancementState,
+      canonicalWater: advancementState.water_state,
+      canonicalTwin: null,
+      retainedResponse: null,
+      notice: "refresh failed",
+      transitionKind: "catch_up_retry",
+      twinRefreshStatus: "failed",
+    });
+
+    expect(next.water).toBe(advancementState.water_state);
+    expect(next.twin).toBeNull();
+    expect(next.simulation).toBeNull();
+    expect(next.acceptedSimulationSourceSignature).toBeNull();
+    expect(next.recommendation).toBeNull();
+    expect(next.acceptedRecommendationSourceSignature).toBeNull();
   });
 });

@@ -1,5 +1,6 @@
 import type {
   AdvanceOneDayResponse,
+  ActionEnum,
   RecommendationResponse,
   DiseasePredictionResponse,
   SessionResponse,
@@ -47,10 +48,13 @@ export interface WorkflowState {
   advancementTransitionKind: AdvancementTransitionKind | null;
   advancementTwinRefreshStatus: TwinRefreshStatus | null;
   simulation: SimulateActionsResponse | null;
+  acceptedSimulationSourceSignature: string | null;
+  acceptedSimulationActions: ActionEnum[];
   simulationPending: boolean;
   activeSimulationRequestId: string | null;
   activeSimulationSourceSignature: string | null;
   recommendation: RecommendationResponse | null;
+  acceptedRecommendationSourceSignature: string | null;
   recommendationPending: boolean;
   activeRecommendationRequestId: string | null;
   activeRecommendationSourceSignature: string | null;
@@ -152,6 +156,8 @@ export type WorkflowAction =
       stateId: string;
       requestId: string;
       simulation: SimulateActionsResponse;
+      actions: ActionEnum[];
+      sourceSignature: string;
     }
   | {
       type: "simulationInvalidated";
@@ -173,6 +179,7 @@ export type WorkflowAction =
       stateId: string;
       requestId: string;
       recommendation: RecommendationResponse;
+      sourceSignature: string;
     }
   | {
       type: "recommendationInvalidated";
@@ -209,10 +216,13 @@ export const initialWorkflowState: WorkflowState = {
   advancementTransitionKind: null,
   advancementTwinRefreshStatus: null,
   simulation: null,
+  acceptedSimulationSourceSignature: null,
+  acceptedSimulationActions: [],
   simulationPending: false,
   activeSimulationRequestId: null,
   activeSimulationSourceSignature: null,
   recommendation: null,
+  acceptedRecommendationSourceSignature: null,
   recommendationPending: false,
   activeRecommendationRequestId: null,
   activeRecommendationSourceSignature: null,

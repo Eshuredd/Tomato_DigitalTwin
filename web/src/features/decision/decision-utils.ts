@@ -1,4 +1,5 @@
 import { CropTwinApiError } from "@/lib/api/errors";
+import { canonicalTwinDecisionSignature } from "@/features/workflow/decision-signatures";
 import type {
   ActionEnum,
   RecommendationResponse,
@@ -6,6 +7,8 @@ import type {
   SimulateActionsResponse,
   UpdateTwinStateResponse,
 } from "@/lib/types/api";
+
+export { canonicalTwinDecisionSignature };
 
 export const ACTION_ORDER = [
   "IRRIGATE_NOW",
@@ -40,36 +43,6 @@ export function normalizeRequestedActions(actions: ActionEnum[]): ActionEnum[] {
     throw malformedDecisionError("Select at least one candidate action to simulate.");
   }
   return normalized;
-}
-
-export function canonicalTwinDecisionSignature({
-  stateId,
-  twin,
-}: {
-  stateId: string;
-  twin: UpdateTwinStateResponse;
-}): string {
-  return stableStringify({
-    state_id: stateId,
-    snapshot_id: twin.snapshot_id ?? null,
-    current_state: {
-      observed_at: twin.current_state.observed_at,
-      computed_at: twin.current_state.computed_at,
-      last_update_time: twin.current_state.last_update_time,
-      growth_stage: twin.current_state.growth_stage,
-      predicted_label: twin.current_state.predicted_label,
-      disease_category: twin.current_state.disease_category,
-      confidence_calibrated: twin.current_state.confidence_calibrated,
-      uncertainty_score: twin.current_state.uncertainty_score,
-      uncertainty_band: twin.current_state.uncertainty_band,
-      eto_computed: twin.current_state.eto_computed,
-      etc: twin.current_state.etc,
-      taw: twin.current_state.taw,
-      raw_threshold: twin.current_state.raw_threshold,
-      root_zone_depletion: twin.current_state.root_zone_depletion,
-      stress_band: twin.current_state.stress_band,
-    },
-  });
 }
 
 export function simulationSourceSignature({

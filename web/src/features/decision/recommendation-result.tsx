@@ -6,7 +6,6 @@ import type { JsonObject } from "@/lib/types/common";
 import {
   ACTION_LABELS,
   CAUTION_REASON_LABELS,
-  IRRIGATION_CONSTRAINT_LABELS,
 } from "./decision-utils";
 
 export function RecommendationResult({
@@ -25,6 +24,12 @@ export function RecommendationResult({
     );
   }
 
+  const constraintText = {
+    NONE: "No additional irrigation-method constraint was returned.",
+    AVOID_OVERHEAD_IRRIGATION: "Avoid overhead irrigation.",
+    PREFER_EARLY_MORNING_WINDOW: "Prefer an early-morning irrigation window.",
+  }[result.irrigation_constraint];
+
   return (
     <div className="grid gap-4">
       <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-4">
@@ -36,11 +41,13 @@ export function RecommendationResult({
             { term: "Action value", description: result.chosen_action },
             {
               term: "Irrigation constraint",
-              description: IRRIGATION_CONSTRAINT_LABELS[result.irrigation_constraint],
+              description: constraintText,
             },
             {
               term: "Inspection advisory",
-              description: result.inspection_advisory ? "Inspect crop conditions" : "No inspection advisory",
+              description: result.inspection_advisory
+                ? "Field inspection is advised; disease is not confirmed by this output."
+                : "No inspection advisory was returned.",
             },
             { term: "Recommended at", description: result.recommended_at },
             { term: "Recommendation ID", description: result.recommendation_id ?? "None" },
@@ -66,7 +73,7 @@ export function RecommendationResult({
             <ul className="mt-3 grid gap-2 text-sm text-[var(--color-muted)]">
               {result.caution_reasons.map((reason) => (
                 <li className="break-words" key={reason}>
-                  {CAUTION_REASON_LABELS[reason]} ({reason})
+                  {cautionText(reason)} ({reason})
                 </li>
               ))}
             </ul>
@@ -76,8 +83,16 @@ export function RecommendationResult({
         </div>
       </div>
       <Notice>
-        This deterministic recommendation is returned by FastAPI from the
-        accepted simulation. It is not generated narration.
+        FastAPI&apos;s deterministic recommendation engine selected the action. The
+        browser did not rank or choose an action.
+      </Notice>
+      <Notice>
+        Disease evidence may constrain irrigation timing or irrigation method.
+        Disease evidence does not replace deterministic water-state logic.
+      </Notice>
+      <Notice tone="warning">
+        This output is not pesticide, fertiliser or disease-treatment advice.
+        Farmer-readable narration remains a separate workflow stage.
       </Notice>
       <TechnicalDetails
         summary="Recommendation response"
@@ -85,4 +100,11 @@ export function RecommendationResult({
       />
     </div>
   );
+}
+
+function cautionText(reason: keyof typeof CAUTION_REASON_LABELS): string {
+  if (reason === "HIGH_UNCERTAINTY") {
+    return "Disease evidence has high uncertainty; this is not a diagnosis.";
+  }
+  return "Wetness-sensitive fungal-risk evidence influenced the constraint; no treatment advice is provided.";
 }

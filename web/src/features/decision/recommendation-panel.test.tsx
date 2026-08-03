@@ -10,6 +10,10 @@ import type {
   UpdateTwinStateResponse,
 } from "@/lib/types/api";
 import { RecommendationPanel, type RecommendationPanelEndpoints } from "./recommendation-panel";
+import {
+  recommendationSourceSignature,
+  simulationSourceSignature,
+} from "./decision-utils";
 
 const twin = {
   state_id: "state-a",
@@ -72,6 +76,18 @@ const recommendation: RecommendationResponse = {
   recommended_at: "2026-07-31T02:10:00Z",
 };
 
+const acceptedSimulationActions = ["IRRIGATE_NOW"] as const;
+const acceptedSimulationSourceSignature = simulationSourceSignature({
+  actions: [...acceptedSimulationActions],
+  stateId: "state-a",
+  twin,
+});
+const acceptedRecommendationSourceSignature = recommendationSourceSignature({
+  simulation,
+  stateId: "state-a",
+  twin,
+});
+
 function endpoints(response: RecommendationResponse = recommendation): RecommendationPanelEndpoints {
   return {
     recommend: vi.fn().mockResolvedValue(response),
@@ -96,6 +112,9 @@ function renderPanel(api = endpoints(), overrides = {}) {
           },
           twin,
           simulation,
+          acceptedSimulationActions: [...acceptedSimulationActions],
+          acceptedSimulationSourceSignature,
+          acceptedRecommendationSourceSignature,
           ...overrides,
         }}
       >
@@ -120,11 +139,11 @@ describe("RecommendationPanel", () => {
     expect(api.recommend).toHaveBeenCalledTimes(1);
     expect(screen.getByText("Irrigate now")).toBeInTheDocument();
     expect(screen.getByText("IRRIGATE_NOW")).toBeInTheDocument();
-    expect(screen.getByText("Avoid overhead irrigation")).toBeInTheDocument();
-    expect(screen.getByText("Inspect crop conditions")).toBeInTheDocument();
-    expect(screen.getByText(/Fungal disease risk/)).toBeInTheDocument();
-    expect(screen.queryByText(/pesticide/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/treatment/i)).not.toBeInTheDocument();
+    expect(screen.getByText("Avoid overhead irrigation.")).toBeInTheDocument();
+    expect(screen.getByText("Field inspection is advised; disease is not confirmed by this output.")).toBeInTheDocument();
+    expect(screen.getByText(/Wetness-sensitive fungal-risk evidence influenced the constraint/)).toBeInTheDocument();
+    expect(screen.getByText(/FastAPI's deterministic recommendation engine selected the action/)).toBeInTheDocument();
+    expect(screen.getByText(/not pesticide, fertiliser or disease-treatment advice/)).toBeInTheDocument();
   });
 
   it("is disabled without a usable accepted simulation", () => {

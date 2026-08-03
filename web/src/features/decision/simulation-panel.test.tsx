@@ -1,11 +1,17 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { WorkflowProvider } from "@/features/workflow/workflow-context";
 import { initialWorkflowState } from "@/features/workflow/workflow-types";
 import { CropTwinApiError } from "@/lib/api/errors";
-import type { SimulateActionsResponse, UpdateTwinStateResponse } from "@/lib/types/api";
+import type { RecommendationResponse, SimulateActionsResponse, UpdateTwinStateResponse } from "@/lib/types/api";
 import { SimulationPanel, type SimulationPanelEndpoints } from "./simulation-panel";
+import {
+  ACTION_ORDER,
+  recommendationSourceSignature,
+  simulationSourceSignature,
+} from "./decision-utils";
 
 const twin: UpdateTwinStateResponse = {
   state_id: "state-a",
@@ -64,6 +70,41 @@ const simulation: SimulateActionsResponse = {
   ],
 };
 
+const allActionsSimulation: SimulateActionsResponse = {
+  ...simulation,
+  simulations: ACTION_ORDER.map((action, index) => ({
+    action,
+    projected_root_zone_depletion: 10 + index,
+    projected_raw_crossing: false,
+    projected_stress_band: "low",
+    projected_water_use: action === "NO_IRRIGATION_24H" ? 0 : 10,
+    disease_wetness_risk_note: "note",
+  })),
+};
+
+const recommendation: RecommendationResponse = {
+  state_id: "state-a",
+  chosen_action: "IRRIGATE_NOW",
+  irrigation_constraint: "NONE",
+  inspection_advisory: false,
+  decision_reason_codes: ["CURRENT_DEPLETION_EXCEEDS_RAW"],
+  caution_reasons: [],
+  evidence_summary_structured: {},
+  recommended_at: "2026-07-31T02:10:00Z",
+};
+
+const allActionsSimulationSourceSignature = simulationSourceSignature({
+  actions: [...ACTION_ORDER],
+  stateId: "state-a",
+  twin,
+});
+
+const allActionsRecommendationSourceSignature = recommendationSourceSignature({
+  simulation: allActionsSimulation,
+  stateId: "state-a",
+  twin,
+});
+
 function endpoints(response: SimulateActionsResponse = simulation): SimulationPanelEndpoints {
   return {
     simulateActions: vi.fn().mockResolvedValue(response),
@@ -119,6 +160,84 @@ describe("SimulationPanel", () => {
     expect(screen.getByRole("heading", { name: "No irrigation for 24 hours" })).toBeInTheDocument();
     expect(screen.getAllByText("IRRIGATE_NOW").length).toBeGreaterThan(0);
     expect(screen.queryByText(/best action/i)).not.toBeInTheDocument();
+  });
+
+  it("invalidates accepted decisions when the selected action set changes and resubmits only the new set", async () => {
+    const user = userEvent.setup();
+    const nextSimulation = {
+      ...allActionsSimulation,
+      simulations: allActionsSimulation.simulations.filter((result) => result.action !== "IRRIGATE_IN_6H"),
+    };
+    const { api } = renderPanel(endpoints(nextSimulation), {
+      simulation: allActionsSimulation,
+      acceptedSimulationSourceSignature: allActionsSimulationSourceSignature,
+      acceptedSimulationActions: [...ACTION_ORDER],
+      recommendation,
+      acceptedRecommendationSourceSignature: allActionsRecommendationSourceSignature,
+    });
+
+    expect(screen.getByRole("heading", { name: "Irrigate in 6 hours" })).toBeInTheDocument();
+    await user.click(screen.getByLabelText(/Irrigate in 6 hours/));
+
+    expect(screen.getByRole("heading", { name: "No candidate projections yet" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Irrigate in 6 hours" })).not.toBeInTheDocument();
+    expect(api.simulateActions).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Simulate selected actions" }));
+    await waitFor(() => expect(api.simulateActions).toHaveBeenCalledWith(
+      "state-a",
+      { actions: ["IRRIGATE_NOW", "IRRIGATE_TOMORROW_AM", "NO_IRRIGATION_24H"] },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    ));
+  });
+
+  it("preserves accepted decisions when remounted with the same canonical source", async () => {
+    const user = userEvent.setup();
+    const api = endpoints();
+
+    function Harness() {
+      const [visible, setVisible] = useState(true);
+      return (
+        <>
+          <button type="button" onClick={() => setVisible((current) => !current)}>
+            Toggle panel
+          </button>
+          {visible ? <SimulationPanel endpoints={api} /> : null}
+        </>
+      );
+    }
+
+    render(
+      <WorkflowProvider
+        initialState={{
+          ...initialWorkflowState,
+          activeStateId: "state-a",
+          session: {
+            state_id: "state-a",
+            crop_type: "tomato",
+            planting_date: "2026-07-01",
+            location: { name: "Farm", latitude: 17, longitude: 78 },
+            soil_texture: "sandy_loam",
+            created_at: "2026-07-31T00:00:00Z",
+          },
+          twin,
+          simulation: allActionsSimulation,
+          acceptedSimulationSourceSignature: allActionsSimulationSourceSignature,
+          acceptedSimulationActions: [...ACTION_ORDER],
+          recommendation,
+          acceptedRecommendationSourceSignature: allActionsRecommendationSourceSignature,
+        }}
+      >
+        <Harness />
+      </WorkflowProvider>,
+    );
+
+    expect(screen.getByRole("heading", { name: "Irrigate in 6 hours" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Toggle panel" }));
+    await user.click(screen.getByRole("button", { name: "Toggle panel" }));
+
+    expect(screen.getByRole("heading", { name: "Irrigate in 6 hours" })).toBeInTheDocument();
+    expect(api.simulateActions).not.toHaveBeenCalled();
   });
 
   it("requires at least one selected action", async () => {

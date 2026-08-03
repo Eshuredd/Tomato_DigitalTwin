@@ -10,7 +10,9 @@ import { createBrowserEndpoints } from "@/lib/api/browser";
 import { CropTwinApiError } from "@/lib/api/errors";
 import type { CropTwinEndpoints } from "@/lib/api/endpoints";
 import {
+  canonicalTwinDecisionSignature,
   recommendationSourceSignature,
+  simulationSourceSignature,
   validateRecommendationAgainstSimulation,
 } from "./decision-utils";
 import { RecommendationResult } from "./recommendation-result";
@@ -31,6 +33,8 @@ export function RecommendationPanel({
     recommendation,
     recommendationPending,
     simulation,
+    acceptedSimulationActions,
+    acceptedSimulationSourceSignature,
     simulationPending,
     twin,
     twinUpdatePending,
@@ -43,13 +47,50 @@ export function RecommendationPanel({
   const abortRef = useRef<AbortController | null>(null);
   const currentRequestRef = useRef<{ stateId: string; requestId: string } | null>(null);
   const sourceSignatureRef = useRef<string | null>(null);
+  const twinSignatureRef = useRef<string | null>(null);
+  const simulationRef = useRef(simulation);
+  const acceptedSimulationSourceRef = useRef(acceptedSimulationSourceSignature);
+
+  const twinSignature = useMemo(() => {
+    if (!activeStateId || !twin) {
+      return null;
+    }
+    return canonicalTwinDecisionSignature({ stateId: activeStateId, twin });
+  }, [activeStateId, twin]);
+
+  const simulationSourceProof = useMemo(() => {
+    if (
+      !activeStateId ||
+      !twin ||
+      !simulation ||
+      simulation.state_id !== activeStateId ||
+      simulation.simulations.length === 0 ||
+      !acceptedSimulationSourceSignature ||
+      acceptedSimulationActions.length === 0
+    ) {
+      return null;
+    }
+    const currentSimulationSource = simulationSourceSignature({
+      actions: acceptedSimulationActions,
+      stateId: activeStateId,
+      twin,
+    });
+    const simulationActions = simulation.simulations.map((result) => result.action);
+    if (
+      currentSimulationSource !== acceptedSimulationSourceSignature ||
+      !sameActionList(simulationActions, acceptedSimulationActions)
+    ) {
+      return null;
+    }
+    return currentSimulationSource;
+  }, [acceptedSimulationActions, acceptedSimulationSourceSignature, activeStateId, simulation, twin]);
 
   const sourceSignature = useMemo(() => {
-    if (!activeStateId || !twin || !simulation || simulation.state_id !== activeStateId || simulation.simulations.length === 0) {
+    if (!activeStateId || !twin || !simulation || !simulationSourceProof) {
       return null;
     }
     return recommendationSourceSignature({ stateId: activeStateId, twin, simulation });
-  }, [activeStateId, simulation, twin]);
+  }, [activeStateId, simulation, simulationSourceProof, twin]);
 
   useEffect(() => {
     activeStateRef.current = activeStateId;
@@ -72,6 +113,18 @@ export function RecommendationPanel({
   useEffect(() => {
     sourceSignatureRef.current = sourceSignature;
   }, [sourceSignature]);
+
+  useEffect(() => {
+    twinSignatureRef.current = twinSignature;
+  }, [twinSignature]);
+
+  useEffect(() => {
+    simulationRef.current = simulation;
+  }, [simulation]);
+
+  useEffect(() => {
+    acceptedSimulationSourceRef.current = acceptedSimulationSourceSignature;
+  }, [acceptedSimulationSourceSignature]);
 
   useEffect(() => {
     return () => {
@@ -100,7 +153,7 @@ export function RecommendationPanel({
 
   async function submitRecommendation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!activeStateId || !simulation || !sourceSignature || recommendationPending || simulationPending) {
+    if (!activeStateId || !simulation || !sourceSignature || !acceptedSimulationSourceSignature || disabledByPending) {
       return;
     }
 
@@ -108,6 +161,9 @@ export function RecommendationPanel({
     const requestNumber = requestRef.current + 1;
     const requestId = `recommendation-${requestNumber}`;
     const requestSignature = sourceSignature;
+    const requestTwinSignature = twinSignature;
+    const requestSimulation = simulation;
+    const requestSimulationSourceSignature = acceptedSimulationSourceSignature;
     requestRef.current = requestNumber;
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -129,7 +185,10 @@ export function RecommendationPanel({
       if (
         activeStateRef.current !== requestStateId ||
         requestRef.current !== requestNumber ||
-        sourceSignatureRef.current !== requestSignature
+        sourceSignatureRef.current !== requestSignature ||
+        twinSignatureRef.current !== requestTwinSignature ||
+        simulationRef.current !== requestSimulation ||
+        acceptedSimulationSourceRef.current !== requestSimulationSourceSignature
       ) {
         return;
       }
@@ -143,6 +202,7 @@ export function RecommendationPanel({
         stateId: requestStateId,
         requestId,
         recommendation: accepted,
+        sourceSignature: requestSignature,
       });
     } catch (caught) {
       if (caught instanceof CropTwinApiError && caught.kind === "abort") {
@@ -182,6 +242,11 @@ export function RecommendationPanel({
             {!activeStateId ? <Notice tone="warning">Create or load an active session before recommendation.</Notice> : null}
             {activeStateId && !twin ? <Notice tone="warning">Update canonical twin state before recommendation.</Notice> : null}
             {activeStateId && twin && !simulation ? <Notice tone="warning">Simulate candidate actions before recommendation.</Notice> : null}
+            {activeStateId && twin && simulation && !sourceSignature ? (
+              <Notice tone="warning">
+                Run candidate-action simulation for the current canonical twin before requesting a recommendation.
+              </Notice>
+            ) : null}
             {simulation && simulation.simulations.length === 0 ? <Notice tone="warning">Accepted simulation must contain at least one result.</Notice> : null}
           </div>
           <form className="mt-5" onSubmit={submitRecommendation}>
@@ -205,4 +270,8 @@ export function RecommendationPanel({
       </div>
     </Panel>
   );
+}
+
+function sameActionList(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((action, index) => action === right[index]);
 }

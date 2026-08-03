@@ -3,6 +3,7 @@ import {
   type WorkflowAction,
   type WorkflowState,
 } from "./workflow-types";
+import { canonicalTwinDecisionSignature } from "./decision-signatures";
 
 export function workflowReducer(
   state: WorkflowState,
@@ -186,13 +187,17 @@ export function workflowReducer(
         activeTwinRequestId: null,
         activeTwinSourceSignature: null,
       };
-    case "twinReceived":
+    case "twinReceived": {
       if (
         state.activeStateId !== action.stateId ||
         action.twin.state_id !== action.stateId
       ) {
         return state;
       }
+      const previousSignature = state.twin
+        ? canonicalTwinDecisionSignature({ stateId: action.stateId, twin: state.twin })
+        : null;
+      const nextSignature = canonicalTwinDecisionSignature({ stateId: action.stateId, twin: action.twin });
       return {
         ...state,
         twin: action.twin,
@@ -200,8 +205,9 @@ export function workflowReducer(
         activeTwinRequestId: null,
         activeTwinSourceSignature: null,
         ...clearAdvancementLocalState(),
-        ...clearDecisionLocalState(),
+        ...(previousSignature === nextSignature ? {} : clearDecisionLocalState()),
       };
+    }
     case "twinInvalidated":
       if (state.activeStateId !== action.stateId) {
         return state;
@@ -236,7 +242,7 @@ export function workflowReducer(
         activeAdvancementRequestId: null,
         activeAdvancementRequestSignature: null,
       };
-    case "advancementApplied":
+    case "advancementApplied": {
       if (
         state.activeStateId !== action.stateId ||
         state.activeAdvancementRequestId !== action.requestId ||
@@ -244,6 +250,20 @@ export function workflowReducer(
       ) {
         return state;
       }
+      const nextTwin = Object.hasOwn(action, "canonicalTwin")
+        ? action.canonicalTwin ?? null
+        : state.twin;
+      const previousSignature = state.twin
+        ? canonicalTwinDecisionSignature({ stateId: action.stateId, twin: state.twin })
+        : null;
+      const nextSignature = nextTwin
+        ? canonicalTwinDecisionSignature({ stateId: action.stateId, twin: nextTwin })
+        : null;
+      const canonicalWaterSupplied = Object.hasOwn(action, "canonicalWater");
+      const canonicalTwinSupplied = Object.hasOwn(action, "canonicalTwin");
+      const shouldClearDecisionState =
+        (canonicalTwinSupplied && nextSignature !== previousSignature) ||
+        (canonicalWaterSupplied && !nextTwin);
       return {
         ...state,
         water: Object.hasOwn(action, "canonicalWater")
@@ -266,8 +286,9 @@ export function workflowReducer(
         advancementNotice: action.notice,
         advancementTransitionKind: action.transitionKind,
         advancementTwinRefreshStatus: action.twinRefreshStatus,
-        ...(action.canonicalTwin ? clearDecisionLocalState() : {}),
+        ...(shouldClearDecisionState ? clearDecisionLocalState() : {}),
       };
+    }
     case "simulationStarted":
       if (state.activeStateId !== action.stateId) {
         return state;
@@ -295,6 +316,7 @@ export function workflowReducer(
       if (
         state.activeStateId !== action.stateId ||
         state.activeSimulationRequestId !== action.requestId ||
+        state.activeSimulationSourceSignature !== action.sourceSignature ||
         action.simulation.state_id !== action.stateId
       ) {
         return state;
@@ -302,6 +324,8 @@ export function workflowReducer(
       return {
         ...state,
         simulation: action.simulation,
+        acceptedSimulationSourceSignature: action.sourceSignature,
+        acceptedSimulationActions: action.actions,
         simulationPending: false,
         activeSimulationRequestId: null,
         activeSimulationSourceSignature: null,
@@ -342,6 +366,7 @@ export function workflowReducer(
       if (
         state.activeStateId !== action.stateId ||
         state.activeRecommendationRequestId !== action.requestId ||
+        state.activeRecommendationSourceSignature !== action.sourceSignature ||
         action.recommendation.state_id !== action.stateId
       ) {
         return state;
@@ -349,6 +374,7 @@ export function workflowReducer(
       return {
         ...state,
         recommendation: action.recommendation,
+        acceptedRecommendationSourceSignature: action.sourceSignature,
         recommendationPending: false,
         activeRecommendationRequestId: null,
         activeRecommendationSourceSignature: null,
@@ -419,6 +445,8 @@ function clearAdvancementLocalState() {
 function clearDecisionLocalState() {
   return {
     simulation: null,
+    acceptedSimulationSourceSignature: null,
+    acceptedSimulationActions: [],
     simulationPending: false,
     activeSimulationRequestId: null,
     activeSimulationSourceSignature: null,
@@ -426,6 +454,8 @@ function clearDecisionLocalState() {
   } satisfies Pick<
     WorkflowState,
     | "simulation"
+    | "acceptedSimulationSourceSignature"
+    | "acceptedSimulationActions"
     | "simulationPending"
     | "activeSimulationRequestId"
     | "activeSimulationSourceSignature"
@@ -439,12 +469,14 @@ function clearDecisionLocalState() {
 function clearRecommendationLocalState() {
   return {
     recommendation: null,
+    acceptedRecommendationSourceSignature: null,
     recommendationPending: false,
     activeRecommendationRequestId: null,
     activeRecommendationSourceSignature: null,
   } satisfies Pick<
     WorkflowState,
     | "recommendation"
+    | "acceptedRecommendationSourceSignature"
     | "recommendationPending"
     | "activeRecommendationRequestId"
     | "activeRecommendationSourceSignature"

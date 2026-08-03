@@ -35,6 +35,7 @@ export function SimulationPanel({
     diseaseRequestPending,
     recommendationPending,
     simulation,
+    acceptedSimulationActions,
     simulationPending,
     twin,
     twinUpdatePending,
@@ -48,6 +49,7 @@ export function SimulationPanel({
   const abortRef = useRef<AbortController | null>(null);
   const currentRequestRef = useRef<{ stateId: string; requestId: string } | null>(null);
   const sourceSignatureRef = useRef<string | null>(null);
+  const twinSignatureRef = useRef<string | null>(null);
 
   const twinSignature = useMemo(() => {
     if (!activeStateId || !twin) {
@@ -81,9 +83,6 @@ export function SimulationPanel({
       });
     }
     currentRequestRef.current = null;
-    if (activeStateId) {
-      dispatch({ type: "simulationInvalidated", stateId: activeStateId });
-    }
     const timeoutId = window.setTimeout(() => {
       setError(null);
       setSelectedActions([...ACTION_ORDER]);
@@ -94,6 +93,10 @@ export function SimulationPanel({
   useEffect(() => {
     sourceSignatureRef.current = sourceSignature;
   }, [sourceSignature]);
+
+  useEffect(() => {
+    twinSignatureRef.current = twinSignature;
+  }, [twinSignature]);
 
   useEffect(() => {
     return () => {
@@ -125,13 +128,21 @@ export function SimulationPanel({
       const selected = current.includes(action)
         ? current.filter((item) => item !== action)
         : [...current, action];
-      return ACTION_ORDER.filter((item) => selected.includes(item));
+      const normalized = ACTION_ORDER.filter((item) => selected.includes(item));
+      if (
+        activeStateId &&
+        simulation &&
+        !sameActionSet(normalized, acceptedSimulationActions)
+      ) {
+        dispatch({ type: "simulationInvalidated", stateId: activeStateId });
+      }
+      return normalized;
     });
   }
 
   async function submitSimulation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!activeStateId || !twin || !sourceSignature || simulationPending || recommendationPending) {
+    if (!activeStateId || !twin || !sourceSignature || disabledByPending) {
       return;
     }
     let requestedActions: ActionEnum[];
@@ -146,6 +157,7 @@ export function SimulationPanel({
     const requestNumber = requestRef.current + 1;
     const requestId = `simulation-${requestNumber}`;
     const requestSignature = sourceSignature;
+    const requestTwinSignature = twinSignature;
     requestRef.current = requestNumber;
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -169,7 +181,8 @@ export function SimulationPanel({
       if (
         activeStateRef.current !== requestStateId ||
         requestRef.current !== requestNumber ||
-        sourceSignatureRef.current !== requestSignature
+        sourceSignatureRef.current !== requestSignature ||
+        twinSignatureRef.current !== requestTwinSignature
       ) {
         return;
       }
@@ -183,6 +196,8 @@ export function SimulationPanel({
         stateId: requestStateId,
         requestId,
         simulation: accepted,
+        actions: requestedActions,
+        sourceSignature: requestSignature,
       });
     } catch (caught) {
       if (caught instanceof CropTwinApiError && caught.kind === "abort") {
@@ -261,4 +276,11 @@ export function SimulationPanel({
       </div>
     </Panel>
   );
+}
+
+function sameActionSet(left: ActionEnum[], right: ActionEnum[]): boolean {
+  const normalizedLeft = ACTION_ORDER.filter((action) => left.includes(action));
+  const normalizedRight = ACTION_ORDER.filter((action) => right.includes(action));
+  return normalizedLeft.length === normalizedRight.length &&
+    normalizedLeft.every((action, index) => action === normalizedRight[index]);
 }
