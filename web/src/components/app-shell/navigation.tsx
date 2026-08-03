@@ -21,5 +21,6 @@ export const navigationItems: NavigationItem[] = [
 ];
 
 export function navigationItemForPath(pathname: string) {
-  return navigationItems.find((item) => item.href === pathname) ?? navigationItems[0];
+  if (pathname.startsWith("/plots/")) return navigationItems.find((item) => item.href === "/farms")!;
+  return navigationItems.find((item) => item.href === pathname || (item.href !== "/" && pathname.startsWith(`${item.href}/`))) ?? navigationItems[0];
 }

@@ -1,14 +1,14 @@
 # CropTwin Next.js parity checklist
 
-This checklist records the FastAPI and Streamlit behavior that later rebuild milestones must restore. Milestone 1 implements only the frontend foundation, application shell, navigation, reusable workflow stepper, and shared UI states. No feature row below is considered implemented or browser verified yet.
+This checklist records the FastAPI and Streamlit behavior that the rebuild must restore. Milestone 2 implements the management and session-entry rows noted below; later agronomy workflows remain unimplemented.
 
 | Capability | Authoritative API | Implemented | Browser verified | Notes that must survive |
 |---|---|---:|---:|---|
-| Health and runtime metadata | `GET /health`, `GET /system-info` | No | No | Keep backend authority and explicit decision boundary. |
-| Farms | `POST /farms`, `GET /farms`, `GET /farms/{farm_id}` | No | No | IDs and timestamps come only from FastAPI. |
-| Plots | `POST/GET /farms/{farm_id}/plots`, `GET /plots/{plot_id}` | No | No | Preserve stored location, elevation, and soil texture. |
-| Plot-backed crop cycle | `POST /plots/{plot_id}/crop-cycles` | No | No | Do not replace with fabricated standalone IDs. |
-| Standalone session | `POST /sessions`, `GET /sessions/{state_id}` | No | No | FastAPI resolves and validates elevation. |
+| Health and runtime metadata | `GET /health`, `GET /system-info` | Yes | Yes | Browser-visible queries; explicit retry, base URL, and decision boundary. |
+| Farms | `POST /farms`, `GET /farms`, `GET /farms/{farm_id}` | Yes | Yes | Empty/list/create/detail exercised against isolated FastAPI. |
+| Plots | `POST/GET /farms/{farm_id}/plots`, `GET /plots/{plot_id}` | Yes | Yes | Create/list/detail and stored location/soil context exercised. |
+| Plot-backed crop cycle | `POST /plots/{plot_id}/crop-cycles` | Yes | Yes | Creation and authoritative inherited context exercised. |
+| Standalone session | `POST /sessions`, `GET /sessions/{state_id}` | Yes | Partial | Creation and structured not-found are verified. Populated GET requires a current twin snapshot and remains unverified until a later workflow creates one. |
 | Disease evidence | `POST /sessions/{state_id}/predict-disease` | No | No | AI evidence is supporting, uncertainty-aware evidence only. |
 | Weather review | `GET /sessions/{state_id}/weather-snapshot` | No | No | Retrieval is explicit and date-specific; reviewed overrides remain visible. |
 | Irrigation conversion inputs | Client input feeding water/advancement requests | No | No | Millimetres, litres plus area, and drip runtime remain distinct input modes. |

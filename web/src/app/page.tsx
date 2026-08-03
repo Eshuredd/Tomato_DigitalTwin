@@ -6,16 +6,18 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { HealthStatusCard } from "@/features/system/health-status-card";
 
 export default function OverviewPage() {
   return (
     <>
-      <PageIntro eyebrow="Workspace overview" title="A calm foundation for field decisions" description="CropTwin now has a route-based desktop shell and explicit decision boundaries. Feature workflows remain deliberately deferred until later milestones restore them against FastAPI." />
+      <PageIntro eyebrow="Workspace overview" title="Field structure and crop-cycle entry" description="CropTwin now connects farms, plots, sessions, health, and system metadata directly to FastAPI while later agronomy workflows remain deferred." badge="Milestone 2" />
       <Alert variant="info" className="mb-5">
         <ShieldCheck className="mt-0.5 size-4" aria-hidden="true" />
-        <AlertTitle>Foundation milestone only</AlertTitle>
-        <AlertDescription>No farm, crop-cycle, evidence, simulation, or recommendation data is loaded or invented by this interface.</AlertDescription>
+        <AlertTitle>Backend authority remains explicit</AlertTitle>
+        <AlertDescription>Farm, plot, and session records now come from FastAPI. Disease, water, simulation, recommendation, and narration remain unimplemented.</AlertDescription>
       </Alert>
+      <div className="mb-5"><HealthStatusCard /></div>
       <div className="grid gap-5 xl:grid-cols-[1.25fr_0.75fr]">
         <Card className="overflow-hidden">
           <CardHeader className="border-b border-[var(--border-subtle)] bg-[var(--agronomy-soft)]">

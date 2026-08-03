@@ -105,6 +105,15 @@ jobs:
           print("Application imports succeeded.")
           PY
 
+      - name: Verify FastAPI OpenAPI snapshot
+        working-directory: web
+        env:
+          PYTHONPATH: ../backend
+        run: npm run api:schema:check
+
+      - name: Test OpenAPI snapshot checker
+        run: python web/scripts/test_check_backend_schema.py
+
       - name: Run complete pytest suite
         env:
           PYTHONPATH: backend

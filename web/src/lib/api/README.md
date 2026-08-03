@@ -6,5 +6,13 @@
 - `paths.ts` encodes dynamic path segments.
 - `query-keys.ts` defines stable hierarchical keys for invalidation.
 - `query-client.ts` disables automatic mutation retries. The transport itself never retries requests, so POST retries always require an explicit user or workflow decision.
+- `contracts.ts` aliases generated OpenAPI types and adds Zod runtime schemas for untrusted responses and form boundaries.
+- `operations.ts` contains one small operation per FastAPI endpoint used by Milestone 2; `hooks/` owns query lifecycles and exact invalidation.
+
+Contract checks have separate responsibilities:
+
+- `api:check` regenerates declarations in a temporary directory and compares them with `schema.d.ts`.
+- `api:schema:check` imports `app.main.app`, calls `app.openapi()`, and compares the resulting JSON object semantically with `openapi.json`.
+- `api:schema:pull` is the only command that intentionally rewrites the checked-in snapshot, and requires a running FastAPI server.
 
 Normal development and production builds consume checked-in files and do not start or contact FastAPI.

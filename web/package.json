@@ -15,7 +15,8 @@
     "test:e2e": "playwright test",
     "api:schema:pull": "node scripts/pull-openapi.mjs",
     "api:generate": "openapi-typescript src/lib/api/openapi.json -o src/lib/api/schema.d.ts",
-    "api:check": "node scripts/check-generated-api.mjs"
+    "api:check": "node scripts/check-generated-api.mjs",
+    "api:schema:check": "python3 scripts/check_backend_schema.py"
   },
   "engines": {
     "node": ">=20.9"

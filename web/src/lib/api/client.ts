@@ -39,6 +39,9 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions<T> 
     if (!response.ok) {
       const backendError = parseBackendError(payload, response.status);
       if (backendError) throw backendError;
+      if (response.status === 422 && payload && typeof payload === "object" && "detail" in payload) {
+        throw new CropTwinApiError({ kind: "backend", code: "FASTAPI_VALIDATION_ERROR", message: "Request validation failed.", statusCode: response.status, details: payload as Record<string, unknown> });
+      }
       throw new CropTwinApiError({ kind: "http", code: "HTTP_ERROR", message: `CropTwin API returned HTTP ${response.status}.`, statusCode: response.status, details: payload && typeof payload === "object" ? { response: payload } : {} });
     }
     if (payload === undefined) {

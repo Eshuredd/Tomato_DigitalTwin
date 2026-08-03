@@ -1,6 +1,6 @@
-# CropTwin web foundation
+# CropTwin Next.js application
 
-Milestone 1 is a fresh Next.js App Router foundation for CropTwin. It contains the custom design system, desktop application shell, route placeholders, typed API transport foundation, generated OpenAPI contract, reusable workflow stepper, shared async states, and automated tests. It does **not** implement feature workflows or claim parity with Streamlit.
+Milestone 2 adds browser-visible FastAPI health and system metadata, farms, plots, standalone sessions, plot-backed crop cycles, and explicit active-session routes to the accepted foundation. Disease, water, advancement, simulation, recommendation, narration, history, and actual-action workflows remain deferred. Complete parity is not claimed.
 
 ## Requirements
 
@@ -24,9 +24,12 @@ Never put secrets in `NEXT_PUBLIC_*` variables. Normal builds use the checked-in
 npm run api:schema:pull  # explicitly fetch /openapi.json from FastAPI
 npm run api:generate     # generate src/lib/api/schema.d.ts from the snapshot
 npm run api:check        # verify generated output is current without changing files
+npm run api:schema:check # compare the snapshot semantically with app.main.app.openapi()
 ```
 
 Set `CROPTWIN_OPENAPI_URL` to override the schema URL used by `api:schema:pull`.
+
+`api:check` detects generated-TypeScript drift from the checked-in snapshot. `api:schema:check` is independent: it imports the real FastAPI application without starting a server and detects snapshot drift from the backend contract. Normal builds run neither backend import nor network request.
 
 ## Development and validation
 
@@ -38,5 +41,7 @@ npm run test:run
 npm run build
 npm run test:e2e
 ```
+
+The Playwright configuration starts FastAPI with the in-memory state store. It does not use or mutate an important persistent database.
 
 The parity source of truth is [`../docs/nextjs-parity-checklist.md`](../docs/nextjs-parity-checklist.md).

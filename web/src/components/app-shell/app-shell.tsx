@@ -44,7 +44,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <div className="hidden items-center gap-2 md:flex" aria-label="Current application context">
               <Badge variant="neutral">No farm selected</Badge>
               <Badge variant="neutral">No active cycle</Badge>
-              <Badge variant="info">Foundation</Badge>
+              <Badge variant="info">Milestone 2</Badge>
             </div>
           </div>
         </header>
