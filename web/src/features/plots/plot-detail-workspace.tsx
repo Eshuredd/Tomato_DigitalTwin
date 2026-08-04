@@ -18,6 +18,7 @@ import { cropCycleFormSchema } from "@/lib/api/contracts";
 import { useFarm } from "@/lib/api/hooks/use-farms";
 import { usePlot } from "@/lib/api/hooks/use-plots";
 import { useCreateCropCycle } from "@/lib/api/hooks/use-sessions";
+import { localDateInputValue } from "@/lib/dates/local-date";
 
 function Link(props: ComponentProps<typeof NextLink>) { return <NextLink prefetch={false} {...props} />; }
 
@@ -27,7 +28,7 @@ export function PlotDetailWorkspace({ plotId }: { plotId: string }) {
   const plot = usePlot(plotId) as ReturnType<typeof usePlot> & { data: NonNullable<ReturnType<typeof usePlot>["data"]> };
   const farm = useFarm(plot.data?.farm_id ?? "");
   const create = useCreateCropCycle(plotId);
-  const form = useForm<CycleForm>({ resolver: zodResolver(cropCycleFormSchema), defaultValues: { planting_date: new Date().toISOString().slice(0, 10) } });
+  const form = useForm<CycleForm>({ resolver: zodResolver(cropCycleFormSchema), defaultValues: { planting_date: localDateInputValue() } });
   if (plot.isLoading) return <AsyncStatePanel kind="loading" title="Loading plot" />;
   if (plot.isError) return <ApiErrorPanel error={plot.error} onRetry={() => plot.refetch()} title="Plot unavailable" />;
   const submit = form.handleSubmit((values) => create.mutate({ crop_type: "tomato", planting_date: values.planting_date }, { onSuccess: (session) => router.push(`/cycle/${encodeURIComponent(session.state_id)}?plotId=${encodeURIComponent(plot.data.plot_id)}`) }));

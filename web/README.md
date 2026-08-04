@@ -44,4 +44,11 @@ npm run test:e2e
 
 The Playwright configuration starts FastAPI with the in-memory state store. It does not use or mutate an important persistent database.
 
+## Milestone 2 form and identity boundaries
+
+- Latitude and longitude are required finite numbers. HTML numeric strings are trimmed and parsed before their inclusive coordinate bounds are checked; blank, null, non-numeric, and non-finite values are rejected.
+- Elevation is optional. Blank, whitespace-only, null, or undefined form values are omitted from JSON, while an explicit zero is retained and values below -500 m are rejected.
+- Date-input defaults use the browser's local calendar year, month, and day rather than a UTC ISO date.
+- A cycle `stateId` is authoritative route identity. `plotId` and `mode` query values are optional browser navigation context only because current FastAPI session responses do not expose durable farm or plot relationships.
+
 The parity source of truth is [`../docs/nextjs-parity-checklist.md`](../docs/nextjs-parity-checklist.md).

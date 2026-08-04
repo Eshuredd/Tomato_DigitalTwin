@@ -25,7 +25,7 @@ export function FarmDetailWorkspace({ farmId }: { farmId: string }) {
   const farm = useFarm(farmId) as ReturnType<typeof useFarm> & { data: NonNullable<ReturnType<typeof useFarm>["data"]> };
   const plots = usePlots(farmId);
   const create = useCreatePlot(farmId);
-  const form = useForm<PlotFormInput, unknown, PlotFormOutput>({ resolver: zodResolver(plotFormSchema), defaultValues: { name: "", location: { name: "", latitude: "" as never, longitude: "" as never, elevation_m: "" }, soil_texture: "sandy_loam" } });
+  const form = useForm<PlotFormInput, unknown, PlotFormOutput>({ resolver: zodResolver(plotFormSchema), defaultValues: { name: "", location: { name: "", latitude: "", longitude: "", elevation_m: "" }, soil_texture: "sandy_loam" } });
   const submit = form.handleSubmit((values) => create.mutate({ name: values.name, location: locationPayload(values.location), soil_texture: values.soil_texture }, { onSuccess: () => form.reset() }));
   if (farm.isLoading) return <AsyncStatePanel kind="loading" title="Loading farm" />;
   if (farm.isError) return <ApiErrorPanel error={farm.error} onRetry={() => farm.refetch()} title="Farm unavailable" />;

@@ -1,5 +1,9 @@
 import { z } from "zod";
 import type { components } from "./schema";
+import {
+  optionalFiniteNumber,
+  requiredFiniteNumber,
+} from "@/lib/forms/number-fields";
 
 export type Health = components["schemas"]["HealthResponse"];
 export type Farm = components["schemas"]["FarmResponse"];
@@ -66,9 +70,15 @@ export type SystemInfo = z.infer<typeof systemInfoSchema>;
 export const farmFormSchema = z.object({ name: z.string().trim().min(1, "Farm name is required.").max(200) });
 export const locationFormSchema = z.object({
   name: z.string().trim().min(1, "Location name is required."),
-  latitude: z.coerce.number().finite().min(-90, "Latitude must be at least -90.").max(90, "Latitude must be at most 90."),
-  longitude: z.coerce.number().finite().min(-180, "Longitude must be at least -180.").max(180, "Longitude must be at most 180."),
-  elevation_m: z.union([z.literal(""), z.coerce.number().finite().min(-500, "Elevation must be at least -500 m.")]).optional(),
+  latitude: requiredFiniteNumber("Latitude").pipe(
+    z.number().min(-90, "Latitude must be at least -90.").max(90, "Latitude must be at most 90."),
+  ),
+  longitude: requiredFiniteNumber("Longitude").pipe(
+    z.number().min(-180, "Longitude must be at least -180.").max(180, "Longitude must be at most 180."),
+  ),
+  elevation_m: optionalFiniteNumber("Elevation").pipe(
+    z.number().min(-500, "Elevation must be at least -500 m.").optional(),
+  ),
 });
 export const plotFormSchema = z.object({ name: z.string().trim().min(1).max(200), location: locationFormSchema, soil_texture: soilTextureSchema });
 export const sessionFormSchema = z.object({ planting_date: z.string().min(1), location: locationFormSchema, soil_texture: soilTextureSchema });
@@ -79,6 +89,6 @@ export function locationPayload(value: z.infer<typeof locationFormSchema>) {
     name: value.name,
     latitude: value.latitude,
     longitude: value.longitude,
-    ...(value.elevation_m === "" || value.elevation_m === undefined ? {} : { elevation_m: value.elevation_m }),
+    ...(value.elevation_m === undefined ? {} : { elevation_m: value.elevation_m }),
   };
 }
