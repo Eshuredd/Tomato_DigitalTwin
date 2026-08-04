@@ -46,7 +46,7 @@ describe("DiseaseStage request identity", () => {
   });
 
   it("marks accepted evidence as superseded when a different file is selected", () => {
-    renderStage(vi.fn(), { response, fileSignature: "old-signature", modelVersion: "model-from-system" });
+    renderStage(vi.fn(), { response, fileSignature: "old-signature", modelVersion: "model-from-system", evidenceAcceptanceId: "evidence-1" });
     fireEvent.change(screen.getByLabelText(/Choose one tomato leaf image/i), { target: { files: [new File(["new"], "new.png", { type: "image/png" })] } });
     expect(screen.getByText("Previous evidence superseded")).toBeVisible();
   });
@@ -56,7 +56,7 @@ describe("DiseaseStage request identity", () => {
     const first = new File(["one"], "same.png", options);
     const second = new File(["two"], "same.png", options);
     expect(diseaseFileSignature(first)).toBe(diseaseFileSignature(second));
-    const accepted = { response, fileSignature: diseaseFileSignature(first), modelVersion: "model-from-system" };
+    const accepted = { response, fileSignature: diseaseFileSignature(first), modelVersion: "model-from-system", evidenceAcceptanceId: "evidence-1" };
     client.setQueryData(queryKeys.diseaseEvidence("state-1"), accepted);
     const { onSuperseded } = renderStage(vi.fn(), accepted);
     fireEvent.change(screen.getByLabelText(/Choose one tomato leaf image/i), { target: { files: [second] } });
@@ -99,7 +99,7 @@ describe("DiseaseStage request identity", () => {
   });
 
   it("supersedes accepted evidence when the image is removed", () => {
-    const accepted = { response, fileSignature: "metadata", modelVersion: "model-from-system" };
+    const accepted = { response, fileSignature: "metadata", modelVersion: "model-from-system", evidenceAcceptanceId: "evidence-1" };
     const { onSuperseded } = renderStage(vi.fn(), accepted);
     fireEvent.change(screen.getByLabelText(/Choose one tomato leaf image/i), { target: { files: [new File(["one"], "one.png", { type: "image/png" })] } });
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
@@ -108,7 +108,7 @@ describe("DiseaseStage request identity", () => {
   });
 
   it("supersedes accepted evidence for an invalid replacement", () => {
-    const accepted = { response, fileSignature: "metadata", modelVersion: "model-from-system" };
+    const accepted = { response, fileSignature: "metadata", modelVersion: "model-from-system", evidenceAcceptanceId: "evidence-1" };
     const { onSuperseded } = renderStage(vi.fn(), accepted);
     fireEvent.change(screen.getByLabelText(/Choose one tomato leaf image/i), { target: { files: [new File(["bad"], "leaf.txt", { type: "text/plain" })] } });
     expect(onSuperseded).toHaveBeenCalledTimes(1);

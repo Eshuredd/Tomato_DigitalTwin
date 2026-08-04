@@ -59,7 +59,7 @@ export function DiseaseStage({ stateId, accepted, onAccepted, onSuperseded }: { 
       if (requestRef.current !== requestNumber || selectionGenerationRef.current !== selectionGeneration) return;
       const response = await prediction.mutateAsync({ stateId, input: { state_id: stateId, image_base64: imageBase64, model_version: modelVersion }, signal: controller.signal });
       if (requestRef.current !== requestNumber || selectionGenerationRef.current !== selectionGeneration || controller.signal.aborted) return;
-      const cached = { response, fileSignature: signature, modelVersion } satisfies CachedDiseaseEvidence;
+      const cached = { response, fileSignature: signature, modelVersion, evidenceAcceptanceId: crypto.randomUUID() } satisfies CachedDiseaseEvidence;
       queryClient.setQueryData(queryKeys.diseaseEvidence(stateId), cached);
       setSuperseded(false);
       onAccepted(cached);

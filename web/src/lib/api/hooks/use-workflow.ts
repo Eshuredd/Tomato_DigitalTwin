@@ -9,6 +9,7 @@ export interface CachedDiseaseEvidence {
   response: DiseasePrediction;
   fileSignature: string;
   modelVersion: string;
+  evidenceAcceptanceId: string;
 }
 
 export function useDiseaseEvidence(stateId: string) {

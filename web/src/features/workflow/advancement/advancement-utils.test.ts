@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AdvanceOneDayResponse } from "@/lib/api/contracts";
-import { advancementPayloadSignature, classifyAdvancement, deriveNextAdvancementDate } from "./advancement-utils";
+import { advancementPayloadSignature, classifyAdvancement, deriveNextAdvancementDate, validateNewAdvancementLineage } from "./advancement-utils";
 const response = { advancement_created: false, water_state: { water_sequence: 2 } } as AdvanceOneDayResponse;
 const weather = { tmin_c: 20, tmax_c: 30, humidity_pct: 50, wind_speed_mps: 1, rainfall_mm: 0 };
 describe("one-day advancement", () => {
@@ -8,4 +8,10 @@ describe("one-day advancement", () => {
   it("rejects malformed observed timestamps", () => expect(deriveNextAdvancementDate("2026-08-01")).toBeUndefined());
   it("creates stable signatures independent of weather key order", () => expect(advancementPayloadSignature("state", "2026-08-05", weather, null)).toBe(advancementPayloadSignature("state", "2026-08-05", { rainfall_mm: 0, wind_speed_mps: 1, humidity_pct: 50, tmax_c: 30, tmin_c: 20 }, null)));
   it("classifies new, current, catch-up and historical transitions", () => { expect(classifyAdvancement({ ...response, advancement_created: true }, 1)).toBe("new_advancement"); expect(classifyAdvancement(response, 2)).toBe("current_retry"); expect(classifyAdvancement(response, 1)).toBe("catch_up_retry"); expect(classifyAdvancement(response, 3)).toBe("historical_retry"); });
+  it("accepts a new response only when it extends the captured baseline by one sequence", () => {
+    const valid = { advancement_created: true, water_state: { base_water_observation_id: "water-4", base_water_sequence: 4, water_sequence: 5 } } as AdvanceOneDayResponse;
+    expect(() => validateNewAdvancementLineage(valid, "water-4", 4)).not.toThrow();
+    expect(() => validateNewAdvancementLineage({ ...valid, water_state: { ...valid.water_state, base_water_observation_id: "other" } }, "water-4", 4)).toThrow(/captured canonical water baseline/i);
+    expect(() => validateNewAdvancementLineage({ ...valid, water_state: { ...valid.water_state, water_sequence: 6 } }, "water-4", 4)).toThrow(/captured canonical water baseline/i);
+  });
 });

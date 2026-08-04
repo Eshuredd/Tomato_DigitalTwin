@@ -1,5 +1,6 @@
 import type { AdvanceOneDayResponse, LastIrrigationEvent, UpdateTwinStateResponse, WeatherInput } from "@/lib/api/contracts";
 import { canonicalJson } from "../identity";
+import { CropTwinApiError } from "@/lib/api/errors";
 
 export type AdvancementTransitionKind = "new_advancement" | "current_retry" | "catch_up_retry" | "historical_retry";
 export type TwinRefreshStatus = "not_required" | "pending" | "succeeded" | "failed";
@@ -24,4 +25,17 @@ export function classifyAdvancement(response: AdvanceOneDayResponse, localSequen
 
 export function transitionNeedsTwinRefresh(kind: AdvancementTransitionKind, twin: UpdateTwinStateResponse | undefined) {
   return kind === "catch_up_retry" || (kind === "current_retry" && !twin);
+}
+
+export function validateNewAdvancementLineage(response: AdvanceOneDayResponse, baseObservationId: string | null, baseSequence: number) {
+  if (!response.advancement_created) return;
+  const water = response.water_state;
+  if (water.base_water_observation_id !== baseObservationId || water.base_water_sequence !== baseSequence || water.water_sequence !== baseSequence + 1) {
+    throw new CropTwinApiError({
+      kind: "malformed",
+      code: "INVALID_ADVANCEMENT_LINEAGE",
+      message: "The advancement response did not extend the captured canonical water baseline.",
+      details: { expected_base_observation_id: baseObservationId, expected_base_sequence: baseSequence, received_base_observation_id: water.base_water_observation_id, received_base_sequence: water.base_water_sequence, received_sequence: water.water_sequence },
+    });
+  }
 }
