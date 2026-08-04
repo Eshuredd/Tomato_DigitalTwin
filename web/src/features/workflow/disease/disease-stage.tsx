@@ -18,26 +18,28 @@ export function DiseaseStage({ stateId, accepted, onAccepted, onSuperseded }: { 
   const queryClient = useQueryClient();
   const system = useSystemInfo();
   const prediction = usePredictDisease();
-  const [selection, setSelection] = useState<{ file: File; signature: string } | null>(null);
+  const [selection, setSelection] = useState<{ file: File; signature: string; generation: number } | null>(null);
   const [localError, setLocalError] = useState<string>();
   const [superseded, setSuperseded] = useState(false);
   const abortRef = useRef<AbortController | undefined>(undefined);
   const requestRef = useRef(0);
-  const selectionRef = useRef<string | undefined>(undefined);
+  const selectionGenerationRef = useRef(0);
 
   useEffect(() => () => { requestRef.current += 1; abortRef.current?.abort(); }, []);
   const modelVersion = typeof system.data?.disease_model.model_version === "string" && system.data.disease_model.model_version.trim() ? system.data.disease_model.model_version : undefined;
 
   function changeSelection(next: { file: File; signature: string } | null) {
+    const generation = selectionGenerationRef.current + 1;
+    selectionGenerationRef.current = generation;
     requestRef.current += 1;
     abortRef.current?.abort();
     abortRef.current = undefined;
     prediction.reset();
-    selectionRef.current = next?.signature;
-    setSelection(next);
+    setSelection(next ? { ...next, generation } : null);
     setLocalError(undefined);
-    if (accepted && next?.signature !== accepted.fileSignature) {
-      queryClient.removeQueries({ queryKey: queryKeys.diseaseEvidence(stateId), exact: true });
+    const hadAcceptedEvidence = Boolean(accepted || queryClient.getQueryData(queryKeys.diseaseEvidence(stateId)));
+    queryClient.removeQueries({ queryKey: queryKeys.diseaseEvidence(stateId), exact: true });
+    if (hadAcceptedEvidence) {
       setSuperseded(true);
       onSuperseded();
     }
@@ -48,14 +50,15 @@ export function DiseaseStage({ stateId, accepted, onAccepted, onSuperseded }: { 
     const requestNumber = requestRef.current + 1;
     requestRef.current = requestNumber;
     const signature = selection.signature;
+    const selectionGeneration = selection.generation;
     const controller = new AbortController();
     abortRef.current = controller;
     setLocalError(undefined);
     try {
       const imageBase64 = await fileToRawBase64(selection.file);
-      if (requestRef.current !== requestNumber || selectionRef.current !== signature) return;
+      if (requestRef.current !== requestNumber || selectionGenerationRef.current !== selectionGeneration) return;
       const response = await prediction.mutateAsync({ stateId, input: { state_id: stateId, image_base64: imageBase64, model_version: modelVersion }, signal: controller.signal });
-      if (requestRef.current !== requestNumber || selectionRef.current !== signature || controller.signal.aborted) return;
+      if (requestRef.current !== requestNumber || selectionGenerationRef.current !== selectionGeneration || controller.signal.aborted) return;
       const cached = { response, fileSignature: signature, modelVersion } satisfies CachedDiseaseEvidence;
       queryClient.setQueryData(queryKeys.diseaseEvidence(stateId), cached);
       setSuperseded(false);

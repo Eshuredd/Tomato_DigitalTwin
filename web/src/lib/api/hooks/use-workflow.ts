@@ -25,11 +25,14 @@ export function usePredictDisease() {
 }
 
 export function useWeatherSnapshot(stateId: string, targetDate: string) {
-  return useQuery({
-    queryKey: queryKeys.weatherSnapshot(stateId, targetDate),
+  const client = useQueryClient();
+  const queryKey = queryKeys.weatherSnapshot(stateId, targetDate);
+  const query = useQuery({
+    queryKey,
     queryFn: ({ signal }) => getWeatherSnapshot(stateId, targetDate, signal),
     enabled: false,
     retry: false,
     staleTime: 5 * 60_000,
   });
+  return { ...query, cancel: () => client.cancelQueries({ queryKey, exact: true }) };
 }

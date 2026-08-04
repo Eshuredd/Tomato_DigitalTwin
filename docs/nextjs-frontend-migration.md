@@ -39,6 +39,8 @@ Milestones 1 and 2 established the application, contract, management, and sessio
 
 Disease results remain supporting AI evidence, not a confirmed diagnosis. Images are limited to one JPEG, PNG, or WebP file up to 10 MiB. Weather is never fetched merely because a stage opens or a date changes; reviewed weather requires explicit acceptance and manual input makes no source claim. The only irrigation calculations in TypeScript are unit conversions: litres divided by area, and emitter count × flow × runtime-hours divided by area. Reviewed weather and irrigation are not persisted yet.
 
+Image metadata is not treated as durable evidence identity. Each file-selection event receives an ephemeral component-local generation and supersedes previously accepted evidence, including same-metadata or invalid replacement attempts. Weather retrieval similarly captures a request generation, state ID, target date, and draft revision; responses or errors from an invalidated generation may remain date-scoped query data but cannot overwrite the active draft or provenance.
+
 Milestone 3 does not implement water state, twin update, advancement, simulation, recommendation, narration, history, or actual actions. It does not claim feature parity.
 
 ## Route foundation

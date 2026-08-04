@@ -48,7 +48,9 @@ The Playwright configuration starts a test-only launcher that imports the real F
 
 - `/workflow/[stateId]` uses the encoded route parameter as authoritative workflow identity. `/workflow?stateId=…` remains a compatibility entry and redirects to it.
 - Disease evidence accepts exactly one JPEG, PNG, or WebP image up to 10 MiB. The image is converted to raw base64 only immediately before submission and is never retained in query state. Results always carry the safety statement “Supporting AI evidence — not a confirmed diagnosis.”
+- File name, type, size, and modification time are display metadata rather than durable image identity. Every new image-selection attempt conservatively supersedes accepted evidence and invalidates dependent reviewed weather and irrigation, even when those metadata values match.
 - Weather retrieval is user-triggered and date-specific. Fetched values can be reviewed with visible overrides or replaced by clearly labelled fully manual input. Either mode requires an explicit “Accept reviewed weather” action.
+- Pending weather retrievals use a component-local request generation and draft revision. A later date, field, or provenance edit wins and cannot be overwritten by an older response; repeated retrievals apply only the latest eligible response.
 - Irrigation input can represent no recent irrigation, direct depth, litres divided by area, or drip runtime. The permitted conversions are `amount_mm = total_litres / irrigated_area_m2` and `total_litres = emitter_count * emitter_flow_lph * (runtime_minutes / 60)`; full precision is retained.
 - Accepted reviewed weather and irrigation values are route-scoped unsaved drafts. They are prepared for later water-state computation, are not persisted to FastAPI, and become stale when their source fields change.
 

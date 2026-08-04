@@ -7,10 +7,13 @@ disease inference and weather retrieval inside this test process.
 from __future__ import annotations
 
 import base64
+import asyncio
+from collections import defaultdict
 from datetime import date, datetime, timezone
 import os
 from pathlib import Path
 import sys
+import time
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -45,6 +48,8 @@ class DeterministicDiseasePredictor:
 
     def predict(self, image_base64: str) -> DiseaseInferenceResult:
         image = base64.b64decode(image_base64, validate=True)
+        if b"DELAY_DISEASE" in image:
+            time.sleep(0.6)
         high = b"HIGH_UNCERTAINTY" in image
         confidence = 0.42 if high else 0.91
         label = "Tomato___Late_blight"
@@ -60,6 +65,7 @@ class DeterministicDiseasePredictor:
 
 store = InMemoryTwinStateStore()
 predictor = DeterministicDiseasePredictor()
+weather_call_counts: defaultdict[date, int] = defaultdict(int)
 app.dependency_overrides[get_state_store] = lambda: store
 app.dependency_overrides[get_disease_predictor] = lambda: predictor
 
@@ -68,6 +74,13 @@ async def deterministic_weather(
     *, latitude: float, longitude: float, target_date: date, timeout_s: float = 10.0
 ) -> WeatherSnapshotResponse:
     del timeout_s
+    weather_call_counts[target_date] += 1
+    call_number = weather_call_counts[target_date]
+    if target_date.day in {6, 7, 9}:
+        await asyncio.sleep(0.7)
+    elif target_date.day == 8:
+        await asyncio.sleep(0.7 if call_number == 1 else 0.15)
+    tmin_c = 20.0 + call_number if target_date.day == 8 else 21.5
     return WeatherSnapshotResponse(
         state_id="",
         target_date=target_date,
@@ -75,7 +88,7 @@ async def deterministic_weather(
         source_timezone="Asia/Kolkata",
         latitude=latitude,
         longitude=longitude,
-        tmin_c=21.5,
+        tmin_c=tmin_c,
         tmax_c=32.25,
         humidity_pct=67.0,
         wind_speed_mps=2.55,
@@ -84,7 +97,7 @@ async def deterministic_weather(
         rainfall_mm=0.0,
         shortwave_radiation_sum_mj_m2=19.75,
         eto_reference_feed=5.1,
-        fetched_at=datetime(2026, 8, 4, 4, 30, tzinfo=timezone.utc),
+        fetched_at=datetime(2026, 8, target_date.day, 4, call_number, tzinfo=timezone.utc),
     )
 
 
