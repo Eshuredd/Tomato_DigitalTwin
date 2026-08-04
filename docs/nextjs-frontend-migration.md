@@ -14,7 +14,7 @@ TwinStateStore and persistence
 
 FastAPI remains authoritative for agronomy, disease inference, simulations, recommendation choice, narration, validation, identifiers, timestamps, lineage, and persistence. TypeScript may validate UI shape, submit requests, and render responses; it must not reproduce domain decisions.
 
-## Current milestone
+## Current implementation
 
 Milestones 1 through 3 established the application, contract, management, session, evidence, weather-review, and irrigation-preparation foundations. Milestone 4 adds:
 
@@ -46,22 +46,22 @@ Disease results remain supporting AI evidence, not a confirmed diagnosis. Images
 
 Image metadata is not treated as durable evidence identity. Each file-selection event receives an ephemeral component-local generation and supersedes previously accepted evidence, including same-metadata or invalid replacement attempts. Weather retrieval similarly captures a request generation, state ID, target date, and draft revision; responses or errors from an invalidated generation may remain date-scoped query data but cannot overwrite the active draft or provenance.
 
-Milestone 4 does not implement simulation, recommendation, narration, history, or actual actions. It does not claim feature parity.
+The remaining workflow and record surfaces are implemented: ordered deterministic simulation, backend-owned recommendation, exact backend narration, accessible history table/chart, and actual-action list/create. Browser verification against the isolated in-memory FastAPI launcher covers the complete nine-stage path and state-scoped records. Feature parity with the currently documented FastAPI/Streamlit workflows is claimed; the Streamlit frontend remains present and was not removed.
 
 ## Route foundation
 
-| Route | Area | Milestone 4 state |
+| Route | Area | Current state |
 |---|---|---|
-| `/` | Overview | Browser-visible health and current milestone overview |
+| `/` | Overview | Product overview and browser-visible health |
 | `/farms` | Farms | Real list and create workflow |
 | `/farms/[farmId]` | Farm detail | Real farm-scoped plot list and create workflow |
 | `/plots/[plotId]` | Plot detail | Stored context and plot-backed cycle creation |
 | `/cycle` | Session entry | Standalone creation and explicit state-ID loading |
 | `/cycle/[stateId]` | Active cycle | Authoritative session summary or normal not-yet-computed state |
 | `/workflow` | Workflow entry | Explanatory entry or safe `stateId` compatibility redirect |
-| `/workflow/[stateId]` | Nine-step workflow | First six stages implemented; one-day advancement lives within canonical twin; simulation and later stages visibly blocked |
-| `/history` | History | Neutral placeholder |
-| `/actions` | Actual actions | Neutral placeholder |
+| `/workflow/[stateId]` | Nine-step workflow | All nine stages implemented; one-day advancement remains within canonical twin |
+| `/history`, `/history/[stateId]` | History | State entry plus validated chart/table |
+| `/actions`, `/actions/[stateId]` | Actual actions | State entry plus configurable list and explicit create form |
 | `/system` | System information | Real FastAPI metadata query |
 
 The detailed restoration checklist is maintained in [`nextjs-parity-checklist.md`](nextjs-parity-checklist.md).

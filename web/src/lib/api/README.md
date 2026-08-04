@@ -7,9 +7,11 @@
 - `query-keys.ts` defines stable hierarchical keys for invalidation.
 - `query-client.ts` disables automatic mutation retries. The transport itself never retries requests, so POST retries always require an explicit user or workflow decision.
 - `contracts.ts` aliases generated OpenAPI types and adds Zod runtime schemas for untrusted responses and form boundaries.
-- `operations.ts` contains one small operation per FastAPI endpoint used by the accepted milestones; `hooks/` owns query lifecycles and exact invalidation.
+- `operations.ts` contains one small operation per FastAPI endpoint used by the product; `hooks/` owns query lifecycles and exact invalidation.
 - Water, twin, and advancement mutations use exact generated request types and full Zod response schemas. Validated responses live under state-scoped `waterState`, `twinState`, and advancement-ID keys; frontend provenance wrappers remain outside raw server data.
 - POST operations never retry automatically. Route-scoped canonical signatures retain stable IDs after timeout or cancellation so only an explicit user retry repeats an uncertain request.
+- Decision responses are validated under state-scoped `simulation`, `recommendation`, and `narration` keys. Simulation preserves request order and verifies the returned candidate order.
+- History uses a state-scoped query. Actual actions use `actualActionsRoot(stateId)` plus limit variants so a successful create invalidates every list limit for that state only.
 
 Contract checks have separate responsibilities:
 

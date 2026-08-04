@@ -39,6 +39,16 @@ const codeCopy: Record<string, string> = {
   IRRIGATION_EVENT_ID_MISMATCH: "FastAPI returned a different reported irrigation identity.",
   ADVANCEMENT_ID_MISMATCH: "FastAPI returned a different advancement identity.",
   ADVANCEMENT_DATE_MISMATCH: "FastAPI returned a different advancement target date.",
+  INVALID_ADVANCEMENT_LINEAGE: "FastAPI returned an advancement that did not extend the captured canonical water lineage.",
+  INVALID_SIMULATION_REQUEST: "The simulation request did not match the supported contract.",
+  INCOMPLETE_STATE: "Complete the current canonical state before requesting this decision operation.",
+  INVALID_RECOMMENDATION_REQUEST: "The recommendation request did not match the supported contract.",
+  INVALID_NARRATION_REQUEST: "The explanation request did not match the supported contract.",
+  INVALID_ACTION_REQUEST: "The actual-action request did not match the supported contract.",
+  DUPLICATE_ACTUAL_ACTION: "This physical action has already been recorded.",
+  RELATED_RECOMMENDATION_NOT_FOUND: "The related recommendation ID was not found.",
+  RECOMMENDATION_STATE_MISMATCH: "The related recommendation belongs to another workflow state.",
+  SIMULATION_ORDER_MISMATCH: "FastAPI returned simulation candidates in a different order.",
 };
 
 export function ApiErrorPanel({ error, onRetry, title }: { error: unknown; onRetry?: () => void; title?: string }) {

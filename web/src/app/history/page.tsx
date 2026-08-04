@@ -1,2 +1,6 @@
-import { PlaceholderPage } from "@/components/app-shell/placeholder-page";
-export default function HistoryPage() { return <PlaceholderPage eyebrow="Authoritative records" title="History" description="Review immutable twin snapshots and evidence lineage without mixing them into the prerequisite sequence." laterMilestone="History retrieval and populated state tables will be implemented in a later milestone" />; }
+import { redirect } from "next/navigation";
+import { PageIntro } from "@/components/app-shell/page-intro";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/form-controls";
+export default async function HistoryPage({ searchParams }: { searchParams: Promise<{ stateId?: string }> }) { const { stateId } = await searchParams; if (stateId?.trim()) redirect(`/history/${encodeURIComponent(stateId.trim())}`); return <><PageIntro eyebrow="Authoritative records" title="History" description="Open the backend snapshot timeline for a state ID." /><Card className="max-w-xl"><CardHeader><CardTitle>Choose a crop cycle</CardTitle><CardDescription>History is scoped to an authoritative FastAPI state ID.</CardDescription></CardHeader><CardContent><form className="flex gap-3"><Input name="stateId" aria-label="State ID" placeholder="Enter state ID" required /><Button type="submit">Open history</Button></form></CardContent></Card></>; }

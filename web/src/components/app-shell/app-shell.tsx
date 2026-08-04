@@ -7,7 +7,6 @@ import { AppSidebar } from "./app-sidebar";
 import { navigationItemForPath } from "./navigation";
 import { Breadcrumb } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -40,9 +39,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <PanelLeft className="hidden size-4 text-[var(--text-faint)] lg:block" aria-hidden="true" />
                 <h1 className="truncate text-base font-semibold tracking-[-0.02em] text-[var(--text-strong)]">{current.label}</h1>
               </div>
-            </div>
-            <div className="hidden items-center gap-2 md:flex" aria-label="Current application context">
-              <Badge variant="info">Milestone 4</Badge>
             </div>
           </div>
         </header>

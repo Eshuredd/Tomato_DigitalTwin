@@ -1,4 +1,4 @@
-import type { AdvanceOneDayRequest, AdvanceOneDayResponse, UpdateTwinStateResponse, WaterStateResponse } from "@/lib/api/contracts";
+import type { AdvanceOneDayRequest, AdvanceOneDayResponse, NarrationResponse, RecommendationResponse, SimulateActionsResponse, UpdateTwinStateResponse, WaterStateResponse } from "@/lib/api/contracts";
 import type { AdvancementTransitionKind, TwinRefreshStatus } from "./advancement/advancement-utils";
 
 interface AcceptedWaterBase {
@@ -28,6 +28,9 @@ export interface AcceptedAdvancedWaterResult extends AcceptedWaterBase {
 export type AcceptedWaterResult = AcceptedComputedWaterResult | AcceptedAdvancedWaterResult;
 
 export interface AcceptedTwinResult { response: UpdateTwinStateResponse; sourceSignature: string }
+export interface AcceptedSimulationResult { response: SimulateActionsResponse; sourceSignature: string; twinSourceSignature: string }
+export interface AcceptedRecommendationResult { response: RecommendationResponse; sourceSignature: string }
+export interface AcceptedNarrationResult { response: NarrationResponse; sourceSignature: string }
 
 export interface AcceptedAdvancementResult {
   response: AdvanceOneDayResponse;

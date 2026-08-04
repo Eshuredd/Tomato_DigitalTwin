@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { locationFormSchema, locationPayload, plotFormSchema } from "./contracts";
+import { actualActionCreateSchema, historyEventSchema, locationFormSchema, locationPayload, narrationSchema, plotFormSchema, recommendationSchema, simulateActionsResponseSchema } from "./contracts";
 
 describe("Milestone 2 form contracts", () => {
   const baseLocation = {
@@ -143,4 +143,10 @@ describe("Milestone 2 form contracts", () => {
     expect(() => plotFormSchema.parse({ ...plot, location: { ...plot.location, longitude: -181 } })).toThrow();
     expect(() => plotFormSchema.parse({ ...plot, location: { ...plot.location, elevation_m: -501 } })).toThrow();
   });
+});
+
+describe("decision and record runtime contracts", () => {
+  it("rejects malformed finite values and naive timestamps", () => { expect(simulateActionsResponseSchema.safeParse({ state_id: "s", simulations: [{ action: "IRRIGATE_NOW", projected_root_zone_depletion: Number.NaN, projected_raw_crossing: false, projected_stress_band: "low", projected_water_use: 1, disease_wetness_risk_note: "" }], simulated_at: "2026-08-04T00:00:00Z" }).success).toBe(false); expect(historyEventSchema.safeParse({ timestamp: "2026-08-04T00:00:00", growth_stage: "initial", predicted_label: "healthy", root_zone_depletion: 1, stress_band: "low" }).success).toBe(false); });
+  it("preserves optional amount and explicit zero and enforces notes length", () => { const base = { action: "IRRIGATE_NOW", performed_at: "2026-08-04T00:00:00Z" }; expect(actualActionCreateSchema.parse(base)).not.toHaveProperty("amount_mm"); expect(actualActionCreateSchema.parse({ ...base, amount_mm: 0 }).amount_mm).toBe(0); expect(actualActionCreateSchema.safeParse({ ...base, notes: "x".repeat(1001) }).success).toBe(false); });
+  it("validates recommendation constraints, caution enums, and exact narration text fields", () => { const rec = { state_id: "s", chosen_action: "IRRIGATE_NOW", irrigation_constraint: "BAD", inspection_advisory: false, decision_reason_codes: [], caution_reasons: [], evidence_summary_structured: {}, recommended_at: "2026-08-04T00:00:00Z" }; expect(recommendationSchema.safeParse(rec).success).toBe(false); expect(narrationSchema.parse({ state_id: "s", headline: "Exact", rationale: "Backend text", caution: null }).rationale).toBe("Backend text"); });
 });

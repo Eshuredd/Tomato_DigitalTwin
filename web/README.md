@@ -1,6 +1,6 @@
 # CropTwin Next.js application
 
-Milestone 4 adds deterministic water-state computation, canonical twin update, and controlled one-day advancement to the accepted state-ID-scoped workflow. Simulation, recommendation, narration, history, and actual-action workflows remain deferred. Complete parity is not claimed.
+The Next.js application implements the complete state-ID-scoped CropTwin workflow: evidence review, deterministic water state, canonical twin update and advancement, scenario simulation, recommendation, narration, history, and actual field actions. FastAPI remains authoritative for domain logic and persistence.
 
 ## Requirements
 
@@ -44,7 +44,7 @@ npm run test:e2e
 
 The Playwright configuration starts a test-only launcher that imports the real FastAPI app, uses the in-memory state store, overrides disease inference deterministically, and patches weather retrieval only inside the test process. It does not use or mutate an important persistent database.
 
-## Milestone 4 workflow boundaries
+## Workflow boundaries
 
 - `/workflow/[stateId]` uses the encoded route parameter as authoritative workflow identity. `/workflow?stateId=…` remains a compatibility entry and redirects to it.
 - Disease evidence accepts exactly one JPEG, PNG, or WebP image up to 10 MiB. The image is converted to raw base64 only immediately before submission and is never retained in query state. Results always carry the safety statement “Supporting AI evidence — not a confirmed diagnosis.”
@@ -58,6 +58,10 @@ The Playwright configuration starts a test-only launcher that imports the real F
 - The first water request omits both baseline fields. A later computation supplies the exact returned observation ID and positive sequence together; the browser never increments or fabricates lineage.
 - Twin update sends only `state_id`. Newly created and idempotently reused snapshots are labelled separately, and session refresh is deliberately invalidated after success without replacing the richer twin result.
 - Advancement preparation has a locked next UTC calendar date plus separate explicitly accepted weather and irrigation drafts. New/current/catch-up/historical results are classified before query data is updated; a failed catch-up twin refresh preserves the newer water result as partial success.
+- Simulation submits an ordered non-empty subset of the four generated `ActionEnum` candidates and renders FastAPI projections without sorting or ranking them.
+- Recommendation and narration POSTs are always explicit. FastAPI alone selects the action and supplies the exact explanation text.
+- `/history/[stateId]` renders validated backend history in a table and Recharts time series without reordering it.
+- `/actions/[stateId]` lists limit-keyed physical actions and records optional amount, recommendation linkage, and notes without mutating the twin.
 
 ## Milestone 2 form and identity boundaries
 

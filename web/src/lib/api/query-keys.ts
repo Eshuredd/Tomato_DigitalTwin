@@ -12,6 +12,10 @@ export const queryKeys = {
   waterState: (stateId: string) => [...queryKeys.session(stateId), "water-state"] as const,
   twinState: (stateId: string) => [...queryKeys.session(stateId), "twin-state"] as const,
   advancement: (stateId: string, advancementId: string) => [...queryKeys.session(stateId), "advancement", advancementId] as const,
+  simulation: (stateId: string) => [...queryKeys.session(stateId), "simulation"] as const,
+  recommendation: (stateId: string) => [...queryKeys.session(stateId), "recommendation"] as const,
+  narration: (stateId: string) => [...queryKeys.session(stateId), "narration"] as const,
   history: (stateId: string) => [...queryKeys.session(stateId), "history"] as const,
-  actualActions: (stateId: string, limit: number) => [...queryKeys.session(stateId), "actual-actions", { limit }] as const,
+  actualActionsRoot: (stateId: string) => [...queryKeys.session(stateId), "actual-actions"] as const,
+  actualActions: (stateId: string, limit: number) => [...queryKeys.actualActionsRoot(stateId), { limit }] as const,
 } as const;

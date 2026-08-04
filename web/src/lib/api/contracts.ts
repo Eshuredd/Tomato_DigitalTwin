@@ -26,6 +26,16 @@ export type TwinCurrentState = components["schemas"]["TwinCurrentState"];
 export type UpdateTwinStateResponse = components["schemas"]["UpdateTwinStateResponse"];
 export type AdvanceOneDayRequest = components["schemas"]["AdvanceOneDayRequest"];
 export type AdvanceOneDayResponse = components["schemas"]["AdvanceOneDayResponse"];
+export type Action = components["schemas"]["ActionEnum"];
+export type SimulateActionsRequest = components["schemas"]["SimulateActionsRequest"];
+export type SimulatedActionResult = components["schemas"]["SimulatedActionResult"];
+export type SimulateActionsResponse = components["schemas"]["SimulateActionsResponse"];
+export type RecommendationResponse = components["schemas"]["RecommendationResponse"];
+export type NarrationResponse = components["schemas"]["NarrationResponse"];
+export type HistoryEvent = components["schemas"]["HistoryEvent"];
+export type SessionHistoryResponse = components["schemas"]["SessionHistoryResponse"];
+export type ActualActionCreateRequest = components["schemas"]["ActualActionCreateRequest"];
+export type ActualActionResponse = components["schemas"]["ActualActionResponse"];
 
 export const soilTextures = ["sand", "sandy_loam", "loam", "silty_loam", "clay_loam", "clay"] as const;
 export const soilTextureSchema = z.enum(soilTextures);
@@ -156,6 +166,20 @@ export const advanceOneDaySchema = z.object({
   state_id: z.string().min(1), advancement_id: z.string().min(1), target_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), advancement_created: z.boolean(),
   water_state: waterStateSchema, twin_state: updateTwinStateSchema,
 }).strict();
+
+export const actions = ["IRRIGATE_NOW", "IRRIGATE_IN_6H", "IRRIGATE_TOMORROW_AM", "NO_IRRIGATION_24H"] as const;
+export const actionSchema = z.enum(actions);
+export const stressBandSchema = z.enum(["low", "medium", "high"]);
+export const simulateActionsRequestSchema = z.object({ state_id: z.string().min(1), actions: z.array(actionSchema).min(1) }).strict();
+export const simulatedActionResultSchema = z.object({ action: actionSchema, projected_root_zone_depletion: finiteNumber, projected_raw_crossing: z.boolean(), projected_stress_band: stressBandSchema, projected_water_use: finiteNumber, disease_wetness_risk_note: z.string() }).strict();
+export const simulateActionsResponseSchema = z.object({ state_id: z.string().min(1), simulations: z.array(simulatedActionResultSchema), simulated_at: timezoneAwareTimestampSchema }).strict();
+export const recommendationSchema = z.object({ recommendation_id: z.string().min(1).nullable().optional(), state_id: z.string().min(1), chosen_action: actionSchema, irrigation_constraint: z.enum(["NONE", "AVOID_OVERHEAD_IRRIGATION", "PREFER_EARLY_MORNING_WINDOW"]), inspection_advisory: z.boolean(), decision_reason_codes: z.array(z.string().min(1)), caution_reasons: z.array(z.enum(["HIGH_UNCERTAINTY", "FUNGAL_DISEASE_RISK"])), evidence_summary_structured: z.record(z.string(), z.unknown()), recommended_at: timezoneAwareTimestampSchema }).strict();
+export const narrationSchema = z.object({ state_id: z.string().min(1), headline: z.string().min(1), rationale: z.string().min(1), caution: z.string().min(1).nullable().optional() }).strict();
+export const historyEventSchema = z.object({ timestamp: timezoneAwareTimestampSchema, growth_stage: z.enum(["initial", "development", "mid_season", "late_season"]), predicted_label: z.string(), root_zone_depletion: finiteNumber, stress_band: stressBandSchema }).strict();
+export const sessionHistorySchema = z.object({ state_id: z.string().min(1), history: z.array(historyEventSchema) }).strict();
+export const actualActionCreateSchema = z.object({ action: actionSchema, performed_at: timezoneAwareTimestampSchema, amount_mm: finiteNumber.min(0).nullable().optional(), related_recommendation_id: z.string().min(1).nullable().optional(), notes: z.string().max(1000).nullable().optional() }).strict();
+export const actualActionSchema = z.object({ actual_action_id: z.string().min(1), state_id: z.string().min(1), related_recommendation_id: z.string().min(1).nullable(), action: actionSchema, performed_at: timezoneAwareTimestampSchema, amount_mm: finiteNumber.min(0).nullable(), notes: z.string().max(1000).nullable(), recorded_at: timezoneAwareTimestampSchema }).strict();
+export const actualActionsSchema = z.array(actualActionSchema);
 
 export const farmFormSchema = z.object({ name: z.string().trim().min(1, "Farm name is required.").max(200) });
 export const locationFormSchema = z.object({

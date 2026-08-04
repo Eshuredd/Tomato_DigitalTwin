@@ -9,6 +9,9 @@ describe("query keys", () => {
     expect(queryKeys.waterState("state-1")).toEqual(["croptwin", "sessions", "state-1", "water-state"]);
     expect(queryKeys.twinState("state-1")).toEqual(["croptwin", "sessions", "state-1", "twin-state"]);
     expect(queryKeys.advancement("state-1", "advance-1")).toEqual(["croptwin", "sessions", "state-1", "advancement", "advance-1"]);
+    expect(queryKeys.simulation("state-1")).toEqual(["croptwin", "sessions", "state-1", "simulation"]);
+    expect(queryKeys.recommendation("state-1")).toEqual(["croptwin", "sessions", "state-1", "recommendation"]);
+    expect(queryKeys.narration("state-1")).toEqual(["croptwin", "sessions", "state-1", "narration"]);
   });
 
   it("keeps date, limit, farm, and state scopes distinct", () => {
@@ -32,6 +35,17 @@ describe("query keys", () => {
     await client.invalidateQueries({ queryKey: queryKeys.plots("farm-1"), exact: true });
     expect(client.getQueryState(queryKeys.plots("farm-1"))?.isInvalidated).toBe(true);
     expect(client.getQueryState(queryKeys.plots("farm-2"))?.isInvalidated).toBe(false);
+  });
+
+  it("invalidates every actual-action limit for one state only", async () => {
+    const client = createQueryClient();
+    client.setQueryData(queryKeys.actualActions("state-1", 25), []);
+    client.setQueryData(queryKeys.actualActions("state-1", 50), []);
+    client.setQueryData(queryKeys.actualActions("state-2", 50), []);
+    await client.invalidateQueries({ queryKey: queryKeys.actualActionsRoot("state-1") });
+    expect(client.getQueryState(queryKeys.actualActions("state-1", 25))?.isInvalidated).toBe(true);
+    expect(client.getQueryState(queryKeys.actualActions("state-1", 50))?.isInvalidated).toBe(true);
+    expect(client.getQueryState(queryKeys.actualActions("state-2", 50))?.isInvalidated).toBe(false);
   });
 
   it("disables automatic mutation retries", () => {

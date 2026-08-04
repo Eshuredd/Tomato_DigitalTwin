@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createCropCycle, createFarm, createPlot, createSession, getSession, getWeatherSnapshot, predictDisease } from "./operations";
+import { createActualAction, createCropCycle, createFarm, createPlot, createSession, getActualActions, getHistory, getSession, getWeatherSnapshot, narrate, predictDisease, recommend, simulateActions } from "./operations";
 
 const farm = { farm_id: "farm-1", name: "Farm", created_at: "2026-08-03T00:00:00Z", updated_at: "2026-08-03T00:00:00Z" };
 const plot = { plot_id: "plot-1", farm_id: "farm-1", name: "Plot", location: { name: "Field", latitude: 17, longitude: 78 }, soil_texture: "loam", created_at: "2026-08-03T00:00:00Z", updated_at: "2026-08-03T00:00:00Z" };
@@ -62,4 +62,16 @@ describe("Milestone 3 API operations", () => {
     respond({ ...weather, fetched_at: "2026-08-04T04:00:00" });
     await expect(getWeatherSnapshot("state/one", "2026-08-04")).rejects.toMatchObject({ code: "MALFORMED_RESPONSE" });
   });
+});
+
+describe("decision and record API operations", () => {
+  const simulation = { state_id: "state/one", simulations: [
+    { action: "IRRIGATE_IN_6H", projected_root_zone_depletion: 2, projected_raw_crossing: false, projected_stress_band: "low", projected_water_use: 1, disease_wetness_risk_note: "note" },
+    { action: "IRRIGATE_NOW", projected_root_zone_depletion: 1, projected_raw_crossing: false, projected_stress_band: "low", projected_water_use: 2, disease_wetness_risk_note: "note" },
+  ], simulated_at: "2026-08-04T04:00:00Z" };
+  it("preserves exact simulation action order in the request and response", async () => { const fetchMock = respond(simulation); await simulateActions("state/one", { state_id: "state/one", actions: ["IRRIGATE_IN_6H", "IRRIGATE_NOW"] }); expect(JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string).actions).toEqual(["IRRIGATE_IN_6H", "IRRIGATE_NOW"]); });
+  it("rejects empty candidates and backend reordering", async () => { respond(simulation); await expect(simulateActions("state/one", { state_id: "state/one", actions: [] })).rejects.toBeTruthy(); respond({ ...simulation, simulations: [...simulation.simulations].reverse() }); await expect(simulateActions("state/one", { state_id: "state/one", actions: ["IRRIGATE_IN_6H", "IRRIGATE_NOW"] })).rejects.toMatchObject({ code: "SIMULATION_ORDER_MISMATCH" }); });
+  it("uses explicit bodyless recommendation and narration POSTs", async () => { const fetchMock = respond({ recommendation_id: "rec-1", state_id: "state/one", chosen_action: "IRRIGATE_NOW", irrigation_constraint: "NONE", inspection_advisory: false, decision_reason_codes: [], caution_reasons: [], evidence_summary_structured: {}, recommended_at: "2026-08-04T04:00:00Z" }); await recommend("state/one"); expect(fetchMock).toHaveBeenLastCalledWith("http://127.0.0.1:8000/sessions/state%2Fone/recommend", expect.objectContaining({ method: "POST", body: undefined })); fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ state_id: "state/one", headline: "Headline", rationale: "Exact rationale", caution: null }), { status: 200 })); expect((await narrate("state/one")).rationale).toBe("Exact rationale"); });
+  it("validates history identity", async () => { respond({ state_id: "other", history: [] }); await expect(getHistory("state/one")).rejects.toMatchObject({ code: "RESPONSE_STATE_ID_MISMATCH" }); });
+  it("uses exact list limit and preserves explicit zero in an action payload", async () => { const action = { actual_action_id: "a-1", state_id: "state/one", related_recommendation_id: null, action: "IRRIGATE_NOW", performed_at: "2026-08-04T04:00:00Z", amount_mm: 0, notes: null, recorded_at: "2026-08-04T04:01:00Z" }; const fetchMock = respond([action]); await getActualActions("state/one", 50); expect(fetchMock.mock.calls[0][0]).toBe("http://127.0.0.1:8000/sessions/state%2Fone/actual-actions?limit=50"); fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(action), { status: 200 })); await createActualAction("state/one", { action: "IRRIGATE_NOW", performed_at: "2026-08-04T04:00:00Z", amount_mm: 0 }); expect(JSON.parse((fetchMock.mock.calls.at(-1)![1] as RequestInit).body as string)).toMatchObject({ amount_mm: 0 }); });
 });

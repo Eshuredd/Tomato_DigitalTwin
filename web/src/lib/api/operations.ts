@@ -2,8 +2,8 @@ import { apiRequest } from "./client";
 import { CropTwinApiError } from "./errors";
 import { farmPath, plotPath, sessionPath } from "./paths";
 import {
-  advanceOneDaySchema, createdSessionSchema, diseasePredictionSchema, farmSchema, farmsSchema, healthSchema, loadedSessionSchema, plotSchema, plotsSchema, systemInfoSchema, updateTwinStateSchema, waterStateSchema, weatherSnapshotSchema,
-  type AdvanceOneDayRequest, type ComputeWaterStateRequest, type CreateCropCycleInput, type CreateFarmInput, type CreatePlotInput, type CreateSessionInput, type PredictDiseaseInput,
+  actualActionCreateSchema, actualActionSchema, actualActionsSchema, advanceOneDaySchema, createdSessionSchema, diseasePredictionSchema, farmSchema, farmsSchema, healthSchema, loadedSessionSchema, narrationSchema, plotSchema, plotsSchema, recommendationSchema, sessionHistorySchema, simulateActionsRequestSchema, simulateActionsResponseSchema, systemInfoSchema, updateTwinStateSchema, waterStateSchema, weatherSnapshotSchema,
+  type ActualActionCreateRequest, type AdvanceOneDayRequest, type ComputeWaterStateRequest, type CreateCropCycleInput, type CreateFarmInput, type CreatePlotInput, type CreateSessionInput, type PredictDiseaseInput, type SimulateActionsRequest,
 } from "./contracts";
 
 export const getHealth = (signal?: AbortSignal) => apiRequest("/health", { signal, schema: healthSchema });
@@ -52,6 +52,20 @@ export async function advanceOneDay(stateId: string, body: AdvanceOneDayRequest,
   if (response.water_state.state_id !== stateId || response.twin_state.state_id !== stateId) throw mismatchedResponse("nested advancement state", stateId, response.water_state.state_id);
   return response;
 }
+
+export async function simulateActions(stateId: string, body: SimulateActionsRequest, signal?: AbortSignal) {
+  const input = simulateActionsRequestSchema.parse(body);
+  const response = await apiRequest(sessionPath(stateId, "simulate-actions"), { method: "POST", body: input, signal, schema: simulateActionsResponseSchema });
+  if (response.state_id !== stateId) throw mismatchedResponse("simulation", stateId, response.state_id);
+  if (response.simulations.length !== input.actions.length || response.simulations.some((item, index) => item.action !== input.actions[index])) throw new CropTwinApiError({ kind: "malformed", code: "SIMULATION_ORDER_MISMATCH", message: "FastAPI returned simulation candidates in a different order." });
+  return response;
+}
+
+export async function recommend(stateId: string, signal?: AbortSignal) { const response = await apiRequest(sessionPath(stateId, "recommend"), { method: "POST", signal, schema: recommendationSchema }); if (response.state_id !== stateId) throw mismatchedResponse("recommendation", stateId, response.state_id); return response; }
+export async function narrate(stateId: string, signal?: AbortSignal) { const response = await apiRequest(sessionPath(stateId, "narrate"), { method: "POST", signal, schema: narrationSchema }); if (response.state_id !== stateId) throw mismatchedResponse("narration", stateId, response.state_id); return response; }
+export async function getHistory(stateId: string, signal?: AbortSignal) { const response = await apiRequest(sessionPath(stateId, "history"), { signal, schema: sessionHistorySchema }); if (response.state_id !== stateId) throw mismatchedResponse("history", stateId, response.state_id); return response; }
+export async function getActualActions(stateId: string, limit: number, signal?: AbortSignal) { return apiRequest(`${sessionPath(stateId, "actual-actions")}?limit=${encodeURIComponent(limit)}`, { signal, schema: actualActionsSchema }).then((items) => { if (items.some((item) => item.state_id !== stateId)) throw mismatchedResponse("actual action", stateId, items.find((item) => item.state_id !== stateId)!.state_id); return items; }); }
+export async function createActualAction(stateId: string, body: ActualActionCreateRequest, signal?: AbortSignal) { const input = actualActionCreateSchema.parse(body); const response = await apiRequest(sessionPath(stateId, "actual-actions"), { method: "POST", body: input, signal, schema: actualActionSchema }); if (response.state_id !== stateId) throw mismatchedResponse("actual action", stateId, response.state_id); return response; }
 
 function mismatchedResponse(resource: string, expected: string, received: string) {
   return new CropTwinApiError({ kind: "malformed", code: "RESPONSE_STATE_ID_MISMATCH", message: `FastAPI returned ${resource} for a different session.`, details: { expected_state_id: expected, returned_state_id: received } });
