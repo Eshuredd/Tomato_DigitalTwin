@@ -1,6 +1,6 @@
 # CropTwin Next.js application
 
-Milestone 2 adds browser-visible FastAPI health and system metadata, farms, plots, standalone sessions, plot-backed crop cycles, and explicit active-session routes to the accepted foundation. Disease, water, advancement, simulation, recommendation, narration, history, and actual-action workflows remain deferred. Complete parity is not claimed.
+Milestone 3 adds the state-ID-scoped guided workflow, supporting tomato-leaf disease evidence, explicit weather retrieval and review, and recent-irrigation input preparation to the accepted foundation. Water-state computation, twin updates, advancement, simulation, recommendation, narration, history, and actual-action workflows remain deferred. Complete parity is not claimed.
 
 ## Requirements
 
@@ -42,7 +42,15 @@ npm run build
 npm run test:e2e
 ```
 
-The Playwright configuration starts FastAPI with the in-memory state store. It does not use or mutate an important persistent database.
+The Playwright configuration starts a test-only launcher that imports the real FastAPI app, uses the in-memory state store, overrides disease inference deterministically, and patches weather retrieval only inside the test process. It does not use or mutate an important persistent database.
+
+## Milestone 3 workflow boundaries
+
+- `/workflow/[stateId]` uses the encoded route parameter as authoritative workflow identity. `/workflow?stateId=…` remains a compatibility entry and redirects to it.
+- Disease evidence accepts exactly one JPEG, PNG, or WebP image up to 10 MiB. The image is converted to raw base64 only immediately before submission and is never retained in query state. Results always carry the safety statement “Supporting AI evidence — not a confirmed diagnosis.”
+- Weather retrieval is user-triggered and date-specific. Fetched values can be reviewed with visible overrides or replaced by clearly labelled fully manual input. Either mode requires an explicit “Accept reviewed weather” action.
+- Irrigation input can represent no recent irrigation, direct depth, litres divided by area, or drip runtime. The permitted conversions are `amount_mm = total_litres / irrigated_area_m2` and `total_litres = emitter_count * emitter_flow_lph * (runtime_minutes / 60)`; full precision is retained.
+- Accepted reviewed weather and irrigation values are route-scoped unsaved drafts. They are prepared for later water-state computation, are not persisted to FastAPI, and become stale when their source fields change.
 
 ## Milestone 2 form and identity boundaries
 

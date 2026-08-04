@@ -15,12 +15,20 @@ export type CreateSessionInput = components["schemas"]["CreateSessionRequest"];
 export type CreatedSession = components["schemas"]["SessionResponse"];
 export type LoadedSession = components["schemas"]["SessionStateResponse"];
 export type SessionSummary = CreatedSession | LoadedSession;
+export type PredictDiseaseInput = components["schemas"]["PredictDiseaseRequest"];
+export type DiseasePrediction = components["schemas"]["DiseasePredictionResponse"];
+export type WeatherInput = components["schemas"]["WeatherInput"];
+export type WeatherSnapshot = components["schemas"]["WeatherSnapshotResponse"];
 
 export const soilTextures = ["sand", "sandy_loam", "loam", "silty_loam", "clay_loam", "clay"] as const;
 export const soilTextureSchema = z.enum(soilTextures);
 export type SoilTexture = z.infer<typeof soilTextureSchema>;
 
 const finiteNumber = z.number().finite();
+export const timezoneAwareTimestampSchema = z.string().refine((value) => {
+  if (!/(?:Z|[+-]\d{2}:\d{2})$/.test(value)) return false;
+  return !Number.isNaN(Date.parse(value));
+}, "Timestamp must include a valid timezone offset.");
 export const locationSchema = z.object({
   name: z.string().min(1),
   latitude: finiteNumber.min(-90).max(90),
@@ -66,6 +74,47 @@ export const systemInfoSchema = z.object({
   recommendation_policy: stringRecord, narrator_policy: stringRecord,
 }).strict();
 export type SystemInfo = z.infer<typeof systemInfoSchema>;
+
+export const diseasePredictionSchema = z.object({
+  state_id: z.string().min(1),
+  crop_type: z.literal("tomato"),
+  predicted_label: z.string().min(1),
+  disease_category: z.enum(["fungal", "bacterial", "viral", "none"]),
+  class_probs: z.record(z.string(), z.number().finite().min(0).max(1)),
+  confidence_calibrated: z.number().finite().min(0).max(1),
+  uncertainty_score: z.number().finite(),
+  uncertainty_band: z.enum(["low", "medium", "high"]),
+  predicted_at: timezoneAwareTimestampSchema,
+}).strict();
+
+export const weatherInputSchema = z.object({
+  tmin_c: z.number().finite(),
+  tmax_c: z.number().finite(),
+  humidity_pct: z.number().finite().min(0).max(100),
+  wind_speed_mps: z.number().finite().min(0),
+  shortwave_radiation_sum_mj_m2: z.number().finite().min(0).nullable().optional(),
+  rainfall_mm: z.number().finite().min(0),
+  eto_reference_feed: z.number().finite().nullable().optional(),
+}).strict();
+
+export const weatherSnapshotSchema = z.object({
+  state_id: z.string().min(1),
+  target_date: z.string(),
+  source: z.literal("open_meteo"),
+  source_timezone: z.string().min(1),
+  latitude: z.number().finite(),
+  longitude: z.number().finite(),
+  tmin_c: z.number().finite(),
+  tmax_c: z.number().finite(),
+  humidity_pct: z.number().finite().min(0).max(100),
+  wind_speed_mps: z.number().finite().min(0),
+  wind_source_height_m: z.number().finite().positive(),
+  wind_normalized_height_m: z.number().finite().positive(),
+  rainfall_mm: z.number().finite().min(0),
+  shortwave_radiation_sum_mj_m2: z.number().finite().min(0),
+  eto_reference_feed: z.number().finite().min(0),
+  fetched_at: timezoneAwareTimestampSchema,
+}).strict();
 
 export const farmFormSchema = z.object({ name: z.string().trim().min(1, "Farm name is required.").max(200) });
 export const locationFormSchema = z.object({

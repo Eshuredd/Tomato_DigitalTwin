@@ -12,7 +12,14 @@ describe("query keys", () => {
     expect(queryKeys.weatherSnapshot("state-1", "2026-08-03")).not.toEqual(queryKeys.weatherSnapshot("state-1", "2026-08-04"));
     expect(queryKeys.actualActions("state-1", 20)).not.toEqual(queryKeys.actualActions("state-1", 50));
     expect(queryKeys.session("state-1")).not.toEqual(queryKeys.session("state-2"));
+    expect(queryKeys.diseaseEvidence("state-1")).not.toEqual(queryKeys.diseaseEvidence("state-2"));
     expect(queryKeys.plots("farm-1")).not.toEqual(queryKeys.plots("farm-2"));
+  });
+
+  it("does not expose disease evidence across state IDs", () => {
+    const client = createQueryClient();
+    client.setQueryData(queryKeys.diseaseEvidence("state-1"), { response: { state_id: "state-1" } });
+    expect(client.getQueryData(queryKeys.diseaseEvidence("state-2"))).toBeUndefined();
   });
 
   it("targets only one farm plot list for invalidation", async () => {

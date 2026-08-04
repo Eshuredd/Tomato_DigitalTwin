@@ -11,7 +11,7 @@ import { HealthStatusCard } from "@/features/system/health-status-card";
 export default function OverviewPage() {
   return (
     <>
-      <PageIntro eyebrow="Workspace overview" title="Field structure and crop-cycle entry" description="CropTwin now connects farms, plots, sessions, health, and system metadata directly to FastAPI while later agronomy workflows remain deferred." badge="Milestone 2" />
+      <PageIntro eyebrow="Workspace overview" title="Field structure and guided evidence preparation" description="CropTwin connects farms, plots, sessions, disease evidence, reviewed weather, and irrigation input preparation directly to FastAPI boundaries while later agronomy workflows remain deferred." badge="Milestone 3" />
       <Alert variant="info" className="mb-5">
         <ShieldCheck className="mt-0.5 size-4" aria-hidden="true" />
         <AlertTitle>Backend authority remains explicit</AlertTitle>

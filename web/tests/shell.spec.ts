@@ -40,13 +40,18 @@ test("supports keyboard focus and skip navigation", async ({ page }) => {
   await expect(skip).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page.locator("#main-content")).toBeFocused();
-  await page.goto("/workflow");
+  await page.goto("/cycle");
+  await page.getByLabel("Location name").fill("Keyboard field");
+  await page.getByLabel("Latitude").fill("17.385");
+  await page.getByLabel("Longitude").fill("78.4867");
+  await page.getByRole("button", { name: "Create standalone session" }).click();
+  await page.getByRole("link", { name: "Open workflow" }).click();
   const firstStep = page.getByRole("button", { name: /Session.*Completed/ });
   await firstStep.click();
-  await expect(page.getByText(/Selected demonstration step:/)).toContainText("Session");
-  await firstStep.focus();
+  await expect(page.getByRole("heading", { name: "Session recognized" })).toBeVisible();
+  await page.getByRole("button", { name: /Session.*Active/ }).focus();
   await page.keyboard.press("ArrowRight");
-  await expect(page.getByRole("button", { name: /Disease evidence.*Active/ })).toBeFocused();
+  await expect(page.getByRole("button", { name: /Disease evidence.*Available/ })).toBeFocused();
 });
 
 test("loads the declared application icon without a failed response", async ({ page, request }) => {

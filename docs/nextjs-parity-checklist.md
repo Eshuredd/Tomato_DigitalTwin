@@ -1,6 +1,6 @@
 # CropTwin Next.js parity checklist
 
-This checklist records the FastAPI and Streamlit behavior that the rebuild must restore. Milestone 2 implements the management and session-entry rows noted below; later agronomy workflows remain unimplemented.
+This checklist records the FastAPI and Streamlit behavior that the rebuild must restore. Milestone 3 implements the disease, weather-review, and irrigation-input rows noted below; later agronomy workflows remain unimplemented.
 
 | Capability | Authoritative API | Implemented | Browser verified | Notes that must survive |
 |---|---|---:|---:|---|
@@ -9,9 +9,9 @@ This checklist records the FastAPI and Streamlit behavior that the rebuild must 
 | Plots | `POST/GET /farms/{farm_id}/plots`, `GET /plots/{plot_id}` | Yes | Yes | Create/list/detail and stored location/soil context exercised. |
 | Plot-backed crop cycle | `POST /plots/{plot_id}/crop-cycles` | Yes | Yes | Creation and authoritative inherited context exercised. |
 | Standalone session | `POST /sessions`, `GET /sessions/{state_id}` | Yes | Partial | Creation and structured not-found are verified. Populated GET requires a current twin snapshot and remains unverified until a later workflow creates one. |
-| Disease evidence | `POST /sessions/{state_id}/predict-disease` | No | No | AI evidence is supporting, uncertainty-aware evidence only. |
-| Weather review | `GET /sessions/{state_id}/weather-snapshot` | No | No | Retrieval is explicit and date-specific; reviewed overrides remain visible. |
-| Irrigation conversion inputs | Client input feeding water/advancement requests | No | No | Millimetres, litres plus area, and drip runtime remain distinct input modes. |
+| Disease evidence | `POST /sessions/{state_id}/predict-disease` | Yes | Yes | One JPEG/PNG/WebP up to 10 MiB; system model version, cancellation and stale-response guards; supporting, uncertainty-aware evidence only. |
+| Weather review | `GET /sessions/{state_id}/weather-snapshot` | Yes | Yes | Retrieval is explicit and date-specific; fetched overrides remain visible; fully manual provenance is distinct; acceptance is deliberate. |
+| Irrigation conversion inputs | Unsaved client input for a later water request | Yes | Yes | No irrigation, millimetres, litres plus area, and drip runtime remain distinct; full precision and explicit zero semantics are preserved; no request is sent. |
 | Water state | `POST /sessions/{state_id}/compute-water-state` | No | No | Preserve stable update identity, canonical lineage, and no double counting. |
 | Twin update | `POST /sessions/{state_id}/update-twin-state` | No | No | Reused snapshots are distinct from newly created snapshots. |
 | One-day advancement | `POST /sessions/{state_id}/advance-one-day` | No | No | Exactly one required date; preserve new/current/catch-up/historical retry semantics. |

@@ -7,7 +7,7 @@
 - `query-keys.ts` defines stable hierarchical keys for invalidation.
 - `query-client.ts` disables automatic mutation retries. The transport itself never retries requests, so POST retries always require an explicit user or workflow decision.
 - `contracts.ts` aliases generated OpenAPI types and adds Zod runtime schemas for untrusted responses and form boundaries.
-- `operations.ts` contains one small operation per FastAPI endpoint used by Milestone 2; `hooks/` owns query lifecycles and exact invalidation.
+- `operations.ts` contains one small operation per FastAPI endpoint used by the accepted milestones; `hooks/` owns query lifecycles and exact invalidation.
 
 Contract checks have separate responsibilities:
 

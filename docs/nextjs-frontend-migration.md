@@ -16,7 +16,7 @@ FastAPI remains authoritative for agronomy, disease inference, simulations, reco
 
 ## Current milestone
 
-Milestone 1 established the accepted application foundation. Milestone 2 now adds:
+Milestones 1 and 2 established the application, contract, management, and session foundations. Milestone 3 adds:
 
 - a stable App Router, React, strict TypeScript, and Tailwind foundation;
 - a checked-in FastAPI OpenAPI snapshot and generated TypeScript declarations;
@@ -30,12 +30,20 @@ Milestone 1 established the accepted application foundation. Milestone 2 now add
 - standalone session creation and explicit existing-session loading;
 - plot-backed crop-cycle creation and `/cycle/[stateId]` summaries;
 - Vitest, Testing Library, and isolated-memory FastAPI Playwright coverage.
+- a real `/workflow/[stateId]` route whose route parameter is authoritative;
+- supporting tomato-leaf disease evidence using the system-advertised model version, runtime response validation, cancellation, and stale-response rejection;
+- explicit, date-specific weather retrieval with fetched-and-reviewed or fully manual provenance and deliberate acceptance;
+- recent-irrigation preparation for no irrigation, direct millimetres, litres plus area, and drip-runtime conversions;
+- route-owned unsaved weather and irrigation drafts that are invalidated when prior accepted inputs change; and
+- a test-only ASGI launcher with deterministic disease and weather dependencies while preserving real FastAPI routes and error handling.
 
-Milestone 2 does not implement disease, weather, irrigation, water state, twin update, advancement, simulation, recommendation, narration, history, or actual actions. It does not claim feature parity.
+Disease results remain supporting AI evidence, not a confirmed diagnosis. Images are limited to one JPEG, PNG, or WebP file up to 10 MiB. Weather is never fetched merely because a stage opens or a date changes; reviewed weather requires explicit acceptance and manual input makes no source claim. The only irrigation calculations in TypeScript are unit conversions: litres divided by area, and emitter count × flow × runtime-hours divided by area. Reviewed weather and irrigation are not persisted yet.
+
+Milestone 3 does not implement water state, twin update, advancement, simulation, recommendation, narration, history, or actual actions. It does not claim feature parity.
 
 ## Route foundation
 
-| Route | Area | Milestone 2 state |
+| Route | Area | Milestone 3 state |
 |---|---|---|
 | `/` | Overview | Browser-visible health and current milestone overview |
 | `/farms` | Farms | Real list and create workflow |
@@ -43,7 +51,8 @@ Milestone 2 does not implement disease, weather, irrigation, water state, twin u
 | `/plots/[plotId]` | Plot detail | Stored context and plot-backed cycle creation |
 | `/cycle` | Session entry | Standalone creation and explicit state-ID loading |
 | `/cycle/[stateId]` | Active cycle | Authoritative session summary or normal not-yet-computed state |
-| `/workflow` | Nine-step workflow | Placeholder-state stepper only |
+| `/workflow` | Workflow entry | Explanatory entry or safe `stateId` compatibility redirect |
+| `/workflow/[stateId]` | Nine-step workflow | Session, disease, weather, and irrigation stages implemented; later stages visibly blocked |
 | `/history` | History | Neutral placeholder |
 | `/actions` | Actual actions | Neutral placeholder |
 | `/system` | System information | Real FastAPI metadata query |

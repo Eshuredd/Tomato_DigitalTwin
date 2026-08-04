@@ -12,8 +12,8 @@ export default defineConfig({
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: [
     {
-      command: "CROPTWIN_STATE_STORE=memory CROPTWIN_CORS_ORIGINS=http://127.0.0.1:3100 python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000",
-      cwd: "../backend",
+      command: "python3 tests/support/milestone3_api.py",
+      cwd: ".",
       url: "http://127.0.0.1:8000/health",
       reuseExistingServer: false,
       timeout: 120_000,
