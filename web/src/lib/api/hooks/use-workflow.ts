@@ -1,8 +1,8 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { DiseasePrediction, PredictDiseaseInput } from "../contracts";
-import { getWeatherSnapshot, predictDisease } from "../operations";
+import type { AdvanceOneDayRequest, ComputeWaterStateRequest, DiseasePrediction, PredictDiseaseInput } from "../contracts";
+import { advanceOneDay, computeWaterState, getWeatherSnapshot, predictDisease, updateTwinState } from "../operations";
 import { queryKeys } from "../query-keys";
 
 export interface CachedDiseaseEvidence {
@@ -36,3 +36,7 @@ export function useWeatherSnapshot(stateId: string, targetDate: string) {
   });
   return { ...query, cancel: () => client.cancelQueries({ queryKey, exact: true }) };
 }
+
+export function useComputeWaterState() { return useMutation({ mutationFn: ({ stateId, input, signal }: { stateId: string; input: ComputeWaterStateRequest; signal: AbortSignal }) => computeWaterState(stateId, input, signal), retry: false }); }
+export function useUpdateTwinState() { return useMutation({ mutationFn: ({ stateId, signal }: { stateId: string; signal: AbortSignal }) => updateTwinState(stateId, signal), retry: false }); }
+export function useAdvanceOneDay() { return useMutation({ mutationFn: ({ stateId, input, signal }: { stateId: string; input: AdvanceOneDayRequest; signal: AbortSignal }) => advanceOneDay(stateId, input, signal), retry: false }); }

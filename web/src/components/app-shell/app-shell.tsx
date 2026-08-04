@@ -42,7 +42,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </div>
             </div>
             <div className="hidden items-center gap-2 md:flex" aria-label="Current application context">
-              <Badge variant="info">Milestone 3</Badge>
+              <Badge variant="info">Milestone 4</Badge>
             </div>
           </div>
         </header>

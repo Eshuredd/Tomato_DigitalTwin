@@ -11,7 +11,7 @@ import { HealthStatusCard } from "@/features/system/health-status-card";
 export default function OverviewPage() {
   return (
     <>
-      <PageIntro eyebrow="Workspace overview" title="Field structure and guided evidence preparation" description="CropTwin connects farms, plots, sessions, disease evidence, reviewed weather, and irrigation input preparation directly to FastAPI boundaries while later agronomy workflows remain deferred." badge="Milestone 3" />
+      <PageIntro eyebrow="Workspace overview" title="Canonical crop and water state" description="CropTwin connects field context and accepted evidence to deterministic FastAPI water computation, canonical twin update, and controlled one-day advancement. Later decision workflows remain deferred." badge="Milestone 4" />
       <Alert variant="info" className="mb-5">
         <ShieldCheck className="mt-0.5 size-4" aria-hidden="true" />
         <AlertTitle>Backend authority remains explicit</AlertTitle>

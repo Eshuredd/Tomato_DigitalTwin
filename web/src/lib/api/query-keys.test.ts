@@ -6,6 +6,9 @@ describe("query keys", () => {
   it("nests entity views under stable parents", () => {
     expect(queryKeys.plots("farm/one")).toEqual(["croptwin", "farms", "farm/one", "plots"]);
     expect(queryKeys.history("state-1")).toEqual(["croptwin", "sessions", "state-1", "history"]);
+    expect(queryKeys.waterState("state-1")).toEqual(["croptwin", "sessions", "state-1", "water-state"]);
+    expect(queryKeys.twinState("state-1")).toEqual(["croptwin", "sessions", "state-1", "twin-state"]);
+    expect(queryKeys.advancement("state-1", "advance-1")).toEqual(["croptwin", "sessions", "state-1", "advancement", "advance-1"]);
   });
 
   it("keeps date, limit, farm, and state scopes distinct", () => {

@@ -9,6 +9,9 @@ export const queryKeys = {
   session: (stateId: string) => [...queryKeys.all, "sessions", stateId] as const,
   diseaseEvidence: (stateId: string) => [...queryKeys.session(stateId), "disease-evidence"] as const,
   weatherSnapshot: (stateId: string, targetDate: string) => [...queryKeys.session(stateId), "weather", targetDate] as const,
+  waterState: (stateId: string) => [...queryKeys.session(stateId), "water-state"] as const,
+  twinState: (stateId: string) => [...queryKeys.session(stateId), "twin-state"] as const,
+  advancement: (stateId: string, advancementId: string) => [...queryKeys.session(stateId), "advancement", advancementId] as const,
   history: (stateId: string) => [...queryKeys.session(stateId), "history"] as const,
   actualActions: (stateId: string, limit: number) => [...queryKeys.session(stateId), "actual-actions", { limit }] as const,
 } as const;

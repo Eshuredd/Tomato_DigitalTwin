@@ -1,6 +1,6 @@
 # CropTwin Next.js application
 
-Milestone 3 adds the state-ID-scoped guided workflow, supporting tomato-leaf disease evidence, explicit weather retrieval and review, and recent-irrigation input preparation to the accepted foundation. Water-state computation, twin updates, advancement, simulation, recommendation, narration, history, and actual-action workflows remain deferred. Complete parity is not claimed.
+Milestone 4 adds deterministic water-state computation, canonical twin update, and controlled one-day advancement to the accepted state-ID-scoped workflow. Simulation, recommendation, narration, history, and actual-action workflows remain deferred. Complete parity is not claimed.
 
 ## Requirements
 
@@ -44,7 +44,7 @@ npm run test:e2e
 
 The Playwright configuration starts a test-only launcher that imports the real FastAPI app, uses the in-memory state store, overrides disease inference deterministically, and patches weather retrieval only inside the test process. It does not use or mutate an important persistent database.
 
-## Milestone 3 workflow boundaries
+## Milestone 4 workflow boundaries
 
 - `/workflow/[stateId]` uses the encoded route parameter as authoritative workflow identity. `/workflow?stateId=…` remains a compatibility entry and redirects to it.
 - Disease evidence accepts exactly one JPEG, PNG, or WebP image up to 10 MiB. The image is converted to raw base64 only immediately before submission and is never retained in query state. Results always carry the safety statement “Supporting AI evidence — not a confirmed diagnosis.”
@@ -53,6 +53,11 @@ The Playwright configuration starts a test-only launcher that imports the real F
 - Pending weather retrievals use a component-local request generation and draft revision. A later date, field, or provenance edit wins and cannot be overwritten by an older response; repeated retrievals apply only the latest eligible response.
 - Irrigation input can represent no recent irrigation, direct depth, litres divided by area, or drip runtime. The permitted conversions are `amount_mm = total_litres / irrigated_area_m2` and `total_litres = emitter_count * emitter_flow_lph * (runtime_minutes / 60)`; full precision is retained.
 - Accepted reviewed weather and irrigation values are route-scoped unsaved drafts. They are prepared for later water-state computation, are not persisted to FastAPI, and become stale when their source fields change.
+- A canonical recursively sorted JSON signature omits undefined fields and drives route-memory UUID reuse. Exact retries reuse `water_update_id`, `irrigation_event_id`, or `advancement_id`; a semantic payload change creates a new identity. None are stored in `localStorage`.
+- No-irrigation sends `null`. Explicit zero materializes a real event and stays distinct. Initial-water and next-day advancement events use separate identity lifecycles.
+- The first water request omits both baseline fields. A later computation supplies the exact returned observation ID and positive sequence together; the browser never increments or fabricates lineage.
+- Twin update sends only `state_id`. Newly created and idempotently reused snapshots are labelled separately, and session refresh is deliberately invalidated after success without replacing the richer twin result.
+- Advancement preparation has a locked next UTC calendar date plus separate explicitly accepted weather and irrigation drafts. New/current/catch-up/historical results are classified before query data is updated; a failed catch-up twin refresh preserves the newer water result as partial success.
 
 ## Milestone 2 form and identity boundaries
 

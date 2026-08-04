@@ -14,7 +14,7 @@ describe("AppShell context header", () => {
       render(<AppShell><p>Workspace content</p></AppShell>);
       expect(screen.queryByText("No farm selected")).not.toBeInTheDocument();
       expect(screen.queryByText("No active cycle")).not.toBeInTheDocument();
-      expect(screen.getByText("Milestone 3")).toBeVisible();
+      expect(screen.getByText("Milestone 4")).toBeVisible();
       expect(fetchSpy).not.toHaveBeenCalled();
       fetchSpy.mockRestore();
     },
