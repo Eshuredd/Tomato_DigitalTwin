@@ -870,3 +870,4 @@ CropTwin is an MVP decision-support system.
 - High-uncertainty disease results require manual inspection.
 - The project does not provide pesticide, fertilizer, fungicide, insecticide, chemical, or dosage advice.
 - The project does not replace professional agronomic advice or field inspection.
+- making the mobile app
