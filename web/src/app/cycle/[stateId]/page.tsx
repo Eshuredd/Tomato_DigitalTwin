@@ -1,0 +1,2 @@
+import { ActiveCycleWorkspace } from "@/features/cycles/active-cycle-workspace";
+export default async function ActiveCyclePage({ params, searchParams }: { params: Promise<{ stateId: string }>; searchParams: Promise<{ plotId?: string; mode?: string }> }) { const [{ stateId }, query] = await Promise.all([params, searchParams]); return <ActiveCycleWorkspace stateId={stateId} plotId={query.plotId} standalone={query.mode === "standalone"} />; }

@@ -1,0 +1,17 @@
+"use client";
+import { RefreshCw, ShieldCheck } from "lucide-react";
+import { PageIntro } from "@/components/app-shell/page-intro";
+import { TechnicalDetails } from "@/components/data/technical-details";
+import { ApiErrorPanel } from "@/components/shared-states/api-error-panel";
+import { AsyncStatePanel } from "@/components/shared-states/async-state-panel";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { API_BASE_URL } from "@/lib/api/config";
+import { useSystemInfo } from "@/lib/api/hooks/use-system-info";
+
+export function SystemWorkspace() {
+  const info = useSystemInfo();
+  return <><PageIntro eyebrow="Runtime transparency" title="System information" description="Inspect browser-visible FastAPI metadata and the deterministic decision boundary used by CropTwin." />{info.isLoading ? <AsyncStatePanel kind="loading" title="Loading system information" /> : null}{info.isError ? <ApiErrorPanel error={info.error} onRetry={() => info.refetch()} title="System information unavailable" /> : null}{info.data ? <div className="grid gap-5"><Card className="border-[var(--agronomy-border)]"><CardHeader><div className="flex flex-wrap items-center justify-between gap-3"><div><Badge variant="agronomy"><ShieldCheck className="size-3.5" aria-hidden="true" /> Deterministic authority</Badge><CardTitle className="mt-3">{info.data.project_name}</CardTitle><CardDescription>API stage: {info.data.api_stage} · Crop: {info.data.crop_type}</CardDescription></div><Button type="button" variant="secondary" size="sm" disabled={info.isFetching} onClick={() => info.refetch()}><RefreshCw className={`size-3.5 ${info.isFetching ? "animate-spin" : ""}`} aria-hidden="true" />Refresh</Button></div></CardHeader><CardContent><p className="rounded-lg bg-[var(--agronomy-soft)] p-4 text-sm font-semibold text-[var(--agronomy-strong)]">Decision boundary: {info.data.decision_boundary.replaceAll("_", " ")}</p></CardContent></Card><div className="grid gap-5 md:grid-cols-2"><MetadataCard title="Growth stages" value={info.data.growth_stage_config} /><MetadataCard title="Water model" value={info.data.water_model_config} /><MetadataCard title="Disease evidence model" value={info.data.disease_model} evidence /><MetadataCard title="Narrator policy" value={info.data.narrator_policy} /></div><TechnicalDetails label="Complete FastAPI system response" value={{ api_base_url: API_BASE_URL, ...info.data }} /></div> : null}</>;
+}
+function MetadataCard({ title, value, evidence = false }: { title: string; value: Record<string, unknown>; evidence?: boolean }) { return <Card className={evidence ? "border-[var(--evidence-border)]" : undefined}><CardHeader><CardTitle>{title}</CardTitle><CardDescription>{evidence ? "Supporting, uncertainty-aware model metadata." : "Authoritative configuration returned by FastAPI."}</CardDescription></CardHeader><CardContent><dl className="grid gap-2 text-sm">{Object.entries(value).slice(0, 5).map(([key, item]) => <div key={key} className="grid grid-cols-[minmax(8rem,0.8fr)_1.2fr] gap-3 border-t border-[var(--border-subtle)] py-2 first:border-0"><dt className="text-[var(--text-muted)]">{key.replaceAll("_", " ")}</dt><dd className="break-words font-medium text-[var(--text-strong)]">{typeof item === "object" ? JSON.stringify(item) : String(item)}</dd></div>)}</dl></CardContent></Card>; }

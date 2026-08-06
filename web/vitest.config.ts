@@ -1,29 +1,16 @@
-import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   resolve: {
-    alias: {
-      "@": fileURLToPath(new URL("./src", import.meta.url)),
-    },
+    alias: { "@": new URL("./src", import.meta.url).pathname },
   },
   test: {
+    environment: "jsdom",
+    setupFiles: ["./src/test/setup.ts"],
+    exclude: ["tests/**", "node_modules/**", ".next/**"],
     coverage: {
       provider: "v8",
-      exclude: [
-        ".next/**",
-        "node_modules/**",
-        "coverage/**",
-        "*.config.*",
-        "next-env.d.ts",
-        "src/test/**",
-        "src/**/*.test.ts",
-        "src/**/*.test.tsx",
-        "src/lib/types/**",
-      ],
+      reporter: ["text", "json-summary"],
     },
-    environment: "jsdom",
-    globals: true,
-    setupFiles: ["./src/test/setup.ts"],
   },
 });

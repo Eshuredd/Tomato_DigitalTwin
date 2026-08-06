@@ -1,0 +1,45 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { CropTwinApiError } from "@/lib/api/errors";
+import { acceptIrrigationDraft, type AcceptedIrrigation, type IrrigationDraft } from "./irrigation/irrigation-draft";
+import { acceptedWeatherFromDraft, valuesFromSnapshot, type AcceptedWeather, type WeatherDraft } from "./weather/weather-draft";
+import { WorkflowWorkspace } from "./workflow-workspace";
+
+let sessionState: Record<string, unknown>;
+vi.mock("@/lib/api/hooks/use-sessions", () => ({ useSession: () => sessionState }));
+vi.mock("./disease/disease-stage", () => ({ DiseaseStage: ({ onAccepted, onSuperseded }: { onAccepted: (value: unknown) => void; onSuperseded: () => void }) => <><button onClick={() => onAccepted({ response: { state_id: "state-1", uncertainty_band: "low" }, fileSignature: "file", modelVersion: "1.0" })}>Accept test disease</button><button onClick={onSuperseded}>Replace with same-metadata image</button></> }));
+vi.mock("./weather/weather-stage", () => ({ WeatherStage: ({ stateId, draft, onDraftChange, onAccept }: { stateId: string; draft: WeatherDraft; onDraftChange: (draft: WeatherDraft) => void; onAccept: (accepted: AcceptedWeather) => void }) => <><button onClick={() => onDraftChange({ ...draft, values: valuesFromSnapshot({ state_id: stateId, target_date: draft.targetDate, source: "open_meteo", source_timezone: "UTC", latitude: 0, longitude: 0, tmin_c: 20, tmax_c: 30, humidity_pct: 50, wind_speed_mps: 1, wind_source_height_m: 10, wind_normalized_height_m: 2, rainfall_mm: 0, shortwave_radiation_sum_mj_m2: 10, eto_reference_feed: 2, fetched_at: "2026-08-04T00:00:00Z" }) })}>Fill test weather</button><button onClick={() => onAccept(acceptedWeatherFromDraft(stateId, draft))}>Accept test weather</button></> }));
+vi.mock("./irrigation/irrigation-stage", () => ({ IrrigationStage: ({ stateId, draft, onAccept }: { stateId: string; draft: IrrigationDraft; onAccept: (accepted: AcceptedIrrigation) => void }) => <button onClick={() => onAccept(acceptIrrigationDraft(stateId, draft))}>Accept test irrigation</button> }));
+
+function renderWorkspace(stateId = "state-1") { const client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); return render(<QueryClientProvider client={client}><WorkflowWorkspace key={stateId} stateId={stateId} /></QueryClientProvider>); }
+
+describe("WorkflowWorkspace sequencing", () => {
+  beforeEach(() => { sessionState = { isLoading: false, isError: false, data: { state_id: "state-1", planting_date: "2026-08-01" } }; vi.restoreAllMocks(); });
+  it("allows a recognized pre-snapshot session into disease", () => { sessionState = { isLoading: false, isError: true, error: new CropTwinApiError({ kind: "backend", code: "MISSING_CACHED_OUTPUT", message: "pending", statusCode: 409 }) }; renderWorkspace(); expect(screen.getByRole("button", { name: /Accept test disease/ })).toBeVisible(); });
+  it("blocks the workflow for state not found", () => { sessionState = { isLoading: false, isError: true, error: new CropTwinApiError({ kind: "backend", code: "STATE_NOT_FOUND", message: "missing", statusCode: 404 }), refetch: vi.fn() }; renderWorkspace(); expect(screen.getByText(/Workflow session unavailable/i)).toBeVisible(); expect(screen.queryByText(/Accept test disease/i)).not.toBeInTheDocument(); });
+  it("unlocks disease, weather, and irrigation explicitly while water remains blocked", () => { renderWorkspace(); fireEvent.click(screen.getByRole("button", { name: /Accept test disease/ })); fireEvent.click(screen.getByRole("button", { name: /Weather/ })); expect(screen.getByRole("button", { name: "Fill test weather" })).toBeVisible(); fireEvent.click(screen.getByRole("button", { name: "Fill test weather" })); fireEvent.click(screen.getByRole("button", { name: "Accept test weather" })); fireEvent.click(screen.getByRole("button", { name: /Irrigation/ })); expect(screen.getByRole("button", { name: "Accept test irrigation" })).toBeVisible(); fireEvent.click(screen.getByRole("button", { name: "Accept test irrigation" })); expect(screen.getByText(/no irrigation/i)).toBeVisible(); expect(screen.getAllByText("Blocked").length).toBeGreaterThan(0); });
+  it("does not write route drafts to localStorage", () => { const spy = vi.spyOn(Storage.prototype, "setItem"); renderWorkspace(); fireEvent.click(screen.getByRole("button", { name: /Accept test disease/ })); expect(spy).not.toHaveBeenCalled(); });
+  it("blocks weather and irrigation when same-metadata disease evidence is superseded", () => {
+    renderWorkspace();
+    fireEvent.click(screen.getByRole("button", { name: /Accept test disease/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Weather/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Fill test weather" }));
+    fireEvent.click(screen.getByRole("button", { name: "Accept test weather" }));
+    fireEvent.click(screen.getByRole("button", { name: /Irrigation/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Accept test irrigation" }));
+    fireEvent.click(screen.getByRole("button", { name: /Disease evidence/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Replace with same-metadata image" }));
+    expect(screen.queryByRole("button", { name: /Weather/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Irrigation/ })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("complementary", { name: "Workflow context" })).getAllByText("Not accepted")).toHaveLength(3);
+  });
+  it("does not unlock irrigation when weather changes without explicit acceptance", () => {
+    renderWorkspace();
+    fireEvent.click(screen.getByRole("button", { name: /Accept test disease/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Weather/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Fill test weather" }));
+    expect(screen.queryByRole("button", { name: /Irrigation/ })).not.toBeInTheDocument();
+  });
+  it("clears route-scoped progress when the state ID changes", () => { const view = renderWorkspace("state-1"); fireEvent.click(screen.getByRole("button", { name: /Accept test disease/ })); fireEvent.click(screen.getByRole("button", { name: /Weather/ })); expect(screen.getByRole("button", { name: "Fill test weather" })).toBeVisible(); sessionState = { ...sessionState, data: { state_id: "state-2", planting_date: "2026-08-01" } }; view.rerender(<QueryClientProvider client={new QueryClient()}><WorkflowWorkspace key="state-2" stateId="state-2" /></QueryClientProvider>); expect(screen.getByRole("button", { name: /Accept test disease/ })).toBeVisible(); expect(screen.queryByRole("button", { name: "Fill test weather" })).not.toBeInTheDocument(); });
+});

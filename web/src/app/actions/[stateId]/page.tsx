@@ -1,0 +1,2 @@
+import { ActionsWorkspace } from "@/features/actions/actions-workspace";
+export default async function ActionsDetailPage({ params, searchParams }: { params: Promise<{ stateId: string }>; searchParams: Promise<{ action?: string; recommendationId?: string }> }) { const [{ stateId }, query] = await Promise.all([params, searchParams]); return <ActionsWorkspace stateId={stateId} initialAction={query.action} initialRecommendationId={query.recommendationId} />; }

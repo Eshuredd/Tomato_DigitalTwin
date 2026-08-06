@@ -25,7 +25,7 @@ jobs:
         working-directory: web
 
     env:
-      NEXT_PUBLIC_CROPTWIN_API_BASE_URL: http://127.0.0.1:8000
+      NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:8000
 
     steps:
       - name: Checkout
@@ -41,6 +41,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify generated API contract
+        run: npm run api:check
+
       - name: Lint frontend
         run: npm run lint
 
@@ -55,6 +58,12 @@ jobs:
 
       - name: Build frontend
         run: npm run build
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run frontend browser smoke tests
+        run: npm run test:e2e
 
   python-tests:
     name: Python tests and SQLite migrations
@@ -95,6 +104,15 @@ jobs:
           import frontend.ui_helpers
           print("Application imports succeeded.")
           PY
+
+      - name: Verify FastAPI OpenAPI snapshot
+        working-directory: web
+        env:
+          PYTHONPATH: ../backend
+        run: npm run api:schema:check
+
+      - name: Test OpenAPI snapshot checker
+        run: python web/scripts/test_check_backend_schema.py
 
       - name: Run complete pytest suite
         env:

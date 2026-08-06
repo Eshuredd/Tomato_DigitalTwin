@@ -1,188 +1,67 @@
-import {
-  CropTwinApiError,
-  errorFromStructuredEnvelope,
-  isCropTwinErrorEnvelope,
-  redactSensitive,
-} from "./errors";
-import { normalizeApiBaseUrl } from "@/lib/config/env";
+import type { z } from "zod";
+import { API_BASE_URL, DEFAULT_API_TIMEOUT_MS } from "./config";
+import { CropTwinApiError, parseBackendError } from "./errors";
 
-const DEFAULT_TIMEOUT_MS = 30_000;
-
-export interface ApiRequestOptions<TBody = undefined> {
-  method?: "GET" | "POST";
-  body?: TBody;
-  cache?: RequestCache;
-  signal?: AbortSignal;
+export interface ApiRequestOptions<T> extends Omit<RequestInit, "body"> {
+  body?: unknown;
   timeoutMs?: number;
-  headers?: HeadersInit;
+  schema?: z.ZodType<T>;
+  baseUrl?: string;
 }
 
-export class CropTwinApiClient {
-  readonly baseUrl: string;
-  private readonly fetcher: typeof fetch;
-  private readonly defaultTimeoutMs: number;
-
-  constructor({
-    baseUrl,
-    fetcher = fetch,
-    timeoutMs = DEFAULT_TIMEOUT_MS,
-  }: {
-    baseUrl: string;
-    fetcher?: typeof fetch;
-    timeoutMs?: number;
-  }) {
-    this.baseUrl = normalizeApiBaseUrl(baseUrl);
-    this.fetcher = fetcher;
-    this.defaultTimeoutMs = timeoutMs;
-  }
-
-  async request<TResponse, TBody = undefined>(
-    path: string,
-    options: ApiRequestOptions<TBody> = {},
-  ): Promise<TResponse> {
-    const method = options.method ?? "GET";
-    const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort("timeout"), timeoutMs);
-    const abortListener = () => controller.abort("caller");
-
-    if (options.signal) {
-      if (options.signal.aborted) {
-        clearTimeout(timeoutId);
-        throw abortError();
-      }
-      options.signal.addEventListener("abort", abortListener, { once: true });
-    }
-
-    try {
-      const response = await this.fetcher(`${this.baseUrl}${path}`, {
-        method,
-        cache: options.cache ?? "no-store",
-        headers: buildHeaders(options.headers, options.body),
-        body:
-          options.body === undefined
-            ? undefined
-            : JSON.stringify(options.body),
-        signal: controller.signal,
-      });
-      return await parseResponse<TResponse>(response);
-    } catch (error) {
-      if (error instanceof CropTwinApiError) {
-        throw error;
-      }
-      if (controller.signal.aborted) {
-        if (controller.signal.reason === "timeout") {
-          throw new CropTwinApiError({
-            kind: "timeout",
-            status: null,
-            code: "FRONTEND_REQUEST_TIMEOUT",
-            message: "The CropTwin API request timed out.",
-          });
-        }
-        throw abortError();
-      }
-      throw new CropTwinApiError({
-        kind: "network",
-        status: null,
-        code: "FRONTEND_NETWORK_ERROR",
-        message:
-          error instanceof Error
-            ? error.message
-            : "Could not connect to the CropTwin API.",
-      });
-    } finally {
-      clearTimeout(timeoutId);
-      options.signal?.removeEventListener("abort", abortListener);
-    }
-  }
-}
-
-function buildHeaders(headers: HeadersInit | undefined, body: unknown): HeadersInit {
-  if (body === undefined) {
-    return headers ?? {};
-  }
-  return {
-    "Content-Type": "application/json",
-    Accept: "application/json",
-    ...headers,
-  };
-}
-
-async function parseResponse<TResponse>(response: Response): Promise<TResponse> {
-  if (response.status === 204) {
-    return undefined as TResponse;
-  }
-
+async function parseJson(response: Response): Promise<unknown> {
   const text = await response.text();
-  if (!text.trim()) {
-    if (response.ok) {
-      return undefined as TResponse;
-    }
-    throw new CropTwinApiError({
-      kind: "empty",
-      status: response.status,
-      code: "FRONTEND_EMPTY_ERROR_RESPONSE",
-      message: "The CropTwin API returned an empty error response.",
-      response,
-    });
-  }
-
-  let parsed: unknown;
+  if (!text.trim()) return undefined;
   try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new CropTwinApiError({
-      kind: "non_json",
-      status: response.status,
-      code: "FRONTEND_NON_JSON_RESPONSE",
-      message: "The CropTwin API returned a non-JSON response.",
-      response,
-    });
+    return JSON.parse(text) as unknown;
+  } catch (cause) {
+    throw new CropTwinApiError({ kind: "malformed", code: "MALFORMED_RESPONSE", message: "The CropTwin API returned a response that was not valid JSON.", statusCode: response.status, cause });
   }
+}
 
-  if (!response.ok) {
-    if (isCropTwinErrorEnvelope(parsed)) {
-      throw errorFromStructuredEnvelope(parsed, response);
-    }
-    if (isFastApiValidationError(parsed)) {
-      throw new CropTwinApiError({
-        kind: "api",
-        status: response.status,
-        code: "FASTAPI_VALIDATION_ERROR",
-        message: "Request validation failed.",
-        details: { errors: redactSensitive(parsed.detail) },
-        response,
-      });
-    }
-    throw new CropTwinApiError({
-      kind: "malformed",
-      status: response.status,
-      code: "FRONTEND_MALFORMED_ERROR_RESPONSE",
-      message: "The CropTwin API returned an unexpected error response.",
-      response,
+export async function apiRequest<T>(path: string, options: ApiRequestOptions<T> = {}): Promise<T> {
+  const { body, timeoutMs = DEFAULT_API_TIMEOUT_MS, schema, signal, baseUrl = API_BASE_URL, headers, ...requestInit } = options;
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
+  const abortFromCaller = () => controller.abort();
+  signal?.addEventListener("abort", abortFromCaller, { once: true });
+
+  try {
+    if (signal?.aborted) controller.abort();
+    const response = await fetch(`${baseUrl}${path}`, {
+      ...requestInit,
+      signal: controller.signal,
+      headers: { Accept: "application/json", ...(body === undefined ? {} : { "Content-Type": "application/json" }), ...headers },
+      body: body === undefined ? undefined : JSON.stringify(body),
     });
+    const payload = await parseJson(response);
+    if (!response.ok) {
+      const backendError = parseBackendError(payload, response.status);
+      if (backendError) throw backendError;
+      if (response.status === 422 && payload && typeof payload === "object" && "detail" in payload) {
+        throw new CropTwinApiError({ kind: "backend", code: "FASTAPI_VALIDATION_ERROR", message: "Request validation failed.", statusCode: response.status, details: payload as Record<string, unknown> });
+      }
+      throw new CropTwinApiError({ kind: "http", code: "HTTP_ERROR", message: `CropTwin API returned HTTP ${response.status}.`, statusCode: response.status, details: payload && typeof payload === "object" ? { response: payload } : {} });
+    }
+    if (payload === undefined) {
+      throw new CropTwinApiError({ kind: "malformed", code: "EMPTY_RESPONSE", message: "The CropTwin API returned an empty response.", statusCode: response.status });
+    }
+    if (schema) {
+      const parsed = schema.safeParse(payload);
+      if (!parsed.success) throw new CropTwinApiError({ kind: "malformed", code: "MALFORMED_RESPONSE", message: "The CropTwin API response did not match the generated contract.", statusCode: response.status, details: { issues: parsed.error.issues } });
+      return parsed.data;
+    }
+    return payload as T;
+  } catch (cause) {
+    if (cause instanceof CropTwinApiError) throw cause;
+    if (controller.signal.aborted) {
+      if (timedOut) throw new CropTwinApiError({ kind: "timeout", code: "REQUEST_TIMEOUT", message: "The CropTwin API request timed out.", details: { timeoutMs }, cause });
+      throw new CropTwinApiError({ kind: "cancelled", code: "REQUEST_CANCELLED", message: "The CropTwin API request was cancelled.", cause });
+    }
+    throw new CropTwinApiError({ kind: "network", code: "NETWORK_ERROR", message: "Could not connect to the CropTwin API.", cause });
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", abortFromCaller);
   }
-
-  return parsed as TResponse;
-}
-
-function isFastApiValidationError(value: unknown): value is { detail: unknown[] } {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    Array.isArray((value as { detail?: unknown }).detail)
-  );
-}
-
-function abortError(): CropTwinApiError {
-  return new CropTwinApiError({
-    kind: "abort",
-    status: null,
-    code: "FRONTEND_REQUEST_ABORTED",
-    message: "The CropTwin API request was cancelled.",
-  });
-}
-
-export function encodePath(value: string): string {
-  return encodeURIComponent(value);
 }
