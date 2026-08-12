@@ -77,3 +77,20 @@ web/test-results/
 web/playwright-report/
 web/blob-report/
 web/npm-debug.log*
+
+# Expo / React Native app
+mobile/node_modules/
+mobile/.expo/
+mobile/.expo-shared/
+mobile/.cache/
+mobile/dist/
+mobile/web-build/
+mobile/android/
+mobile/ios/
+mobile/*.jks
+mobile/*.p8
+mobile/*.p12
+mobile/*.key
+mobile/*.mobileprovision
+mobile/*.orig.*
+mobile/npm-debug.log*
