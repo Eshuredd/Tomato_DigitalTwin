@@ -80,6 +80,7 @@ web/npm-debug.log*
 
 # Expo / React Native app
 mobile/node_modules/
+mobile/expo-env.d.ts
 mobile/.expo/
 mobile/.expo-shared/
 mobile/.cache/
