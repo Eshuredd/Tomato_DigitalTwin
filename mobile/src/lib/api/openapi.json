@@ -1,0 +1,2722 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Tomato Irrigation Disease Digital Twin API",
+    "version": "mvp"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "meta"
+        ],
+        "summary": "Health Route",
+        "operationId": "health_route_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/system-info": {
+      "get": {
+        "tags": [
+          "meta"
+        ],
+        "summary": "System Info Route",
+        "operationId": "system_info_route_system_info_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response System Info Route System Info Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/farms": {
+      "get": {
+        "tags": [
+          "farms"
+        ],
+        "summary": "List Farms",
+        "operationId": "list_farms_farms_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FarmResponse"
+                  },
+                  "type": "array",
+                  "title": "Response List Farms Farms Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "farms"
+        ],
+        "summary": "Create Farm",
+        "operationId": "create_farm_farms_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FarmCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FarmResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/farms/{farm_id}": {
+      "get": {
+        "tags": [
+          "farms"
+        ],
+        "summary": "Get Farm",
+        "operationId": "get_farm_farms__farm_id__get",
+        "parameters": [
+          {
+            "name": "farm_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Farm Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FarmResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/farms/{farm_id}/plots": {
+      "post": {
+        "tags": [
+          "plots"
+        ],
+        "summary": "Create Plot",
+        "operationId": "create_plot_farms__farm_id__plots_post",
+        "parameters": [
+          {
+            "name": "farm_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Farm Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlotCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlotResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "plots"
+        ],
+        "summary": "List Plots",
+        "operationId": "list_plots_farms__farm_id__plots_get",
+        "parameters": [
+          {
+            "name": "farm_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Farm Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PlotResponse"
+                  },
+                  "title": "Response List Plots Farms  Farm Id  Plots Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/plots/{plot_id}": {
+      "get": {
+        "tags": [
+          "plots"
+        ],
+        "summary": "Get Plot",
+        "operationId": "get_plot_plots__plot_id__get",
+        "parameters": [
+          {
+            "name": "plot_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plot Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlotResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/plots/{plot_id}/crop-cycles": {
+      "post": {
+        "tags": [
+          "plots"
+        ],
+        "summary": "Create Crop Cycle For Plot",
+        "operationId": "create_crop_cycle_for_plot_plots__plot_id__crop_cycles_post",
+        "parameters": [
+          {
+            "name": "plot_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plot Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCropCycleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions": {
+      "post": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Create Session",
+        "operationId": "create_session_sessions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions/{state_id}": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Get Session State",
+        "operationId": "get_session_state_sessions__state_id__get",
+        "parameters": [
+          {
+            "name": "state_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "State Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionStateResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions/{state_id}/history": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Get Session History",
+        "operationId": "get_session_history_sessions__state_id__history_get",
+        "parameters": [
+          {
+            "name": "state_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "State Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionHistoryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions/{state_id}/predict-disease": {
+      "post": {
+        "tags": [
+          "disease"
+        ],
+        "summary": "Predict Disease",
+        "operationId": "predict_disease_sessions__state_id__predict_disease_post",
+        "parameters": [
+          {
+            "name": "state_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "State Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PredictDiseaseRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiseasePredictionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions/{state_id}/weather-snapshot": {
+      "get": {
+        "tags": [
+          "water"
+        ],
+        "summary": "Get Weather Snapshot Route",
+        "operationId": "get_weather_snapshot_route_sessions__state_id__weather_snapshot_get",
+        "parameters": [
+          {
+            "name": "state_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "State Id"
+            }
+          },
+          {
+            "name": "target_date",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Target Date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WeatherSnapshotResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions/{state_id}/compute-water-state": {
+      "post": {
+        "tags": [
+          "water"
+        ],
+        "summary": "Compute Water State Route",
+        "operationId": "compute_water_state_route_sessions__state_id__compute_water_state_post",
+        "parameters": [
+          {
+            "name": "state_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "State Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComputeWaterStateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WaterStateResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions/{state_id}/update-twin-state": {
+      "post": {
+        "tags": [
+          "water"
+        ],
+        "summary": "Update Twin State Route",
+        "operationId": "update_twin_state_route_sessions__state_id__update_twin_state_post",
+        "parameters": [
+          {
+            "name": "state_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "State Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StateIdRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateTwinStateResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions/{state_id}/advance-one-day": {
+      "post": {
+        "tags": [
+          "advancement"
+        ],
+        "summary": "Advance One Day Route",
+        "operationId": "advance_one_day_route_sessions__state_id__advance_one_day_post",
+        "parameters": [
+          {
+            "name": "state_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "State Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdvanceOneDayRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdvanceOneDayResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions/{state_id}/simulate-actions": {
+      "post": {
+        "tags": [
+          "simulation"
+        ],
+        "summary": "Simulate Actions Route",
+        "operationId": "simulate_actions_route_sessions__state_id__simulate_actions_post",
+        "parameters": [
+          {
+            "name": "state_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "State Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SimulateActionsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SimulateActionsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions/{state_id}/recommend": {
+      "post": {
+        "tags": [
+          "recommendation"
+        ],
+        "summary": "Recommend Route",
+        "operationId": "recommend_route_sessions__state_id__recommend_post",
+        "parameters": [
+          {
+            "name": "state_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "State Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecommendationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions/{state_id}/narrate": {
+      "post": {
+        "tags": [
+          "narration"
+        ],
+        "summary": "Narrate Route",
+        "operationId": "narrate_route_sessions__state_id__narrate_post",
+        "parameters": [
+          {
+            "name": "state_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "State Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NarrationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions/{state_id}/actual-actions": {
+      "post": {
+        "tags": [
+          "actual-actions"
+        ],
+        "summary": "Record Actual Action",
+        "operationId": "record_actual_action_sessions__state_id__actual_actions_post",
+        "parameters": [
+          {
+            "name": "state_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "State Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActualActionCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActualActionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "actual-actions"
+        ],
+        "summary": "List Actual Actions",
+        "operationId": "list_actual_actions_sessions__state_id__actual_actions_get",
+        "parameters": [
+          {
+            "name": "state_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "State Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ActualActionResponse"
+                  },
+                  "title": "Response List Actual Actions Sessions  State Id  Actual Actions Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ActionEnum": {
+        "type": "string",
+        "enum": [
+          "IRRIGATE_NOW",
+          "IRRIGATE_IN_6H",
+          "IRRIGATE_TOMORROW_AM",
+          "NO_IRRIGATION_24H"
+        ],
+        "title": "ActionEnum"
+      },
+      "ActualActionCreateRequest": {
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/ActionEnum"
+          },
+          "performed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Performed At"
+          },
+          "amount_mm": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Mm"
+          },
+          "related_recommendation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Related Recommendation Id"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "action",
+          "performed_at"
+        ],
+        "title": "ActualActionCreateRequest"
+      },
+      "ActualActionResponse": {
+        "properties": {
+          "actual_action_id": {
+            "type": "string",
+            "title": "Actual Action Id"
+          },
+          "state_id": {
+            "type": "string",
+            "title": "State Id"
+          },
+          "related_recommendation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Related Recommendation Id"
+          },
+          "action": {
+            "$ref": "#/components/schemas/ActionEnum"
+          },
+          "performed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Performed At"
+          },
+          "amount_mm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Mm"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "recorded_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Recorded At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "actual_action_id",
+          "state_id",
+          "related_recommendation_id",
+          "action",
+          "performed_at",
+          "amount_mm",
+          "notes",
+          "recorded_at"
+        ],
+        "title": "ActualActionResponse"
+      },
+      "AdvanceOneDayRequest": {
+        "properties": {
+          "state_id": {
+            "type": "string",
+            "title": "State Id"
+          },
+          "advancement_id": {
+            "type": "string",
+            "title": "Advancement Id"
+          },
+          "target_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Target Date"
+          },
+          "weather": {
+            "$ref": "#/components/schemas/WeatherInput"
+          },
+          "last_irrigation_event": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LastIrrigationEvent"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "state_id",
+          "advancement_id",
+          "target_date",
+          "weather"
+        ],
+        "title": "AdvanceOneDayRequest"
+      },
+      "AdvanceOneDayResponse": {
+        "properties": {
+          "state_id": {
+            "type": "string",
+            "title": "State Id"
+          },
+          "advancement_id": {
+            "type": "string",
+            "title": "Advancement Id"
+          },
+          "target_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Target Date"
+          },
+          "advancement_created": {
+            "type": "boolean",
+            "title": "Advancement Created"
+          },
+          "water_state": {
+            "$ref": "#/components/schemas/WaterStateResponse"
+          },
+          "twin_state": {
+            "$ref": "#/components/schemas/UpdateTwinStateResponse"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "state_id",
+          "advancement_id",
+          "target_date",
+          "advancement_created",
+          "water_state",
+          "twin_state"
+        ],
+        "title": "AdvanceOneDayResponse"
+      },
+      "CautionReason": {
+        "type": "string",
+        "enum": [
+          "HIGH_UNCERTAINTY",
+          "FUNGAL_DISEASE_RISK"
+        ],
+        "title": "CautionReason"
+      },
+      "ComputeWaterStateRequest": {
+        "properties": {
+          "state_id": {
+            "type": "string",
+            "title": "State Id"
+          },
+          "water_update_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Water Update Id"
+          },
+          "current_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Current Date"
+          },
+          "weather": {
+            "$ref": "#/components/schemas/WeatherInput"
+          },
+          "last_irrigation_event": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LastIrrigationEvent"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "observed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed At"
+          },
+          "base_water_observation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Water Observation Id"
+          },
+          "base_water_sequence": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Water Sequence"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "state_id",
+          "current_date",
+          "weather"
+        ],
+        "title": "ComputeWaterStateRequest"
+      },
+      "CreateCropCycleRequest": {
+        "properties": {
+          "crop_type": {
+            "$ref": "#/components/schemas/CropType"
+          },
+          "planting_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Planting Date"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "crop_type",
+          "planting_date"
+        ],
+        "title": "CreateCropCycleRequest"
+      },
+      "CreateSessionRequest": {
+        "properties": {
+          "crop_type": {
+            "$ref": "#/components/schemas/CropType"
+          },
+          "planting_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Planting Date"
+          },
+          "location": {
+            "$ref": "#/components/schemas/Location"
+          },
+          "soil_texture": {
+            "$ref": "#/components/schemas/SoilTexture"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "crop_type",
+          "planting_date",
+          "location",
+          "soil_texture"
+        ],
+        "title": "CreateSessionRequest",
+        "example": {
+          "crop_type": "tomato",
+          "location": {
+            "latitude": 17.385,
+            "longitude": 78.4867,
+            "name": "Hyderabad Farm"
+          },
+          "planting_date": "2026-07-01",
+          "soil_texture": "sandy_loam"
+        }
+      },
+      "CropType": {
+        "type": "string",
+        "enum": [
+          "tomato"
+        ],
+        "title": "CropType"
+      },
+      "DiseaseCategory": {
+        "type": "string",
+        "enum": [
+          "fungal",
+          "bacterial",
+          "viral",
+          "none"
+        ],
+        "title": "DiseaseCategory"
+      },
+      "DiseasePredictionResponse": {
+        "properties": {
+          "state_id": {
+            "type": "string",
+            "title": "State Id"
+          },
+          "crop_type": {
+            "$ref": "#/components/schemas/CropType"
+          },
+          "predicted_label": {
+            "type": "string",
+            "title": "Predicted Label"
+          },
+          "disease_category": {
+            "$ref": "#/components/schemas/DiseaseCategory"
+          },
+          "class_probs": {
+            "additionalProperties": {
+              "type": "number",
+              "maximum": 1,
+              "minimum": 0
+            },
+            "type": "object",
+            "title": "Class Probs"
+          },
+          "confidence_calibrated": {
+            "type": "number",
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Confidence Calibrated"
+          },
+          "uncertainty_score": {
+            "type": "number",
+            "title": "Uncertainty Score"
+          },
+          "uncertainty_band": {
+            "$ref": "#/components/schemas/UncertaintyBand"
+          },
+          "predicted_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Predicted At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "state_id",
+          "crop_type",
+          "predicted_label",
+          "disease_category",
+          "class_probs",
+          "confidence_calibrated",
+          "uncertainty_score",
+          "uncertainty_band",
+          "predicted_at"
+        ],
+        "title": "DiseasePredictionResponse"
+      },
+      "EtoMethod": {
+        "type": "string",
+        "enum": [
+          "penman_monteith",
+          "hargreaves_samani"
+        ],
+        "title": "EtoMethod"
+      },
+      "FarmCreateRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "FarmCreateRequest"
+      },
+      "FarmResponse": {
+        "properties": {
+          "farm_id": {
+            "type": "string",
+            "title": "Farm Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "farm_id",
+          "name",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "FarmResponse"
+      },
+      "GrowthStage": {
+        "type": "string",
+        "enum": [
+          "initial",
+          "development",
+          "mid_season",
+          "late_season"
+        ],
+        "title": "GrowthStage"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "service": {
+            "type": "string",
+            "title": "Service"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "service",
+          "version"
+        ],
+        "title": "HealthResponse"
+      },
+      "HistoryEvent": {
+        "properties": {
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Timestamp"
+          },
+          "growth_stage": {
+            "$ref": "#/components/schemas/GrowthStage"
+          },
+          "predicted_label": {
+            "type": "string",
+            "title": "Predicted Label"
+          },
+          "root_zone_depletion": {
+            "type": "number",
+            "title": "Root Zone Depletion"
+          },
+          "stress_band": {
+            "$ref": "#/components/schemas/StressBand"
+          }
+        },
+        "type": "object",
+        "required": [
+          "timestamp",
+          "growth_stage",
+          "predicted_label",
+          "root_zone_depletion",
+          "stress_band"
+        ],
+        "title": "HistoryEvent"
+      },
+      "IrrigationConstraint": {
+        "type": "string",
+        "enum": [
+          "NONE",
+          "AVOID_OVERHEAD_IRRIGATION",
+          "PREFER_EARLY_MORNING_WINDOW"
+        ],
+        "title": "IrrigationConstraint"
+      },
+      "IrrigationEventSource": {
+        "type": "string",
+        "enum": [
+          "MANUAL",
+          "CONVERTED_FROM_LITRES",
+          "CONVERTED_FROM_DRIP_RUNTIME",
+          "CONTROLLER",
+          "SENSOR",
+          "LEGACY_REQUEST"
+        ],
+        "title": "IrrigationEventSource"
+      },
+      "LastIrrigationEvent": {
+        "properties": {
+          "irrigation_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Irrigation Event Id"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Timestamp"
+          },
+          "amount_mm": {
+            "type": "number",
+            "minimum": 0,
+            "title": "Amount Mm"
+          },
+          "source": {
+            "$ref": "#/components/schemas/IrrigationEventSource",
+            "default": "LEGACY_REQUEST"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "timestamp",
+          "amount_mm"
+        ],
+        "title": "LastIrrigationEvent"
+      },
+      "Location": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Name"
+          },
+          "latitude": {
+            "type": "number",
+            "title": "Latitude"
+          },
+          "longitude": {
+            "type": "number",
+            "title": "Longitude"
+          },
+          "elevation_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Elevation M"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "latitude",
+          "longitude"
+        ],
+        "title": "Location"
+      },
+      "MoistureState": {
+        "type": "string",
+        "enum": [
+          "adequate",
+          "moderate_deficit",
+          "depleted"
+        ],
+        "title": "MoistureState"
+      },
+      "NarrationResponse": {
+        "properties": {
+          "state_id": {
+            "type": "string",
+            "title": "State Id"
+          },
+          "headline": {
+            "type": "string",
+            "title": "Headline"
+          },
+          "rationale": {
+            "type": "string",
+            "title": "Rationale"
+          },
+          "caution": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Caution"
+          }
+        },
+        "type": "object",
+        "required": [
+          "state_id",
+          "headline",
+          "rationale"
+        ],
+        "title": "NarrationResponse"
+      },
+      "ObservationTimeBasis": {
+        "type": "string",
+        "enum": [
+          "EXPLICIT",
+          "DATE_ONLY_UTC_START",
+          "SERVER_RECEIVED"
+        ],
+        "title": "ObservationTimeBasis"
+      },
+      "PlotCreateRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "location": {
+            "$ref": "#/components/schemas/Location"
+          },
+          "soil_texture": {
+            "$ref": "#/components/schemas/SoilTexture"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "location",
+          "soil_texture"
+        ],
+        "title": "PlotCreateRequest"
+      },
+      "PlotResponse": {
+        "properties": {
+          "plot_id": {
+            "type": "string",
+            "title": "Plot Id"
+          },
+          "farm_id": {
+            "type": "string",
+            "title": "Farm Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "location": {
+            "$ref": "#/components/schemas/Location"
+          },
+          "soil_texture": {
+            "$ref": "#/components/schemas/SoilTexture"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "plot_id",
+          "farm_id",
+          "name",
+          "location",
+          "soil_texture",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "PlotResponse"
+      },
+      "PredictDiseaseRequest": {
+        "properties": {
+          "state_id": {
+            "type": "string",
+            "title": "State Id"
+          },
+          "image_base64": {
+            "type": "string",
+            "title": "Image Base64"
+          },
+          "model_version": {
+            "type": "string",
+            "title": "Model Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "state_id",
+          "image_base64",
+          "model_version"
+        ],
+        "title": "PredictDiseaseRequest",
+        "example": {
+          "image_base64": "iVBORw0KGgoAAAANSUhEUgAAAAUA",
+          "model_version": "tomato_disease_v1.2",
+          "state_id": "state-123"
+        }
+      },
+      "RecommendationResponse": {
+        "properties": {
+          "recommendation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recommendation Id"
+          },
+          "state_id": {
+            "type": "string",
+            "title": "State Id"
+          },
+          "chosen_action": {
+            "$ref": "#/components/schemas/ActionEnum"
+          },
+          "irrigation_constraint": {
+            "$ref": "#/components/schemas/IrrigationConstraint"
+          },
+          "inspection_advisory": {
+            "type": "boolean",
+            "title": "Inspection Advisory"
+          },
+          "decision_reason_codes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Decision Reason Codes"
+          },
+          "caution_reasons": {
+            "items": {
+              "$ref": "#/components/schemas/CautionReason"
+            },
+            "type": "array",
+            "title": "Caution Reasons"
+          },
+          "evidence_summary_structured": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Evidence Summary Structured"
+          },
+          "recommended_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Recommended At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "state_id",
+          "chosen_action",
+          "irrigation_constraint",
+          "inspection_advisory",
+          "decision_reason_codes",
+          "caution_reasons",
+          "evidence_summary_structured",
+          "recommended_at"
+        ],
+        "title": "RecommendationResponse",
+        "example": {
+          "caution_reasons": [
+            "FUNGAL_DISEASE_RISK"
+          ],
+          "chosen_action": "IRRIGATE_TOMORROW_AM",
+          "decision_reason_codes": [
+            "DEPLETION_EXCEEDS_RAW",
+            "FUNGAL_WETNESS_RISK",
+            "LOW_UNCERTAINTY_CONFIRMS_CONSTRAINT"
+          ],
+          "evidence_summary_structured": {
+            "confidence_calibrated": 0.91,
+            "disease_category": "fungal",
+            "predicted_label": "late_blight",
+            "raw_threshold": 27,
+            "root_zone_depletion": 31,
+            "uncertainty_band": "low",
+            "uncertainty_score": 0.06
+          },
+          "inspection_advisory": false,
+          "irrigation_constraint": "AVOID_OVERHEAD_IRRIGATION",
+          "recommended_at": "2026-07-05T10:00:00Z",
+          "state_id": "state-123"
+        }
+      },
+      "SessionHistoryResponse": {
+        "properties": {
+          "state_id": {
+            "type": "string",
+            "title": "State Id"
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/HistoryEvent"
+            },
+            "type": "array",
+            "title": "History"
+          }
+        },
+        "type": "object",
+        "required": [
+          "state_id",
+          "history"
+        ],
+        "title": "SessionHistoryResponse"
+      },
+      "SessionResponse": {
+        "properties": {
+          "state_id": {
+            "type": "string",
+            "title": "State Id"
+          },
+          "crop_type": {
+            "$ref": "#/components/schemas/CropType"
+          },
+          "planting_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Planting Date"
+          },
+          "location": {
+            "$ref": "#/components/schemas/Location"
+          },
+          "soil_texture": {
+            "$ref": "#/components/schemas/SoilTexture"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "state_id",
+          "crop_type",
+          "planting_date",
+          "location",
+          "soil_texture",
+          "created_at"
+        ],
+        "title": "SessionResponse"
+      },
+      "SessionStateResponse": {
+        "properties": {
+          "state_id": {
+            "type": "string",
+            "title": "State Id"
+          },
+          "crop_type": {
+            "$ref": "#/components/schemas/CropType"
+          },
+          "planting_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Planting Date"
+          },
+          "location": {
+            "$ref": "#/components/schemas/Location"
+          },
+          "soil_texture": {
+            "$ref": "#/components/schemas/SoilTexture"
+          },
+          "current_state": {
+            "$ref": "#/components/schemas/TwinCurrentState"
+          }
+        },
+        "type": "object",
+        "required": [
+          "state_id",
+          "crop_type",
+          "planting_date",
+          "location",
+          "soil_texture",
+          "current_state"
+        ],
+        "title": "SessionStateResponse"
+      },
+      "SimulateActionsRequest": {
+        "properties": {
+          "state_id": {
+            "type": "string",
+            "title": "State Id"
+          },
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/ActionEnum"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Actions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "state_id",
+          "actions"
+        ],
+        "title": "SimulateActionsRequest"
+      },
+      "SimulateActionsResponse": {
+        "properties": {
+          "state_id": {
+            "type": "string",
+            "title": "State Id"
+          },
+          "simulations": {
+            "items": {
+              "$ref": "#/components/schemas/SimulatedActionResult"
+            },
+            "type": "array",
+            "title": "Simulations"
+          },
+          "simulated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Simulated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "state_id",
+          "simulations",
+          "simulated_at"
+        ],
+        "title": "SimulateActionsResponse"
+      },
+      "SimulatedActionResult": {
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/ActionEnum"
+          },
+          "projected_root_zone_depletion": {
+            "type": "number",
+            "title": "Projected Root Zone Depletion"
+          },
+          "projected_raw_crossing": {
+            "type": "boolean",
+            "title": "Projected Raw Crossing"
+          },
+          "projected_stress_band": {
+            "$ref": "#/components/schemas/StressBand"
+          },
+          "projected_water_use": {
+            "type": "number",
+            "title": "Projected Water Use"
+          },
+          "disease_wetness_risk_note": {
+            "type": "string",
+            "title": "Disease Wetness Risk Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "action",
+          "projected_root_zone_depletion",
+          "projected_raw_crossing",
+          "projected_stress_band",
+          "projected_water_use",
+          "disease_wetness_risk_note"
+        ],
+        "title": "SimulatedActionResult"
+      },
+      "SoilTexture": {
+        "type": "string",
+        "enum": [
+          "sand",
+          "sandy_loam",
+          "loam",
+          "silty_loam",
+          "clay_loam",
+          "clay"
+        ],
+        "title": "SoilTexture"
+      },
+      "StateIdRequest": {
+        "properties": {
+          "state_id": {
+            "type": "string",
+            "title": "State Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "state_id"
+        ],
+        "title": "StateIdRequest"
+      },
+      "StressBand": {
+        "type": "string",
+        "enum": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "title": "StressBand"
+      },
+      "TwinCurrentState": {
+        "properties": {
+          "crop_type": {
+            "$ref": "#/components/schemas/CropType"
+          },
+          "growth_stage": {
+            "$ref": "#/components/schemas/GrowthStage"
+          },
+          "days_since_planting": {
+            "type": "integer",
+            "title": "Days Since Planting"
+          },
+          "predicted_label": {
+            "type": "string",
+            "title": "Predicted Label"
+          },
+          "disease_category": {
+            "$ref": "#/components/schemas/DiseaseCategory"
+          },
+          "confidence_calibrated": {
+            "type": "number",
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Confidence Calibrated"
+          },
+          "uncertainty_score": {
+            "type": "number",
+            "title": "Uncertainty Score"
+          },
+          "uncertainty_band": {
+            "$ref": "#/components/schemas/UncertaintyBand"
+          },
+          "eto_computed": {
+            "type": "number",
+            "title": "Eto Computed"
+          },
+          "eto_method": {
+            "$ref": "#/components/schemas/EtoMethod"
+          },
+          "kc": {
+            "type": "number",
+            "title": "Kc"
+          },
+          "etc": {
+            "type": "number",
+            "title": "Etc"
+          },
+          "taw": {
+            "type": "number",
+            "title": "Taw"
+          },
+          "raw_threshold": {
+            "type": "number",
+            "title": "Raw Threshold"
+          },
+          "raw_root_zone_depletion_mm": {
+            "type": "number",
+            "title": "Raw Root Zone Depletion Mm"
+          },
+          "root_zone_depletion_mm": {
+            "type": "number",
+            "title": "Root Zone Depletion Mm"
+          },
+          "root_zone_depletion": {
+            "type": "number",
+            "title": "Root Zone Depletion"
+          },
+          "water_surplus_mm": {
+            "type": "number",
+            "title": "Water Surplus Mm"
+          },
+          "depletion_beyond_taw_mm": {
+            "type": "number",
+            "title": "Depletion Beyond Taw Mm"
+          },
+          "estimated_moisture_state": {
+            "$ref": "#/components/schemas/MoistureState"
+          },
+          "stress_band": {
+            "$ref": "#/components/schemas/StressBand"
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Observed At"
+          },
+          "computed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Computed At"
+          },
+          "observation_time_basis": {
+            "$ref": "#/components/schemas/ObservationTimeBasis"
+          },
+          "last_update_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Update Time"
+          }
+        },
+        "type": "object",
+        "required": [
+          "crop_type",
+          "growth_stage",
+          "days_since_planting",
+          "predicted_label",
+          "disease_category",
+          "confidence_calibrated",
+          "uncertainty_score",
+          "uncertainty_band",
+          "eto_computed",
+          "eto_method",
+          "kc",
+          "etc",
+          "taw",
+          "raw_threshold",
+          "raw_root_zone_depletion_mm",
+          "root_zone_depletion_mm",
+          "root_zone_depletion",
+          "water_surplus_mm",
+          "depletion_beyond_taw_mm",
+          "estimated_moisture_state",
+          "stress_band",
+          "observed_at",
+          "computed_at",
+          "observation_time_basis",
+          "last_update_time"
+        ],
+        "title": "TwinCurrentState"
+      },
+      "UncertaintyBand": {
+        "type": "string",
+        "enum": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "title": "UncertaintyBand"
+      },
+      "UpdateTwinStateResponse": {
+        "properties": {
+          "state_id": {
+            "type": "string",
+            "title": "State Id"
+          },
+          "current_state": {
+            "$ref": "#/components/schemas/TwinCurrentState"
+          },
+          "state_history_count": {
+            "type": "integer",
+            "title": "State History Count"
+          },
+          "snapshot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Id"
+          },
+          "snapshot_created": {
+            "type": "boolean",
+            "title": "Snapshot Created",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "state_id",
+          "current_state",
+          "state_history_count"
+        ],
+        "title": "UpdateTwinStateResponse"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "WaterStateResponse": {
+        "properties": {
+          "state_id": {
+            "type": "string",
+            "title": "State Id"
+          },
+          "water_observation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Water Observation Id"
+          },
+          "water_sequence": {
+            "type": "integer",
+            "minimum": 0,
+            "title": "Water Sequence",
+            "default": 0
+          },
+          "base_water_observation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Water Observation Id"
+          },
+          "base_water_sequence": {
+            "type": "integer",
+            "minimum": 0,
+            "title": "Base Water Sequence",
+            "default": 0
+          },
+          "previous_root_zone_depletion_mm": {
+            "type": "number",
+            "minimum": 0,
+            "title": "Previous Root Zone Depletion Mm",
+            "default": 0
+          },
+          "water_update_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Water Update Id"
+          },
+          "reported_irrigation_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reported Irrigation Event Id"
+          },
+          "applied_irrigation_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied Irrigation Event Id"
+          },
+          "effective_irrigation_mm": {
+            "type": "number",
+            "minimum": 0,
+            "title": "Effective Irrigation Mm",
+            "default": 0
+          },
+          "irrigation_event_already_accounted_for": {
+            "type": "boolean",
+            "title": "Irrigation Event Already Accounted For",
+            "default": false
+          },
+          "crop_type": {
+            "$ref": "#/components/schemas/CropType"
+          },
+          "growth_stage": {
+            "$ref": "#/components/schemas/GrowthStage"
+          },
+          "soil_texture": {
+            "$ref": "#/components/schemas/SoilTexture"
+          },
+          "eto_computed": {
+            "type": "number",
+            "title": "Eto Computed"
+          },
+          "eto_method": {
+            "$ref": "#/components/schemas/EtoMethod"
+          },
+          "eto_reference_feed": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eto Reference Feed"
+          },
+          "eto_delta_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eto Delta Pct"
+          },
+          "kc": {
+            "type": "number",
+            "title": "Kc"
+          },
+          "etc": {
+            "type": "number",
+            "title": "Etc"
+          },
+          "field_capacity_assumed": {
+            "type": "number",
+            "title": "Field Capacity Assumed"
+          },
+          "wilting_point_assumed": {
+            "type": "number",
+            "title": "Wilting Point Assumed"
+          },
+          "root_depth_assumed": {
+            "type": "number",
+            "title": "Root Depth Assumed"
+          },
+          "taw": {
+            "type": "number",
+            "title": "Taw"
+          },
+          "p_allowable": {
+            "type": "number",
+            "maximum": 1,
+            "minimum": 0,
+            "title": "P Allowable"
+          },
+          "raw_threshold": {
+            "type": "number",
+            "title": "Raw Threshold"
+          },
+          "raw_root_zone_depletion_mm": {
+            "type": "number",
+            "title": "Raw Root Zone Depletion Mm"
+          },
+          "root_zone_depletion_mm": {
+            "type": "number",
+            "title": "Root Zone Depletion Mm"
+          },
+          "root_zone_depletion": {
+            "type": "number",
+            "title": "Root Zone Depletion"
+          },
+          "water_surplus_mm": {
+            "type": "number",
+            "title": "Water Surplus Mm"
+          },
+          "depletion_beyond_taw_mm": {
+            "type": "number",
+            "title": "Depletion Beyond Taw Mm"
+          },
+          "estimated_moisture_state": {
+            "$ref": "#/components/schemas/MoistureState"
+          },
+          "stress_band": {
+            "$ref": "#/components/schemas/StressBand"
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Observed At"
+          },
+          "computed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Computed At"
+          },
+          "observation_time_basis": {
+            "$ref": "#/components/schemas/ObservationTimeBasis"
+          }
+        },
+        "type": "object",
+        "required": [
+          "state_id",
+          "crop_type",
+          "growth_stage",
+          "soil_texture",
+          "eto_computed",
+          "eto_method",
+          "eto_reference_feed",
+          "eto_delta_pct",
+          "kc",
+          "etc",
+          "field_capacity_assumed",
+          "wilting_point_assumed",
+          "root_depth_assumed",
+          "taw",
+          "p_allowable",
+          "raw_threshold",
+          "raw_root_zone_depletion_mm",
+          "root_zone_depletion_mm",
+          "root_zone_depletion",
+          "water_surplus_mm",
+          "depletion_beyond_taw_mm",
+          "estimated_moisture_state",
+          "stress_band",
+          "observed_at",
+          "computed_at",
+          "observation_time_basis"
+        ],
+        "title": "WaterStateResponse",
+        "example": {
+          "computed_at": "2026-07-05T10:00:00Z",
+          "crop_type": "tomato",
+          "depletion_beyond_taw_mm": 0,
+          "estimated_moisture_state": "moderate_deficit",
+          "etc": 3.84,
+          "eto_computed": 4.8,
+          "eto_delta_pct": -4,
+          "eto_method": "penman_monteith",
+          "eto_reference_feed": 5,
+          "field_capacity_assumed": 0.22,
+          "growth_stage": "development",
+          "kc": 0.8,
+          "observation_time_basis": "DATE_ONLY_UTC_START",
+          "observed_at": "2026-07-05T00:00:00Z",
+          "p_allowable": 0.5,
+          "raw_root_zone_depletion_mm": 18,
+          "raw_threshold": 24,
+          "root_depth_assumed": 0.4,
+          "root_zone_depletion": 18,
+          "root_zone_depletion_mm": 18,
+          "soil_texture": "sandy_loam",
+          "state_id": "state-123",
+          "stress_band": "medium",
+          "taw": 48,
+          "water_surplus_mm": 0,
+          "wilting_point_assumed": 0.1
+        }
+      },
+      "WeatherInput": {
+        "properties": {
+          "tmin_c": {
+            "type": "number",
+            "title": "Tmin C"
+          },
+          "tmax_c": {
+            "type": "number",
+            "title": "Tmax C"
+          },
+          "humidity_pct": {
+            "type": "number",
+            "maximum": 100,
+            "minimum": 0,
+            "title": "Humidity Pct"
+          },
+          "wind_speed_mps": {
+            "type": "number",
+            "minimum": 0,
+            "title": "Wind Speed Mps"
+          },
+          "shortwave_radiation_sum_mj_m2": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shortwave Radiation Sum Mj M2"
+          },
+          "rainfall_mm": {
+            "type": "number",
+            "minimum": 0,
+            "title": "Rainfall Mm"
+          },
+          "eto_reference_feed": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eto Reference Feed"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "tmin_c",
+          "tmax_c",
+          "humidity_pct",
+          "wind_speed_mps",
+          "rainfall_mm"
+        ],
+        "title": "WeatherInput"
+      },
+      "WeatherSnapshotResponse": {
+        "properties": {
+          "state_id": {
+            "type": "string",
+            "title": "State Id"
+          },
+          "target_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Target Date"
+          },
+          "source": {
+            "type": "string",
+            "const": "open_meteo",
+            "title": "Source"
+          },
+          "source_timezone": {
+            "type": "string",
+            "title": "Source Timezone"
+          },
+          "latitude": {
+            "type": "number",
+            "title": "Latitude"
+          },
+          "longitude": {
+            "type": "number",
+            "title": "Longitude"
+          },
+          "tmin_c": {
+            "type": "number",
+            "title": "Tmin C"
+          },
+          "tmax_c": {
+            "type": "number",
+            "title": "Tmax C"
+          },
+          "humidity_pct": {
+            "type": "number",
+            "maximum": 100,
+            "minimum": 0,
+            "title": "Humidity Pct"
+          },
+          "wind_speed_mps": {
+            "type": "number",
+            "minimum": 0,
+            "title": "Wind Speed Mps"
+          },
+          "wind_source_height_m": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "title": "Wind Source Height M"
+          },
+          "wind_normalized_height_m": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "title": "Wind Normalized Height M"
+          },
+          "rainfall_mm": {
+            "type": "number",
+            "minimum": 0,
+            "title": "Rainfall Mm"
+          },
+          "shortwave_radiation_sum_mj_m2": {
+            "type": "number",
+            "minimum": 0,
+            "title": "Shortwave Radiation Sum Mj M2"
+          },
+          "eto_reference_feed": {
+            "type": "number",
+            "minimum": 0,
+            "title": "Eto Reference Feed"
+          },
+          "fetched_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Fetched At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "state_id",
+          "target_date",
+          "source",
+          "source_timezone",
+          "latitude",
+          "longitude",
+          "tmin_c",
+          "tmax_c",
+          "humidity_pct",
+          "wind_speed_mps",
+          "wind_source_height_m",
+          "wind_normalized_height_m",
+          "rainfall_mm",
+          "shortwave_radiation_sum_mj_m2",
+          "eto_reference_feed",
+          "fetched_at"
+        ],
+        "title": "WeatherSnapshotResponse"
+      }
+    }
+  }
+}
