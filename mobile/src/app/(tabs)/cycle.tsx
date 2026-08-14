@@ -1,2 +1,4 @@
-import { FutureArea } from '@/features/foundation/future-area';
-export default function CycleScreen() { return <FutureArea testID="screen-cycle" eyebrow="Current context" title="Active cycle" description="One selected tomato crop cycle will anchor daily field decisions." availableWhen="A cycle appears after farm, plot, and crop-cycle workflows are introduced." />; }
+import { AppHeader, AppScreen, PrimaryButton, SectionCard } from '@/components/ui';
+import { LoadSessionForm } from '@/features/entities/forms';
+import { useRouter } from 'expo-router';
+export default function CycleScreen() { const router = useRouter(); return <AppScreen testID="screen-cycle" keyboardShouldPersistTaps="handled"><AppHeader eyebrow="Crop cycle" title="Cycle" description="Create a standalone tomato session or open an existing authoritative state." /><SectionCard title="New standalone session"><PrimaryButton testID="create-session" onPress={() => router.push('/cycle/create')}>Create standalone session</PrimaryButton></SectionCard><LoadSessionForm /></AppScreen>; }

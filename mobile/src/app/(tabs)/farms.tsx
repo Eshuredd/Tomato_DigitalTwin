@@ -1,2 +1,3 @@
-import { FutureArea } from '@/features/foundation/future-area';
-export default function FarmsScreen() { return <FutureArea testID="screen-farms" eyebrow="Places" title="Farms" description="Farm and plot context will be organized here for field use." availableWhen="Farms become available after the farm workflow is added in a later mobile release." />; }
+import { FarmListView } from '@/features/entities/presentation';
+import { useFarms } from '@/features/entities/hooks';
+export default function FarmsScreen() { const query = useFarms(); return <FarmListView farms={query.data} pending={query.isPending} error={query.error} refreshing={query.isFetching} refresh={query.refetch} />; }

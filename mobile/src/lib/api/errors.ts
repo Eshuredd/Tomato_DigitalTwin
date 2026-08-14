@@ -32,6 +32,6 @@ const friendlyByKind: Record<ApiErrorKind, string> = {
 };
 
 export function toUserFacingError(error: unknown): { title: string; description: string; technicalDetails: unknown } {
-  if (error instanceof CropTwinApiError) return { title: error.kind === 'network' ? 'Service unavailable' : 'Connection check failed', description: friendlyByKind[error.kind], technicalDetails: { kind: error.kind, status: error.statusCode, code: error.code, message: error.message, details: error.details } };
+  if (error instanceof CropTwinApiError) return { title: error.kind === 'network' ? 'Service unavailable' : 'Request could not be completed', description: friendlyByKind[error.kind], technicalDetails: { kind: error.kind, status: error.statusCode, code: error.code, message: error.message, details: error.details } };
   return { title: 'Unexpected error', description: 'The app could not complete this request.', technicalDetails: String(error) };
 }

@@ -1,6 +1,6 @@
 # CropTwin mobile
 
-Expo SDK 57 / React Native companion for the CropTwin FastAPI service. This foundation contains the phone navigation shell, semantic design system, typed API transport, OpenAPI workflow, TanStack Query, shared async states, and the real `/health` integration. Farm and crop-cycle workflows are intentionally not implemented yet.
+Expo SDK 57 / React Native companion for the CropTwin FastAPI service. The app includes the phone navigation shell, semantic design system, typed API transport, OpenAPI workflow, TanStack Query, farms, plots, standalone sessions, existing-session loading, plot-origin crop-cycle creation, and the authoritative active-cycle route.
 
 ## Requirements
 
@@ -73,7 +73,7 @@ npm run api:schema:check
 
 - `src/app/`: Expo Router routes and the five-tab shell
 - `src/components/ui/`: safe-area layout, cards, buttons, badges, disclosure, and shared loading/error/empty states
-- `src/features/`: health/system and honest future-area foundations
+- `src/features/`: health/system plus farm, plot, and session data/form boundaries
 - `src/lib/api/`: generated schema, runtime contracts, fetch transport, structured errors, paths, operations, and query keys
 - `src/lib/query/`: the single QueryClient and retry policy
 - `src/lib/theme/`: semantic color, spacing, radius, typography, and elevation tokens
@@ -84,3 +84,14 @@ npm run api:schema:check
 - iOS log collection can print `getpwuid_r did not find a match for uid 501`; this is non-blocking in the verified environment.
 - A physical device cannot use the host loopback URL; use a LAN address and ensure FastAPI listens on a reachable interface.
 - If FastAPI is stopped, Home and More intentionally render an explicit unavailable state with Retry and optional technical detail disclosure.
+
+## Farm, plot, and cycle setup
+
+- Farms lists and creates `GET/POST /farms`, then opens authoritative farm detail.
+- Farm detail loads `GET /farms/{farm_id}` and the farm-scoped `GET /farms/{farm_id}/plots`; plot creation uses the exact nested location and soil contract.
+- Plot detail uses `GET /plots/{plot_id}` and can create a tomato cycle through `POST /plots/{plot_id}/crop-cycles` with only crop type and planting date. FastAPI inherits location and soil from the plot.
+- Cycle supports standalone `POST /sessions`, loading an existing `GET /sessions/{state_id}`, and `/cycle/[stateId]` as the canonical mobile session screen.
+
+Known backend limitation: a newly created session has authoritative creation metadata, but `GET /sessions/{state_id}` currently requires a computed current twin snapshot. Until a later workflow computes it, the app retains the authoritative `SessionResponse` in TanStack Query and shows “Current state not computed.” The session response does not expose plot/farm relationship fields, so plot-origin route context is explicitly labeled as non-authoritative navigation context.
+
+Milestone 3 disease, weather, irrigation, water-state, simulation, recommendation, and narration workflows are not implemented. Complete mobile parity is not claimed.

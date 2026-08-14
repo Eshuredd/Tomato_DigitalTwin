@@ -1,0 +1,22 @@
+import { Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
+import { AppHeader, AppScreen, EmptyState, ErrorState, LoadingState, MetricRow, PrimaryButton, SectionCard, TechnicalDetails } from '@/components/ui';
+import { toUserFacingError, type Farm, type Plot, type SessionSummary } from '@/lib/api';
+import { colors, spacing, typography } from '@/lib/theme';
+
+export function ResourceError({ error, retry }: { error: unknown; retry: () => unknown }) { const friendly = toUserFacingError(error); return <ErrorState title={friendly.title} description={friendly.description} onRetry={() => void retry()} technicalDetails={friendly.technicalDetails} />; }
+export function FarmListView({ farms, pending, error, refreshing, refresh }: { farms?: Farm[]; pending: boolean; error: unknown; refreshing: boolean; refresh: () => unknown }) {
+  const router = useRouter();
+  return <AppScreen testID="screen-farms" refreshControl={<RefreshControl refreshing={refreshing && !pending} onRefresh={() => void refresh()} tintColor={colors.agronomy} />}>
+    <AppHeader eyebrow="Places" title="Farms" description="Manage authoritative farm and plot records." />
+    <PrimaryButton testID="create-farm" onPress={() => router.push('/farms/create')}>Create farm</PrimaryButton>
+    {pending ? <LoadingState label="Loading farms" /> : error ? <ResourceError error={error} retry={refresh} /> : farms?.length ? farms.map((farm) => <Pressable accessibilityRole="button" key={farm.farm_id} onPress={() => router.push({ pathname: '/farms/[farmId]', params: { farmId: farm.farm_id } })}><SectionCard><Text style={styles.name}>{farm.name}</Text><Text style={styles.link}>View farm and plots</Text></SectionCard></Pressable>) : <EmptyState title="No farms yet" description="Create a farm to organize plots and crop cycles." />}
+  </AppScreen>;
+}
+export function PlotList({ plots, pending, error, refresh }: { plots?: Plot[]; pending: boolean; error: unknown; refresh: () => unknown }) { const router = useRouter(); return pending ? <LoadingState label="Loading plots" /> : error ? <ResourceError error={error} retry={refresh} /> : plots?.length ? <View style={styles.list}>{plots.map((plot) => <Pressable accessibilityRole="button" key={plot.plot_id} onPress={() => router.push({ pathname: '/plots/[plotId]', params: { plotId: plot.plot_id } })}><SectionCard><Text style={styles.name}>{plot.name}</Text><Text style={styles.body}>{plot.location.name} · {plot.soil_texture.replaceAll('_', ' ')}</Text></SectionCard></Pressable>)}</View> : <EmptyState title="No plots yet" description="Create the first plot for this farm." />; }
+export function SessionSummaryCard({ session, provenance }: { session: SessionSummary; provenance?: string }) { const hasCurrent = 'current_state' in session; return <>
+  <SectionCard title="Authoritative session"><MetricRow label="Crop" value="Tomato" /><MetricRow label="Planting date" value={session.planting_date} /><MetricRow label="Location" value={session.location.name} /><MetricRow label="Soil" value={session.soil_texture.replaceAll('_', ' ')} />{session.location.elevation_m != null ? <MetricRow label="Elevation" value={`${session.location.elevation_m} m`} /> : null}<TechnicalDetails details={{ state_id: session.state_id, ...('created_at' in session ? { created_at: session.created_at } : {}) }} /></SectionCard>
+  {hasCurrent ? <SectionCard title="Deterministic current state" accent="agronomy"><MetricRow label="Growth stage" value={session.current_state.growth_stage.replaceAll('_', ' ')} /><MetricRow label="Days since planting" value={session.current_state.days_since_planting} /><MetricRow label="Moisture state" value={session.current_state.estimated_moisture_state.replaceAll('_', ' ')} /></SectionCard> : <EmptyState title="Current state not computed" description="The session exists, but deterministic current-state computation belongs to a later workflow." />}
+  {provenance ? <SectionCard title="Navigation context"><Text style={styles.body}>{provenance} This is navigation context only; the session response does not expose a durable plot relationship.</Text></SectionCard> : null}
+  </>; }
+const styles = StyleSheet.create({ list: { gap: spacing.md }, name: { ...typography.heading, color: colors.textPrimary }, body: { ...typography.body, color: colors.textSecondary }, link: { ...typography.label, color: colors.agronomy } });
