@@ -60,7 +60,7 @@ export function CreateSessionScreen() {
   // eslint-disable-next-line react-hooks/incompatible-library
   const locationValues = form.watch();
   return <FormScreen><AppScreen keyboardShouldPersistTaps="handled"><AppHeader eyebrow="Standalone" title="Create session" description="Create a tomato session without assigning a farm or plot relationship." /><SectionCard>
-    <Controller control={form.control} name="planting_date" render={({ field, fieldState }) => <FormField label="Planting date (YYYY-MM-DD)" value={field.value} onChangeText={field.onChange} onBlur={field.onBlur} error={fieldState.error?.message} inputMode="numeric" />} />
+    <Controller control={form.control} name="planting_date" render={({ field, fieldState }) => <FormField label="Planting date (YYYY-MM-DD)" value={field.value} onChangeText={field.onChange} onBlur={field.onBlur} error={fieldState.error?.message} keyboardType="numbers-and-punctuation" />} />
     <LocationFields values={locationValues} errors={form.formState.errors} set={(name, value) => form.setValue(name, value as never, { shouldValidate: true })} /><MutationError error={mutation.error} />
     <PrimaryButton disabled={mutation.isPending} onPress={form.handleSubmit((value) => mutation.mutate(buildSessionPayload(value), { onSuccess: (session) => router.replace({ pathname: '/cycle/[stateId]', params: { stateId: session.state_id } }) }))}>{mutation.isPending ? 'Creating…' : 'Create standalone session'}</PrimaryButton>
   </SectionCard></AppScreen></FormScreen>;
@@ -70,7 +70,7 @@ export function CreateCropCycleScreen({ plotId }: { plotId: string }) {
   const router = useRouter(); const mutation = useCreateCropCycle(plotId);
   const form = useForm({ resolver: zodResolver(cropCycleFormSchema), defaultValues: { planting_date: localCalendarDate() } });
   return <FormScreen><AppScreen keyboardShouldPersistTaps="handled"><AppHeader eyebrow="Tomato cycle" title="Create crop cycle" description="FastAPI inherits location and soil from the authoritative plot." /><SectionCard><Text>Crop: Tomato</Text>
-    <Controller control={form.control} name="planting_date" render={({ field, fieldState }) => <FormField label="Planting date (YYYY-MM-DD)" value={field.value} onChangeText={field.onChange} onBlur={field.onBlur} error={fieldState.error?.message} inputMode="numeric" />} />
+    <Controller control={form.control} name="planting_date" render={({ field, fieldState }) => <FormField label="Planting date (YYYY-MM-DD)" value={field.value} onChangeText={field.onChange} onBlur={field.onBlur} error={fieldState.error?.message} keyboardType="numbers-and-punctuation" />} />
     <MutationError error={mutation.error} /><PrimaryButton disabled={mutation.isPending} onPress={form.handleSubmit((value) => mutation.mutate({ crop_type: 'tomato', planting_date: value.planting_date }, { onSuccess: (session) => router.replace({ pathname: '/cycle/[stateId]', params: { stateId: session.state_id, originPlot: plotId } }) }))}>{mutation.isPending ? 'Creating…' : 'Create tomato cycle'}</PrimaryButton>
   </SectionCard></AppScreen></FormScreen>;
 }

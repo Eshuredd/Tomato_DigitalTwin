@@ -3,11 +3,13 @@ import { createCropCycle, createFarm, createPlot, createSession, getFarm, getFar
 
 export function seedFarmCreation(client: ReturnType<typeof useQueryClient>, farm: Farm) {
   client.setQueryData(queryKeys.farm(farm.farm_id), farm);
-  client.setQueryData<Farm[]>(queryKeys.farms(), (current = []) => current.some((item) => item.farm_id === farm.farm_id) ? current : [...current, farm]);
+  const farms = client.getQueryData<Farm[]>(queryKeys.farms());
+  if (farms !== undefined && !farms.some((item) => item.farm_id === farm.farm_id)) client.setQueryData(queryKeys.farms(), [...farms, farm]);
 }
 export function seedPlotCreation(client: ReturnType<typeof useQueryClient>, farmId: string, plot: Plot) {
   client.setQueryData(queryKeys.plot(plot.plot_id), plot);
-  client.setQueryData<Plot[]>(queryKeys.farmPlots(farmId), (current = []) => current.some((item) => item.plot_id === plot.plot_id) ? current : [...current, plot]);
+  const plots = client.getQueryData<Plot[]>(queryKeys.farmPlots(farmId));
+  if (plots !== undefined && !plots.some((item) => item.plot_id === plot.plot_id)) client.setQueryData(queryKeys.farmPlots(farmId), [...plots, plot]);
 }
 export function seedSessionCreation(client: ReturnType<typeof useQueryClient>, session: SessionSummary) { client.setQueryData(queryKeys.session(session.state_id), session); }
 
