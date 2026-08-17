@@ -1,6 +1,7 @@
 import { apiRequest } from './client';
-import { createdSessionSchema, farmSchema, farmsSchema, healthSchema, loadedSessionSchema, plotSchema, plotsSchema, systemInfoSchema, type CreateCropCycleInput, type CreateFarmInput, type CreatePlotInput, type CreateSessionInput, type CreatedSession, type Farm, type Health, type LoadedSession, type Plot, type SystemInfo } from './contracts';
-import { farmPath, plotPath, sessionPath } from './paths';
+import { createdSessionSchema, diseasePredictionSchema, farmSchema, farmsSchema, healthSchema, loadedSessionSchema, plotSchema, plotsSchema, systemInfoSchema, weatherSnapshotSchema, type CreateCropCycleInput, type CreateFarmInput, type CreatePlotInput, type CreateSessionInput, type CreatedSession, type DiseasePrediction, type Farm, type Health, type LoadedSession, type Plot, type PredictDiseaseInput, type SystemInfo, type WeatherSnapshot } from './contracts';
+import { CropTwinApiError } from './errors';
+import { farmPath, plotPath, queryString, sessionPath } from './paths';
 export function getHealth(signal?: AbortSignal): Promise<Health> { return apiRequest('/health', { signal, schema: healthSchema }); }
 export function getSystemInfo(signal?: AbortSignal): Promise<SystemInfo> { return apiRequest('/system-info', { signal, schema: systemInfoSchema }); }
 export const getFarms = (signal?: AbortSignal): Promise<Farm[]> => apiRequest('/farms', { signal, schema: farmsSchema });
@@ -12,3 +13,15 @@ export const createPlot = (farmId: string, body: CreatePlotInput): Promise<Plot>
 export const createSession = (body: CreateSessionInput): Promise<CreatedSession> => apiRequest('/sessions', { method: 'POST', body, schema: createdSessionSchema });
 export const getSession = (stateId: string, signal?: AbortSignal): Promise<LoadedSession> => apiRequest(sessionPath(stateId), { signal, schema: loadedSessionSchema });
 export const createCropCycle = (plotId: string, body: CreateCropCycleInput): Promise<CreatedSession> => apiRequest(plotPath(plotId, 'crop-cycles'), { method: 'POST', body, schema: createdSessionSchema });
+export async function predictDisease(stateId: string, body: PredictDiseaseInput, signal?: AbortSignal): Promise<DiseasePrediction> {
+  const response = await apiRequest(sessionPath(stateId, 'predict-disease'), { method: 'POST', body, signal, timeoutMs: 120_000, schema: diseasePredictionSchema });
+  if (response.state_id !== stateId) throw responseStateMismatch('disease evidence', stateId, response.state_id);
+  return response;
+}
+export async function getWeatherSnapshot(stateId: string, targetDate: string, signal?: AbortSignal): Promise<WeatherSnapshot> {
+  const response = await apiRequest(`${sessionPath(stateId, 'weather-snapshot')}${queryString({ target_date: targetDate })}`, { signal, schema: weatherSnapshotSchema });
+  if (response.state_id !== stateId) throw responseStateMismatch('weather', stateId, response.state_id);
+  if (response.target_date !== targetDate) throw new CropTwinApiError({ kind: 'malformed', code: 'WEATHER_DATE_MISMATCH', message: 'FastAPI returned weather for a different date.', details: { requested_target_date: targetDate, returned_target_date: response.target_date } });
+  return response;
+}
+function responseStateMismatch(resource: string, expected: string, received: string) { return new CropTwinApiError({ kind: 'malformed', code: 'RESPONSE_STATE_ID_MISMATCH', message: `FastAPI returned ${resource} for a different session.`, details: { expected_state_id: expected, returned_state_id: received } }); }

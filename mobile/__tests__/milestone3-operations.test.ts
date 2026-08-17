@@ -1,0 +1,14 @@
+import { getWeatherSnapshot, predictDisease } from '@/lib/api/operations';
+
+const response = (body: unknown, status = 200) => ({ ok: status >= 200 && status < 300, status, text: async () => JSON.stringify(body) }) as Response;
+const disease = { state_id: 'state/a', crop_type: 'tomato', predicted_label: 'Tomato___healthy', disease_category: 'none', class_probs: { Tomato___healthy: 0.9 }, confidence_calibrated: 0.9, uncertainty_score: 0.1, uncertainty_band: 'low', predicted_at: '2026-08-17T10:00:00Z' };
+const weather = { state_id: 'state/a', target_date: '2026-08-17', source: 'open_meteo', source_timezone: 'Asia/Kolkata', latitude: 18, longitude: 73, tmin_c: 20, tmax_c: 30, humidity_pct: 50, wind_speed_mps: 1, wind_source_height_m: 10, wind_normalized_height_m: 2, rainfall_mm: 0, shortwave_radiation_sum_mj_m2: 18, eto_reference_feed: 4, fetched_at: '2026-08-17T10:00:00Z' };
+afterEach(() => jest.restoreAllMocks());
+
+describe('Milestone 3 API contracts', () => {
+  it('posts raw base64 JSON with authoritative state and model version', async () => { globalThis.fetch = jest.fn().mockResolvedValue(response(disease)); const body = { state_id: 'state/a', image_base64: 'aGVsbG8=', model_version: 'backend-model' }; await predictDisease('state/a', body); const [url, init] = (globalThis.fetch as jest.Mock).mock.calls[0]; expect(url).toContain('/sessions/state%2Fa/predict-disease'); expect(init.method).toBe('POST'); expect(JSON.parse(init.body)).toEqual(body); expect(init.headers['Content-Type']).toBe('application/json'); });
+  it('rejects disease responses belonging to another state', async () => { globalThis.fetch = jest.fn().mockResolvedValue(response({ ...disease, state_id: 'state-b' })); await expect(predictDisease('state/a', { state_id: 'state/a', image_base64: 'aA==', model_version: 'm' })).rejects.toMatchObject({ code: 'RESPONSE_STATE_ID_MISMATCH' }); });
+  it('requests weather by encoded session and exact date', async () => { globalThis.fetch = jest.fn().mockResolvedValue(response(weather)); await getWeatherSnapshot('state/a', '2026-08-17'); expect((globalThis.fetch as jest.Mock).mock.calls[0][0]).toContain('/sessions/state%2Fa/weather-snapshot?target_date=2026-08-17'); });
+  it('does not convert weather failure into zero-filled success', async () => { globalThis.fetch = jest.fn().mockResolvedValue(response({ error: { status_code: 502, code: 'WEATHER_LOOKUP_FAILED', message: 'Unavailable', details: {} } }, 502)); await expect(getWeatherSnapshot('state/a', '2026-08-17')).rejects.toMatchObject({ code: 'WEATHER_LOOKUP_FAILED' }); });
+  it('rejects weather returned for another date', async () => { globalThis.fetch = jest.fn().mockResolvedValue(response({ ...weather, target_date: '2026-08-18' })); await expect(getWeatherSnapshot('state/a', '2026-08-17')).rejects.toMatchObject({ code: 'WEATHER_DATE_MISMATCH' }); });
+});

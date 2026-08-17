@@ -1,6 +1,6 @@
 # CropTwin mobile
 
-Expo SDK 57 / React Native companion for the CropTwin FastAPI service. The app includes the phone navigation shell, semantic design system, typed API transport, OpenAPI workflow, TanStack Query, farms, plots, standalone sessions, existing-session loading, plot-origin crop-cycle creation, and the authoritative active-cycle route.
+Expo SDK 57 / React Native companion for the CropTwin FastAPI service. The app includes the phone navigation shell, semantic design system, typed API transport, OpenAPI workflow, TanStack Query, farms, plots, sessions, crop-cycle creation, disease evidence, weather review, and irrigation-input preparation.
 
 ## Requirements
 
@@ -73,7 +73,7 @@ npm run api:schema:check
 
 - `src/app/`: Expo Router routes and the five-tab shell
 - `src/components/ui/`: safe-area layout, cards, buttons, badges, disclosure, and shared loading/error/empty states
-- `src/features/`: health/system plus farm, plot, and session data/form boundaries
+- `src/features/`: health/system, entity setup, and session-scoped disease/weather/irrigation workflow boundaries
 - `src/lib/api/`: generated schema, runtime contracts, fetch transport, structured errors, paths, operations, and query keys
 - `src/lib/query/`: the single QueryClient and retry policy
 - `src/lib/theme/`: semantic color, spacing, radius, typography, and elevation tokens
@@ -94,4 +94,12 @@ npm run api:schema:check
 
 Known backend limitation: a newly created session has authoritative creation metadata, but `GET /sessions/{state_id}` currently requires a computed current twin snapshot. Until a later workflow computes it, the app retains the authoritative `SessionResponse` in TanStack Query and shows “Current state not computed.” The session response does not expose plot/farm relationship fields, so plot-origin route context is explicitly labeled as non-authoritative navigation context.
 
-Milestone 3 disease, weather, irrigation, water-state, simulation, recommendation, and narration workflows are not implemented. Complete mobile parity is not claimed.
+## Evidence and input workflow
+
+- `/workflow/[stateId]` verifies and displays an authoritative session identity; changing the route identity remounts and clears route-local media/weather/irrigation drafts.
+- Disease uses `POST /sessions/{state_id}/predict-disease` with JSON `image_base64`. Camera and photo permissions are requested only after the corresponding action, while returned evidence is cached without image bytes under the session-scoped disease key.
+- The disease model version is read from `GET /system-info`; it is never hard-coded from an OpenAPI example.
+- Weather retrieval uses `GET /sessions/{state_id}/weather-snapshot?target_date=YYYY-MM-DD`, which uses the session’s stored coordinates. Fetched values remain reviewable inputs and failures never create zero-filled weather.
+- Irrigation supports no-event, direct depth, litres/area, and drip-runtime review. It remains an explicitly unsaved route-local draft because FastAPI accepts irrigation only inside the deterministic `compute-water-state` operation.
+
+Deterministic water state, twin update, advancement, simulation, recommendation, narration, history, and actual actions remain out of scope. Complete mobile parity is not claimed.

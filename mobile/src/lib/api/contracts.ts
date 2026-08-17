@@ -3,7 +3,7 @@ import type { components } from './schema';
 
 export type Health = components['schemas']['HealthResponse'];
 export const healthSchema = z.object({ status: z.string(), service: z.string(), version: z.string() }).strict();
-export const systemInfoSchema = z.record(z.string(), z.unknown());
+export const systemInfoSchema = z.object({ disease_model: z.object({ model_version: z.string().trim().min(1) }).passthrough() }).passthrough();
 export type SystemInfo = z.infer<typeof systemInfoSchema>;
 
 export type Farm = components['schemas']['FarmResponse'];
@@ -15,6 +15,11 @@ export type CreateCropCycleInput = components['schemas']['CreateCropCycleRequest
 export type CreatedSession = components['schemas']['SessionResponse'];
 export type LoadedSession = components['schemas']['SessionStateResponse'];
 export type SessionSummary = CreatedSession | LoadedSession;
+export type PredictDiseaseInput = components['schemas']['PredictDiseaseRequest'];
+export type DiseasePrediction = components['schemas']['DiseasePredictionResponse'];
+export type WeatherSnapshot = components['schemas']['WeatherSnapshotResponse'];
+export type WeatherInput = components['schemas']['WeatherInput'];
+export type LastIrrigationEvent = components['schemas']['LastIrrigationEvent'];
 
 export const soilTextures = ['sand', 'sandy_loam', 'loam', 'silty_loam', 'clay_loam', 'clay'] as const;
 export const soilTextureSchema = z.enum(soilTextures);
@@ -46,4 +51,15 @@ const currentStateSchema = z.object({
 export const loadedSessionSchema = z.object({
   state_id: z.string().min(1), crop_type: z.literal('tomato'), planting_date: z.string(), location: locationSchema,
   soil_texture: soilTextureSchema, current_state: currentStateSchema,
+}).strict();
+export const diseasePredictionSchema = z.object({
+  state_id: z.string().min(1), crop_type: z.literal('tomato'), predicted_label: z.string(),
+  disease_category: z.enum(['fungal', 'bacterial', 'viral', 'none']), class_probs: z.record(z.string(), finite.min(0).max(1)),
+  confidence_calibrated: finite.min(0).max(1), uncertainty_score: finite, uncertainty_band: z.enum(['low', 'medium', 'high']), predicted_at: z.string(),
+}).strict();
+export const weatherSnapshotSchema = z.object({
+  state_id: z.string().min(1), target_date: z.string(), source: z.literal('open_meteo'), source_timezone: z.string().min(1),
+  latitude: finite, longitude: finite, tmin_c: finite, tmax_c: finite, humidity_pct: finite.min(0).max(100), wind_speed_mps: finite.min(0),
+  wind_source_height_m: finite.positive(), wind_normalized_height_m: finite.positive(), rainfall_mm: finite.min(0),
+  shortwave_radiation_sum_mj_m2: finite.min(0), eto_reference_feed: finite.min(0), fetched_at: z.string(),
 }).strict();

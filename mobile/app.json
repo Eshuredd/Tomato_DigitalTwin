@@ -32,6 +32,14 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow CropTwin to choose a tomato-leaf image for disease evidence.",
+          "cameraPermission": "Allow CropTwin to photograph a tomato leaf for disease evidence.",
+          "microphonePermission": false
+        }
       ]
     ],
     "experiments": {
