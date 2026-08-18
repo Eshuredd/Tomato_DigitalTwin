@@ -101,5 +101,9 @@ Known backend limitation: a newly created session has authoritative creation met
 - The disease model version is read from `GET /system-info`; it is never hard-coded from an OpenAPI example.
 - Weather retrieval uses `GET /sessions/{state_id}/weather-snapshot?target_date=YYYY-MM-DD`, which uses the session’s stored coordinates. Fetched values remain reviewable inputs and failures never create zero-filled weather.
 - Irrigation supports no-event, direct depth, litres/area, and drip-runtime review. It remains an explicitly unsaved route-local draft because FastAPI accepts irrigation only inside the deterministic `compute-water-state` operation.
+- The same state-ID-scoped workflow owner passes accepted weather and irrigation into `POST /sessions/{state_id}/compute-water-state`; it omits `observed_at`, preserves no-event versus zero-event irrigation, and uses server-returned water lineage for guarded follow-up requests.
+- Water request identities remain stable across exact retries. A `STALE_WATER_BASELINE` response exposes an explicit local-only rebase that removes the stale pair and prepares a new identity without silently resubmitting.
+- Canonicalization is an explicit `POST /sessions/{state_id}/update-twin-state` action. Created and idempotently reused snapshots are distinguished, and the exact session query is refreshed.
+- One-day advancement uses `POST /sessions/{state_id}/advance-one-day` with a read-only target exactly one UTC calendar day after the authoritative water observation. Its returned water and twin resources update their exact caches without extra compute or twin-update calls.
 
-Deterministic water state, twin update, advancement, simulation, recommendation, narration, history, and actual actions remain out of scope. Complete mobile parity is not claimed.
+Simulation, recommendation, narration, history, and actual actions remain out of scope. Complete mobile parity is not claimed.
